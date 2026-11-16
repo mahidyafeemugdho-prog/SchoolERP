@@ -1,0 +1,962 @@
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { UserProfile, UserRole, SystemAccessControl } from '../types';
+import {
+  auth,
+  db,
+  handleFirestoreError,
+  OperationType,
+  loginWithFirebaseEmail,
+  loginWithGoogle,
+  loginWithGoogleRedirect,
+  completeGoogleRedirectLogin,
+  isEmbeddedIframe,
+  isGoogleRedirectPending,
+  markGoogleRedirectPending,
+  logoutUser,
+  testConnection,
+} from '../services/firebase';
+import { StorageService } from '../services/storage';
+import { onAuthStateChanged, User, IdTokenResult } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { safeSetLocalStorage, safeRemoveLocalStorage } from '../utils/storageHelper';
+import { CloudSyncService } from '../services/cloudSync';
+import {
+  SaaSApi,
+  SaaSComputedSubscription,
+  SaaSMeResponse,
+  SaaSPlanId,
+  SaaSSchoolRecord,
+} from '../services/saasApi';
+
+export interface LoginResult {
+  success: boolean;
+  errorType?:
+    | 'INVALID_CREDENTIALS'
+    | 'SYSTEM_LOCKED'
+    | 'ROLE_DISABLED'
+    | 'ACCOUNT_DISABLED'
+    | 'NO_TENANT_ASSIGNED'
+    | 'AUTH_ERROR';
+  errorMessage?: string;
+  needsStandaloneTab?: boolean;
+  canUseRedirect?: boolean;
+  user?: UserProfile;
+}
+
+export const defaultProfiles: Record<UserRole, UserProfile> = {
+  master_admin: {
+    id: 'usr_master_admin',
+    email: 'owner@smartschoolbd.com',
+    name: 'Platform Master Admin',
+    nameBn: 'প্ল্যাটফর্ম মাস্টার অ্যাডমিন',
+    role: 'master_admin',
+    isMasterAdmin: true,
+  },
+  super_admin: {
+    id: 'usr_super_admin',
+    email: 'superadmin@smartschoolbd.com',
+    name: 'School Super Admin',
+    nameBn: 'স্কুল সুপার অ্যাডমিন',
+    role: 'super_admin',
+  },
+  admin: {
+    id: 'usr_admin',
+    email: 'principal@smartschoolbd.com',
+    name: 'Head Teacher / Admin',
+    nameBn: 'প্রধান শিক্ষক / অ্যাডমিন',
+    role: 'admin',
+  },
+  teacher: {
+    id: 'usr_teacher',
+    email: 'teacher@smartschoolbd.com',
+    name: 'Assistant Teacher',
+    nameBn: 'সহকারী শিক্ষক',
+    role: 'teacher',
+  },
+  accountant: {
+    id: 'usr_accountant',
+    email: 'accountant@smartschoolbd.com',
+    name: 'Accountant',
+    nameBn: 'হিসাবরক্ষক',
+    role: 'accountant',
+  },
+  student: {
+    id: 'usr_student',
+    email: 'student@smartschoolbd.com',
+    name: 'Student Portal',
+    nameBn: 'শিক্ষার্থী পোর্টাল',
+    role: 'student',
+  },
+  guardian: {
+    id: 'usr_guardian',
+    email: 'guardian@smartschoolbd.com',
+    name: 'Guardian Portal',
+    nameBn: 'অভিভাবক পোর্টাল',
+    role: 'guardian',
+  },
+  librarian: {
+    id: 'usr_librarian',
+    email: 'library@smartschoolbd.com',
+    name: 'Librarian',
+    nameBn: 'গ্রন্থাগারিক',
+    role: 'librarian',
+  },
+  receptionist: {
+    id: 'usr_receptionist',
+    email: 'admission@smartschoolbd.com',
+    name: 'Admission Officer',
+    nameBn: 'ভর্তি কর্মকর্তা',
+    role: 'receptionist',
+  },
+  gatekeeper: {
+    id: 'usr_gatekeeper',
+    email: 'gate@smartschoolbd.com',
+    name: 'Gate QR Scanner Kiosk',
+    nameBn: 'স্কুল গেট কিউআর কিওস্ক',
+    role: 'gatekeeper',
+    permissions: {
+      manageStudents: false,
+      manageAttendance: true,
+      manageExams: false,
+      manageFees: false,
+      manageRoutine: false,
+      manageHomework: false,
+      manageLibrary: false,
+      onlyQrAttendanceKiosk: true,
+    },
+  },
+};
+
+function mapClaimsRoleToUserRole(rawRole: string | null | undefined, isMasterAdmin: boolean): UserRole {
+  if (isMasterAdmin || rawRole === 'master_admin') return 'master_admin';
+  const valid: UserRole[] = [
+    'super_admin',
+    'admin',
+    'teacher',
+    'accountant',
+    'student',
+    'guardian',
+    'librarian',
+    'receptionist',
+    'gatekeeper',
+  ];
+  if (rawRole && valid.includes(rawRole as UserRole)) {
+    return rawRole as UserRole;
+  }
+  if (rawRole === 'staff') return 'teacher';
+  return 'teacher';
+}
+
+function shouldUseClientSaaSFallback(err: any): boolean {
+  const code = err?.code;
+  const status = err?.status;
+  if (
+    code === 'NON_JSON_RESPONSE' ||
+    code === 'EMPTY_RESPONSE' ||
+    code === 'INVALID_ME_RESPONSE' ||
+    code === 'ADMIN_SDK_UNAVAILABLE' ||
+    code === 'AUTH_VERIFIER_UNAVAILABLE'
+  ) {
+    return true;
+  }
+  if (status === 502 || status === 503 || status === 504) {
+    return true;
+  }
+  if (status === 404 && code !== 'SCHOOL_NOT_FOUND') {
+    return true;
+  }
+  if (err instanceof TypeError || err?.name === 'AbortError' || code === 'TIMEOUT') {
+    return true;
+  }
+  return false;
+}
+
+function computeClientSubscriptionState(school: any, nowMs: number): SaaSComputedSubscription {
+  const planId = (school?.subscription?.planId || 'monthly') as SaaSPlanId;
+  const planName = school?.subscription?.planName || planId;
+  const startDate = school?.subscription?.startDate || school?.createdAt || new Date(nowMs).toISOString();
+  const expiryDate = school?.subscription?.expiryDate || new Date(nowMs).toISOString();
+  const expiryMs = new Date(expiryDate).getTime();
+  const diffMs = Number.isNaN(expiryMs) ? -1 : expiryMs - nowMs;
+  const dayMs = 86_400_000;
+
+  const isSuspended = school?.status === 'suspended' || school?.subscription?.status === 'Suspended';
+  const isPending = school?.status === 'pending' || school?.subscription?.status === 'Pending';
+  const isExpiredByDate = diffMs <= 0;
+  const isExpired =
+    !isSuspended &&
+    !isPending &&
+    (school?.status === 'expired' || school?.subscription?.status === 'Expired' || isExpiredByDate);
+
+  const effectiveStatus = isSuspended
+    ? 'Suspended'
+    : isPending
+    ? 'Pending'
+    : isExpired
+    ? 'Expired'
+    : 'Active';
+
+  const schoolStatus = isSuspended
+    ? 'suspended'
+    : isPending
+    ? 'pending'
+    : isExpired
+    ? 'expired'
+    : 'active';
+
+  return {
+    planId,
+    planName,
+    effectiveStatus,
+    schoolStatus,
+    startDate,
+    expiryDate,
+    remainingDays: diffMs > 0 ? Math.ceil(diffMs / dayMs) : 0,
+    expiredDays: diffMs < 0 ? Math.ceil(Math.abs(diffMs) / dayMs) : 0,
+    isExpired,
+    isSuspended,
+    isPending,
+    accessAllowed: effectiveStatus === 'Active',
+    lastPaymentDate: school?.subscription?.lastPaymentDate || null,
+    nextRenewalDate: school?.subscription?.nextRenewalDate || null,
+    serverTime: new Date(nowMs).toISOString(),
+  };
+}
+
+async function buildFirebaseClientFallbackMe(
+  fbUser: User,
+  tokenResult: IdTokenResult
+): Promise<SaaSMeResponse> {
+  const claims = tokenResult.claims || {};
+  const defaultSupport = {
+    phone: 'Platform Support',
+    email: 'support@smartschoolbd.com',
+  };
+
+  let isDbMasterAdmin = false;
+  try {
+    const masterSnap = await getDoc(doc(db, 'master_admins', fbUser.uid));
+    isDbMasterAdmin = masterSnap.exists() && masterSnap.data()?.active !== false;
+  } catch (err: any) {
+    if (err?.code === 'permission-denied') {
+      handleFirestoreError(err, OperationType.GET, `master_admins/${fbUser.uid}`);
+    }
+  }
+
+  let saasUserDoc: Record<string, any> | null = null;
+  try {
+    const userSnap = await getDoc(doc(db, 'saas_users', fbUser.uid));
+    if (userSnap.exists()) {
+      saasUserDoc = userSnap.data() || null;
+    }
+  } catch (err: any) {
+    if (err?.code === 'permission-denied') {
+      handleFirestoreError(err, OperationType.GET, `saas_users/${fbUser.uid}`);
+    }
+  }
+
+  if (saasUserDoc?.status === 'disabled') {
+    throw new Error('Your user account has been disabled by your administrator.');
+  }
+
+  const rawClaimRole = typeof claims.schoolRole === 'string' ? claims.schoolRole : null;
+  const isMasterAdmin =
+    claims.isMasterAdmin === true || rawClaimRole === 'master_admin' || isDbMasterAdmin;
+  const claimSchoolId =
+    typeof claims.schoolId === 'string' && claims.schoolId.trim() ? claims.schoolId.trim() : null;
+  const docSchoolId =
+    typeof saasUserDoc?.schoolId === 'string' && saasUserDoc.schoolId.trim()
+      ? saasUserDoc.schoolId.trim()
+      : null;
+  const schoolId = claimSchoolId || docSchoolId;
+  const schoolRole = isMasterAdmin
+    ? 'master_admin'
+    : rawClaimRole || (typeof saasUserDoc?.schoolRole === 'string' ? saasUserDoc.schoolRole : null);
+
+  const principal: SaaSMeResponse['principal'] = {
+    uid: fbUser.uid,
+    email: fbUser.email || saasUserDoc?.email || '',
+    emailVerified: Boolean(fbUser.emailVerified),
+    schoolId,
+    schoolRole,
+    isMasterAdmin,
+    displayName: fbUser.displayName || saasUserDoc?.displayName || fbUser.email || '',
+    linkedStaffId: typeof saasUserDoc?.linkedStaffId === 'string' ? saasUserDoc.linkedStaffId : undefined,
+    linkedStudentId:
+      typeof saasUserDoc?.linkedStudentId === 'string' ? saasUserDoc.linkedStudentId : undefined,
+    phone:
+      (typeof saasUserDoc?.phone === 'string' && saasUserDoc.phone) ||
+      fbUser.phoneNumber ||
+      undefined,
+  };
+
+  if (isMasterAdmin) {
+    return {
+      success: true,
+      principal,
+      school: null,
+      subscription: null,
+      accessAllowed: true,
+      blockReason: null,
+      platformSupportContact: defaultSupport,
+    };
+  }
+
+  if (!schoolId) {
+    return {
+      success: true,
+      principal,
+      school: null,
+      subscription: null,
+      accessAllowed: false,
+      blockReason: 'NO_TENANT_ASSIGNED',
+      platformSupportContact: defaultSupport,
+    };
+  }
+
+  let schoolDoc: SaaSSchoolRecord | null = null;
+  let schoolPermissionDenied = false;
+  try {
+    const schoolSnap = await getDoc(doc(db, 'schools', schoolId));
+    if (schoolSnap.exists()) {
+      schoolDoc = schoolSnap.data() as SaaSSchoolRecord;
+    }
+  } catch (err: any) {
+    if (err?.code === 'permission-denied') {
+      schoolPermissionDenied = true;
+      handleFirestoreError(err, OperationType.GET, `schools/${schoolId}`);
+    }
+  }
+
+  if (!schoolDoc) {
+    if (schoolPermissionDenied && !claimSchoolId) {
+      throw new Error(
+        'School access claims are not synced on this account yet. Please contact your administrator or configure the backend server.'
+      );
+    }
+    throw new Error('Assigned school tenant could not be found.');
+  }
+
+  const subscription = computeClientSubscriptionState(schoolDoc, Date.now());
+  let blockReason: string | null = null;
+  if (!subscription.accessAllowed) {
+    blockReason = subscription.isSuspended
+      ? 'SCHOOL_SUSPENDED'
+      : subscription.isPending
+      ? 'SUBSCRIPTION_PENDING'
+      : 'SUBSCRIPTION_EXPIRED';
+  }
+
+  return {
+    success: true,
+    principal,
+    school: schoolDoc,
+    subscription,
+    accessAllowed: subscription.accessAllowed,
+    blockReason,
+    platformSupportContact: defaultSupport,
+  };
+}
+
+interface AuthContextType {
+  currentUser: UserProfile;
+  activeRole: UserRole;
+  isAuthenticated: boolean;
+  isAuthInitializing: boolean;
+  saasSession: SaaSMeResponse | null;
+  refreshSaasSession: () => Promise<SaaSMeResponse | null>;
+  switchRole: (role: UserRole) => void;
+  loginWithCredentials: (email: string, password: string) => Promise<LoginResult>;
+  logout: () => Promise<void>;
+  systemAccessControl: SystemAccessControl;
+  updateSystemAccessControl: (control: Partial<SystemAccessControl>) => void;
+  firebaseUser: User | null;
+  isFirebaseConnected: boolean;
+  syncStatus: 'idle' | 'syncing' | 'synced' | 'error';
+  syncNow: () => Promise<void>;
+  loginWithGooglePopup: () => Promise<LoginResult>;
+  loginWithGoogleRedirectFallback: () => Promise<LoginResult>;
+  redirectAuthError: string | null;
+  clearRedirectAuthError: () => void;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isAuthInitializing, setIsAuthInitializing] = useState<boolean>(true);
+  const [activeRole, setActiveRole] = useState<UserRole>('super_admin');
+  const [loggedInUser, setLoggedInUser] = useState<UserProfile | null>(null);
+  const [saasSession, setSaasSession] = useState<SaaSMeResponse | null>(null);
+  const [redirectAuthError, setRedirectAuthError] = useState<string | null>(null);
+
+  const [systemAccessControl, setSystemAccessControl] = useState<SystemAccessControl>(() => {
+    return StorageService.getSystemAccessControl();
+  });
+
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(true);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
+
+  const lastHydrateErrorRef = useRef<string | null>(null);
+  const hasExplicitLoginThisLoadRef = useRef<boolean>(false);
+  const isExplicitLoginInProgressRef = useRef<boolean>(false);
+  const isCheckingRedirectRef = useRef<boolean>(true);
+
+  const hydrateFromSaasMe = useCallback(async (fbUser: User): Promise<SaaSMeResponse | null> => {
+    try {
+      lastHydrateErrorRef.current = null;
+      // Ensure latest custom claims are loaded
+      const tokenResult = await fbUser.getIdTokenResult(true);
+      let me: SaaSMeResponse;
+      try {
+        me = await SaaSApi.getMe();
+        if (me?.principal && !me.principal.isMasterAdmin && !me.principal.schoolId) {
+          try {
+            const clientMe = await buildFirebaseClientFallbackMe(fbUser, tokenResult);
+            if (clientMe.principal.isMasterAdmin || clientMe.principal.schoolId) {
+              me = clientMe;
+            }
+          } catch {
+            // Keep original /me response if fallback check throws
+          }
+        }
+      } catch (apiErr: any) {
+        if (!shouldUseClientSaaSFallback(apiErr)) {
+          throw apiErr;
+        }
+        me = await buildFirebaseClientFallbackMe(fbUser, tokenResult);
+      }
+
+      if (!me || !me.principal) {
+        throw new Error('Unable to verify user role and school tenant session.');
+      }
+
+      setSaasSession(me);
+
+      const resolvedRole = mapClaimsRoleToUserRole(
+        me.principal.schoolRole ?? null,
+        Boolean(me.principal.isMasterAdmin)
+      );
+      const principalEmailLower = (me.principal.email || fbUser.email || '').toLowerCase();
+      const matchedStaff = me.principal.schoolId
+        ? StorageService.getStaff().find(
+            (s) =>
+              (me.principal.linkedStaffId && s.id === me.principal.linkedStaffId) ||
+              (s.authUid && s.authUid === fbUser.uid) ||
+              (s.email && principalEmailLower && s.email.toLowerCase() === principalEmailLower)
+          )
+        : undefined;
+
+      const normalizePhone = (p?: string) => (p || '').replace(/\D/g, '').slice(-10);
+      const principalPhoneNorm = normalizePhone(me.principal.phone);
+
+      const matchedStudent =
+        me.principal.schoolId &&
+        (resolvedRole === 'student' || resolvedRole === 'guardian' || Boolean(me.principal.linkedStudentId))
+          ? StorageService.getStudents().find(
+              (st) =>
+                (me.principal.linkedStudentId &&
+                  (st.id === me.principal.linkedStudentId || st.studentId === me.principal.linkedStudentId)) ||
+                (resolvedRole === 'student' &&
+                  ((st.authUid && st.authUid === fbUser.uid) ||
+                    (st.email && principalEmailLower && st.email.toLowerCase() === principalEmailLower))) ||
+                (resolvedRole === 'guardian' &&
+                  principalPhoneNorm.length >= 10 &&
+                  principalPhoneNorm !== '1700000000' &&
+                  (normalizePhone(st.guardianPhone) === principalPhoneNorm ||
+                    normalizePhone(st.fatherPhone) === principalPhoneNorm ||
+                    normalizePhone(st.motherPhone) === principalPhoneNorm))
+            )
+          : undefined;
+
+      const userProfile: UserProfile = {
+        ...defaultProfiles[resolvedRole],
+        id: fbUser.uid,
+        authUid: fbUser.uid,
+        email: me.principal.email || fbUser.email || '',
+        phone:
+          me.principal.phone ||
+          matchedStaff?.phone ||
+          matchedStudent?.guardianPhone ||
+          matchedStudent?.phone ||
+          undefined,
+        name:
+          me.principal.displayName ||
+          fbUser.displayName ||
+          matchedStaff?.nameEn ||
+          matchedStudent?.nameEn ||
+          defaultProfiles[resolvedRole].name,
+        nameBn:
+          matchedStaff?.nameBn ||
+          (resolvedRole === 'student' ? matchedStudent?.nameBn : undefined) ||
+          me.principal.displayName ||
+          fbUser.displayName ||
+          defaultProfiles[resolvedRole].nameBn,
+        role: resolvedRole,
+        schoolId: me.principal.schoolId || undefined,
+        isMasterAdmin: me.principal.isMasterAdmin,
+        linkedStaffId: me.principal.linkedStaffId || matchedStaff?.id,
+        linkedStudentId: me.principal.linkedStudentId || matchedStudent?.id,
+        permissions: matchedStaff?.permissions || defaultProfiles[resolvedRole].permissions,
+      };
+
+      setLoggedInUser(userProfile);
+      setActiveRole(resolvedRole);
+      setIsAuthenticated(true);
+      safeSetLocalStorage('school_erp_role', resolvedRole);
+      safeSetLocalStorage('school_erp_authenticated', 'true');
+      safeSetLocalStorage('school_erp_user', JSON.stringify(userProfile));
+
+      if (me.principal.schoolId) {
+        await CloudSyncService.setActiveSaaSTenant(me.principal.schoolId, me.accessAllowed);
+      } else {
+        await CloudSyncService.setActiveSaaSTenant(null, false);
+      }
+
+      return me;
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to verify school tenant session with server.';
+      console.warn('[AuthContext] Failed hydrating SaaS session:', msg);
+      lastHydrateErrorRef.current = msg;
+      return null;
+    }
+  }, []);
+
+  const refreshSaasSession = useCallback(async (): Promise<SaaSMeResponse | null> => {
+    const fbUser = auth.currentUser;
+    if (!fbUser) return null;
+    return await hydrateFromSaasMe(fbUser);
+  }, [hydrateFromSaasMe]);
+
+  useEffect(() => {
+    let isMounted = true;
+    // Ensure every fresh load starts at Hero Login section unless completing a Google redirect login
+    safeRemoveLocalStorage('school_erp_authenticated');
+    safeRemoveLocalStorage('school_erp_role');
+    safeRemoveLocalStorage('school_erp_user');
+    CloudSyncService.clearTenantSession();
+
+    testConnection().then((connected) => {
+      if (isMounted) setIsFirebaseConnected(connected);
+    });
+
+    let unsubscribe: (() => void) | null = null;
+
+    const initAuth = async () => {
+      isCheckingRedirectRef.current = true;
+      const pendingRedirect = isGoogleRedirectPending();
+
+      try {
+        const redirectPromise = completeGoogleRedirectLogin();
+        const timeoutMs = pendingRedirect ? 5000 : 1800;
+        const redirectCred = await Promise.race([
+          redirectPromise,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+        ]);
+        if (redirectCred?.user && isMounted) {
+          markGoogleRedirectPending(false);
+          hasExplicitLoginThisLoadRef.current = true;
+          isExplicitLoginInProgressRef.current = true;
+          const me = await hydrateFromSaasMe(redirectCred.user);
+          if (!me || !me.principal) {
+            hasExplicitLoginThisLoadRef.current = false;
+            await logoutUser().catch(() => {});
+            setIsAuthenticated(false);
+            setRedirectAuthError(
+              lastHydrateErrorRef.current || 'Could not verify SaaS session after Google sign-in.'
+            );
+          } else if (!me.principal.isMasterAdmin && !me.principal.schoolId) {
+            hasExplicitLoginThisLoadRef.current = false;
+            await logoutUser().catch(() => {});
+            setIsAuthenticated(false);
+            setRedirectAuthError(
+              `Signed in as ${me.principal.email}, but this email is not set as Master Admin (MASTER_ADMIN_EMAILS) or assigned to any school yet.`
+            );
+          } else {
+            setFirebaseUser(redirectCred.user);
+          }
+          isExplicitLoginInProgressRef.current = false;
+          if (isMounted) setIsAuthInitializing(false);
+        } else if (pendingRedirect && isMounted) {
+          markGoogleRedirectPending(false);
+        }
+      } catch (err: any) {
+        markGoogleRedirectPending(false);
+        if (isMounted) {
+          const code = err?.code || '';
+          const host = typeof window !== 'undefined' ? window.location.hostname : '';
+          if (code === 'auth/unauthorized-domain') {
+            setRedirectAuthError(
+              `ডোমেইনটি Firebase-এ অনুমোদিত নয় (${host})। Firebase Console → Authentication → Settings → Authorized domains-এ "${host}" যোগ করুন।`
+            );
+          } else {
+            setRedirectAuthError(err?.message || 'Google redirect sign-in failed. Please try again.');
+          }
+        }
+      } finally {
+        isCheckingRedirectRef.current = false;
+      }
+
+      if (!isMounted) return;
+
+      unsubscribe = onAuthStateChanged(auth, async (user) => {
+        if (isCheckingRedirectRef.current || isExplicitLoginInProgressRef.current) {
+          return;
+        }
+
+        if (user && !hasExplicitLoginThisLoadRef.current) {
+          // Clear any leftover persisted session so Hero Login always comes first on fresh load
+          setFirebaseUser(null);
+          setSaasSession(null);
+          setIsAuthenticated(false);
+          setLoggedInUser(null);
+          CloudSyncService.clearTenantSession();
+          await logoutUser().catch(() => {});
+          setIsAuthInitializing(false);
+          return;
+        }
+
+        setFirebaseUser(user);
+        if (user) {
+          await hydrateFromSaasMe(user);
+        } else {
+          setSaasSession(null);
+          setIsAuthenticated(false);
+          setLoggedInUser(null);
+          CloudSyncService.clearTenantSession();
+        }
+        setIsAuthInitializing(false);
+      });
+    };
+
+    initAuth();
+
+    // Safety failsafe so UI can never stay permanently blocked on auth initialization
+    const initSafetyTimer = setTimeout(() => {
+      if (isMounted) {
+        setIsAuthInitializing(false);
+      }
+    }, 6000);
+
+    const handleCloudSynced = () => {
+      setSystemAccessControl(StorageService.getSystemAccessControl());
+    };
+    window.addEventListener('school_cloud_data_synced', handleCloudSynced);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(initSafetyTimer);
+      if (unsubscribe) unsubscribe();
+      window.removeEventListener('school_cloud_data_synced', handleCloudSynced);
+    };
+  }, [hydrateFromSaasMe]);
+
+  const updateSystemAccessControl = (partial: Partial<SystemAccessControl>) => {
+    const updated: SystemAccessControl = {
+      ...systemAccessControl,
+      ...partial,
+      updatedAt: new Date().toISOString(),
+      updatedBy:
+        activeRole === 'master_admin'
+          ? loggedInUser?.name || saasSession?.principal?.displayName || 'Master Admin'
+          : 'Admin',
+    };
+    StorageService.saveSystemAccessControl(updated);
+    setSystemAccessControl(updated);
+  };
+
+  const switchRole = (role: UserRole) => {
+    if (!saasSession?.principal?.isMasterAdmin && activeRole !== 'master_admin') {
+      console.warn('Role switching blocked for non-master admin accounts');
+      return;
+    }
+    setActiveRole(role);
+    safeSetLocalStorage('school_erp_role', role);
+  };
+
+  const loginWithCredentials = async (emailInput: string, pass: string): Promise<LoginResult> => {
+    const email = emailInput.trim();
+    if (!email || !pass) {
+      return {
+        success: false,
+        errorType: 'INVALID_CREDENTIALS',
+        errorMessage: 'Please enter your registered email and password.',
+      };
+    }
+
+    try {
+      isExplicitLoginInProgressRef.current = true;
+      hasExplicitLoginThisLoadRef.current = true;
+      const cred = await loginWithFirebaseEmail(email, pass);
+      const me = await hydrateFromSaasMe(cred.user);
+
+      if (!me || !me.principal) {
+        hasExplicitLoginThisLoadRef.current = false;
+        await logoutUser().catch(() => {});
+        setIsAuthenticated(false);
+        return {
+          success: false,
+          errorType: 'AUTH_ERROR',
+          errorMessage: lastHydrateErrorRef.current || 'Unable to verify school tenant session with server.',
+        };
+      }
+
+      if (!me.principal.isMasterAdmin && !me.principal.schoolId) {
+        hasExplicitLoginThisLoadRef.current = false;
+        await logoutUser().catch(() => {});
+        setIsAuthenticated(false);
+        return {
+          success: false,
+          errorType: 'NO_TENANT_ASSIGNED',
+          errorMessage:
+            'This account is not assigned to any school tenant. Contact your School Admin or Platform Owner.',
+        };
+      }
+
+      // Enforce Master Admin local role lock if active for that school
+      const resolvedRole = mapClaimsRoleToUserRole(
+        me.principal.schoolRole ?? null,
+        Boolean(me.principal.isMasterAdmin)
+      );
+      if (!me.principal.isMasterAdmin && systemAccessControl.isSystemLocked) {
+        hasExplicitLoginThisLoadRef.current = false;
+        await logoutUser().catch(() => {});
+        setIsAuthenticated(false);
+        return {
+          success: false,
+          errorType: 'SYSTEM_LOCKED',
+          errorMessage: systemAccessControl.disabledMessage,
+        };
+      }
+      if (!me.principal.isMasterAdmin && systemAccessControl.disabledRoles.includes(resolvedRole)) {
+        hasExplicitLoginThisLoadRef.current = false;
+        await logoutUser().catch(() => {});
+        setIsAuthenticated(false);
+        return {
+          success: false,
+          errorType: 'ROLE_DISABLED',
+          errorMessage: systemAccessControl.disabledMessage,
+        };
+      }
+
+      setFirebaseUser(cred.user);
+      setIsAuthInitializing(false);
+      return { success: true };
+    } catch (err: any) {
+      hasExplicitLoginThisLoadRef.current = false;
+      const code = err?.code || '';
+      let msg = err?.message || 'Authentication failed.';
+      if (
+        code === 'auth/invalid-credential' ||
+        code === 'auth/wrong-password' ||
+        code === 'auth/user-not-found'
+      ) {
+        msg = 'Invalid email or password. Please verify your Firebase account credentials.';
+      } else if (code === 'auth/user-disabled') {
+        return {
+          success: false,
+          errorType: 'ACCOUNT_DISABLED',
+          errorMessage: 'This account has been disabled by your administrator.',
+        };
+      } else if (code === 'auth/invalid-email') {
+        msg = 'Please enter a valid email address.';
+      } else if (code === 'auth/operation-not-allowed') {
+        msg =
+          'Email/Password Sign-In is disabled in Firebase Console. Enable it under Authentication → Sign-in method, or use Google Sign-In.';
+      }
+      return {
+        success: false,
+        errorType: 'INVALID_CREDENTIALS',
+        errorMessage: msg,
+      };
+    } finally {
+      isExplicitLoginInProgressRef.current = false;
+      setIsAuthInitializing(false);
+    }
+  };
+
+  const handleGoogleRedirectLogin = async (): Promise<LoginResult> => {
+    try {
+      setRedirectAuthError(null);
+      await loginWithGoogleRedirect();
+      return { success: true };
+    } catch (e: any) {
+      markGoogleRedirectPending(false);
+      return {
+        success: false,
+        errorType: 'AUTH_ERROR',
+        errorMessage: e?.message || 'Google redirect sign-in could not start.',
+      };
+    }
+  };
+
+  const handleGoogleLogin = async (): Promise<LoginResult> => {
+    try {
+      setRedirectAuthError(null);
+      isExplicitLoginInProgressRef.current = true;
+      hasExplicitLoginThisLoadRef.current = true;
+      const cred = await loginWithGoogle();
+      const me = await hydrateFromSaasMe(cred.user);
+      if (!me || !me.principal) {
+        hasExplicitLoginThisLoadRef.current = false;
+        await logoutUser().catch(() => {});
+        setIsAuthenticated(false);
+        return {
+          success: false,
+          errorType: 'AUTH_ERROR',
+          errorMessage: lastHydrateErrorRef.current || 'Could not verify SaaS session after Google sign-in.',
+        };
+      }
+      if (!me.principal.isMasterAdmin && !me.principal.schoolId) {
+        hasExplicitLoginThisLoadRef.current = false;
+        await logoutUser().catch(() => {});
+        setIsAuthenticated(false);
+        return {
+          success: false,
+          errorType: 'NO_TENANT_ASSIGNED',
+          errorMessage: `Signed in as ${me.principal.email}, but this email is not set as Master Admin (MASTER_ADMIN_EMAILS) or assigned to any school yet.`,
+        };
+      }
+      setFirebaseUser(cred.user);
+      setIsAuthInitializing(false);
+      return { success: true };
+    } catch (e: any) {
+      hasExplicitLoginThisLoadRef.current = false;
+      const code = e?.code || '';
+      const inIframe = isEmbeddedIframe();
+      if (code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        return {
+          success: false,
+          errorType: 'AUTH_ERROR',
+          errorMessage: `ডোমেইনটি Firebase-এ অনুমোদিত নয় (${host})। Firebase Console → Authentication → Settings → Authorized domains-এ "${host}" যোগ করুন।`,
+        };
+      }
+      if (code === 'auth/popup-blocked') {
+        if (!inIframe) {
+          // Directly fall back to redirect sign-in when running in standalone browser tab
+          await loginWithGoogleRedirect().catch(() => {});
+          return {
+            success: false,
+            errorType: 'AUTH_ERROR',
+            canUseRedirect: true,
+            errorMessage: 'পপ-আপ ব্লক হওয়ায় Google Redirect লগইনে পাঠানো হচ্ছে...',
+          };
+        }
+        return {
+          success: false,
+          errorType: 'AUTH_ERROR',
+          needsStandaloneTab: true,
+          errorMessage:
+            'মোবাইল/প্রিভিউ ব্রাউজার লগইন পপ-আপ ব্লক করেছে। নিচের "নতুন ট্যাবে খুলে Google Login করুন" বাটনে চাপ দিন অথবা Email ও Password দিয়ে লগইন করুন।',
+        };
+      }
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        if (inIframe) {
+          return {
+            success: false,
+            errorType: 'AUTH_ERROR',
+            needsStandaloneTab: true,
+            errorMessage:
+              'মোবাইল প্রিভিউ উইন্ডো (iframe)-এর ভেতর থেকে Google পপ-আপ সম্পন্ন হওয়ার আগেই বন্ধ হয়ে গেছে। নিচের বাটনে চাপ দিয়ে নতুন ট্যাবে খুলে Google Login করুন, অথবা Email ও Password দিয়ে লগইন করুন।',
+          };
+        }
+        return {
+          success: false,
+          errorType: 'AUTH_ERROR',
+          canUseRedirect: true,
+          errorMessage:
+            'Google লগইন পপ-আপ সম্পূর্ণ হওয়ার আগেই বন্ধ হয়ে গেছে। আবার চেষ্টা করুন অথবা নিচের "Redirect দিয়ে Google Login" বাটন ব্যবহার করুন।',
+        };
+      }
+      return {
+        success: false,
+        errorType: 'AUTH_ERROR',
+        errorMessage: e?.message || 'Google Sign-In failed.',
+      };
+    } finally {
+      isExplicitLoginInProgressRef.current = false;
+      setIsAuthInitializing(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    hasExplicitLoginThisLoadRef.current = false;
+    setIsAuthenticated(false);
+    setActiveRole('super_admin');
+    setLoggedInUser(null);
+    setSaasSession(null);
+    safeSetLocalStorage('school_erp_authenticated', 'false');
+    safeRemoveLocalStorage('school_erp_role');
+    safeRemoveLocalStorage('school_erp_user');
+    CloudSyncService.clearTenantSession();
+    await logoutUser().catch(console.error);
+  };
+
+  const syncNow = async () => {
+    setSyncStatus('syncing');
+    try {
+      const ok = await CloudSyncService.syncBidirectional();
+      if (ok) {
+        setSyncStatus('synced');
+        setTimeout(() => setSyncStatus('idle'), 4000);
+      } else {
+        setSyncStatus('error');
+      }
+    } catch {
+      setSyncStatus('error');
+    }
+  };
+
+  const currentUser: UserProfile =
+    loggedInUser && loggedInUser.role === activeRole
+      ? loggedInUser
+      : {
+          ...defaultProfiles[activeRole],
+          ...(firebaseUser?.email
+            ? {
+                id: firebaseUser.uid,
+                authUid: firebaseUser.uid,
+                email: firebaseUser.email,
+                name: firebaseUser.displayName || defaultProfiles[activeRole].name,
+                schoolId: saasSession?.principal?.schoolId || undefined,
+                isMasterAdmin: saasSession?.principal?.isMasterAdmin || false,
+              }
+            : {}),
+        };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        currentUser,
+        activeRole,
+        isAuthenticated,
+        isAuthInitializing,
+        saasSession,
+        refreshSaasSession,
+        switchRole,
+        loginWithCredentials,
+        logout: handleLogout,
+        systemAccessControl,
+        updateSystemAccessControl,
+        firebaseUser,
+        isFirebaseConnected,
+        syncStatus,
+        syncNow,
+        loginWithGooglePopup: handleGoogleLogin,
+        loginWithGoogleRedirectFallback: handleGoogleRedirectLogin,
+        redirectAuthError,
+        clearRedirectAuthError: () => setRedirectAuthError(null),
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  return ctx;
+}

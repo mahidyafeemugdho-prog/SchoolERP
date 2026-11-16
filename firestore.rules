@@ -1,0 +1,270 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Hardened Global Helpers
+    // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isMasterAdmin() {
+      return isSignedIn()
+        && (
+          request.auth.token.isMasterAdmin == true
+          || request.auth.token.schoolRole == 'master_admin'
+          || (isVerifiedUser() && request.auth.token.email == 'mahidyafeemugdho@gmail.com')
+          || exists(/databases/$(database)/documents/master_admins/$(request.auth.uid))
+        );
+    }
+
+    function hasSchoolClaim(schoolId) {
+      return isSignedIn()
+        && request.auth.token.schoolId is string
+        && request.auth.token.schoolId == schoolId;
+    }
+
+    function isSchoolAdmin(schoolId) {
+      return hasSchoolClaim(schoolId)
+        && request.auth.token.schoolRole in ['super_admin', 'admin'];
+    }
+
+    function isSchoolStaff(schoolId) {
+      return hasSchoolClaim(schoolId)
+        && request.auth.token.schoolRole in [
+          'super_admin',
+          'admin',
+          'teacher',
+          'accountant',
+          'staff',
+          'librarian',
+          'receptionist',
+          'gatekeeper'
+        ];
+    }
+
+    function isSchoolActive(schoolId) {
+      let schoolDoc = get(/databases/$(database)/documents/schools/$(schoolId)).data;
+      return schoolDoc.status == 'active'
+        && schoolDoc.subscription.status == 'Active'
+        && schoolDoc.subscription.expiryTimestamp > request.time;
+    }
+
+    // -------------------------------------------------------------------------
+    // Platform-Level Collections (Master Admin & Trusted Backend)
+    // -------------------------------------------------------------------------
+    match /master_admins/{uid} {
+      allow get: if isSignedIn() && request.auth.uid == uid;
+      allow list, write: if false;
+    }
+
+    match /platform_counters/{counterId} {
+      allow read, write: if false;
+    }
+
+    match /subscription_plans/{planId} {
+      allow get, list: if isSignedIn();
+      allow write: if isMasterAdmin();
+    }
+
+    match /payment_trx_index/{trxId} {
+      allow read, write: if false;
+    }
+
+    match /payment_requests/{requestId} {
+      allow get: if isValidId(requestId) && (
+        isMasterAdmin() ||
+        (isSignedIn() && resource.data.schoolId == request.auth.token.schoolId)
+      );
+      allow list: if isMasterAdmin() || (
+        isSignedIn()
+        && request.auth.token.schoolId is string
+        && resource.data.schoolId == request.auth.token.schoolId
+      );
+      // Created and approved strictly via trusted backend Admin SDK
+      allow create, update, delete: if false;
+    }
+
+    match /subscription_history/{historyId} {
+      allow get: if isValidId(historyId) && (
+        isMasterAdmin() ||
+        (isSignedIn() && resource.data.schoolId == request.auth.token.schoolId)
+      );
+      allow list: if isMasterAdmin() || (
+        isSignedIn()
+        && request.auth.token.schoolId is string
+        && resource.data.schoolId == request.auth.token.schoolId
+      );
+      allow create, update, delete: if false;
+    }
+
+    match /saas_users/{uid} {
+      allow get: if isValidId(uid) && (
+        isMasterAdmin() ||
+        (isSignedIn() && request.auth.uid == uid) ||
+        (isSignedIn() && resource.data.schoolId == request.auth.token.schoolId && isSchoolAdmin(resource.data.schoolId))
+      );
+      allow list: if isMasterAdmin() || (
+        isSignedIn()
+        && request.auth.token.schoolRole in ['super_admin', 'admin']
+        && resource.data.schoolId == request.auth.token.schoolId
+      );
+      // Users cannot create or mutate their own schoolId/schoolRole/claims
+      allow create, update, delete: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // School Tenant Root & Isolated Tenant Subcollections
+    // -------------------------------------------------------------------------
+    match /schools/{schoolId} {
+      // School users can read their own school status & expiry notice even when expired
+      allow get: if isValidId(schoolId) && (isMasterAdmin() || hasSchoolClaim(schoolId));
+      allow list: if isMasterAdmin();
+      // Only Master Admin / trusted backend can create, suspend, activate, or alter school subscription
+      allow create, update, delete: if false;
+
+      // Tenant Users Subcollection
+      match /users/{uid} {
+        allow get: if isValidId(schoolId) && isValidId(uid) && (
+          isMasterAdmin() ||
+          (hasSchoolClaim(schoolId) && (request.auth.uid == uid || isSchoolAdmin(schoolId)))
+        );
+        allow list: if isValidId(schoolId) && (isMasterAdmin() || isSchoolAdmin(schoolId));
+        allow create, update, delete: if false;
+      }
+
+      // Tenant Data Slices (Replaces global school_sync for Multi-Tenant SaaS)
+      match /slices/{sliceId} {
+        allow get: if isValidId(schoolId) && isValidId(sliceId) && (
+          isMasterAdmin() ||
+          (hasSchoolClaim(schoolId) && isSchoolActive(schoolId))
+        );
+        allow list: if isValidId(schoolId) && (
+          isMasterAdmin() ||
+          (hasSchoolClaim(schoolId) && isSchoolActive(schoolId))
+        );
+        allow create, update: if isValidId(schoolId) && isValidId(sliceId)
+          && isVerifiedUser()
+          && request.resource.data.schoolId == schoolId
+          && (
+            isMasterAdmin() ||
+            (isSchoolStaff(schoolId) && isSchoolActive(schoolId))
+          );
+        allow delete: if isValidId(schoolId) && isValidId(sliceId) && isMasterAdmin();
+      }
+
+      // Tenant Domain Subcollections (students, staff, attendance, fees, exams, etc.)
+      match /{subCollection}/{docId} {
+        allow get: if isValidId(schoolId) && isValidId(docId)
+          && subCollection != 'users'
+          && subCollection != 'slices'
+          && (
+            isMasterAdmin() ||
+            (hasSchoolClaim(schoolId) && isSchoolActive(schoolId))
+          );
+        allow list: if isValidId(schoolId)
+          && subCollection != 'users'
+          && subCollection != 'slices'
+          && (
+            isMasterAdmin() ||
+            (hasSchoolClaim(schoolId) && isSchoolActive(schoolId))
+          );
+        allow create, update: if isValidId(schoolId) && isValidId(docId)
+          && subCollection != 'users'
+          && subCollection != 'slices'
+          && isVerifiedUser()
+          && request.resource.data.schoolId == schoolId
+          && (
+            isMasterAdmin() ||
+            (isSchoolStaff(schoolId) && isSchoolActive(schoolId))
+          );
+        allow delete: if isValidId(schoolId) && isValidId(docId)
+          && subCollection != 'users'
+          && subCollection != 'slices'
+          && (
+            isMasterAdmin() ||
+            (isSchoolAdmin(schoolId) && isSchoolActive(schoolId))
+          );
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Legacy Single-School Collections (Locked down to Master Admin / Migration only)
+    // -------------------------------------------------------------------------
+    match /school_sync/{syncId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /school_settings/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /config/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /students/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /staff/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /homework/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /homework_submissions/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /attendance/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /attendance_audit_logs/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /student_performance/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /exams/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /marks/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /feeInvoices/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /feePayments/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /feeHeads/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /expenses/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /notices/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /blog_posts/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /online_payments/{docId} {
+      allow read, write: if isMasterAdmin();
+    }
+    match /test/{docId} {
+      allow get: if isSignedIn();
+      allow list, write: if false;
+    }
+  }
+}

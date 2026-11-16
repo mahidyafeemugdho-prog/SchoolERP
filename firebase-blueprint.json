@@ -1,0 +1,120 @@
+{
+  "entities": {
+    "SchoolTenant": {
+      "title": "SchoolTenant",
+      "description": "Multi-tenant school account and subscription state",
+      "type": "object",
+      "properties": {
+        "schoolId": { "type": "string", "pattern": "^SCH[0-9]{3,}$" },
+        "schoolCode": { "type": "string", "maxLength": 64 },
+        "schoolName": { "type": "string", "maxLength": 200 },
+        "address": { "type": "string", "maxLength": 500 },
+        "contactNumber": { "type": "string", "maxLength": 40 },
+        "email": { "type": "string", "format": "email" },
+        "principalName": { "type": "string", "maxLength": 150 },
+        "adminName": { "type": "string", "maxLength": 150 },
+        "adminEmail": { "type": "string", "format": "email" },
+        "adminUid": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["pending", "active", "expired", "suspended"] }
+      },
+      "required": ["schoolId", "schoolCode", "schoolName", "status"]
+    },
+    "SubscriptionPlan": {
+      "title": "SubscriptionPlan",
+      "description": "Platform SaaS subscription plan catalog",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "enum": ["monthly", "quarterly", "half_yearly", "yearly"] },
+        "name": { "type": "string" },
+        "durationDays": { "type": "number" },
+        "priceBdt": { "type": "number" },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "name", "durationDays", "priceBdt"]
+    },
+    "PaymentRequest": {
+      "title": "PaymentRequest",
+      "description": "Manual subscription payment request (bKash, Nagad, Bank Transfer)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "planId": { "type": "string" },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["bKash", "Nagad", "Bank Transfer"] },
+        "senderNumber": { "type": "string" },
+        "transactionId": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] }
+      },
+      "required": ["id", "schoolId", "planId", "amount", "transactionId", "status"]
+    },
+    "SubscriptionHistory": {
+      "title": "SubscriptionHistory",
+      "description": "Audit log of school subscription activations, renewals, and suspensions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "eventType": { "type": "string" },
+        "planId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "schoolId", "eventType", "createdAt"]
+    },
+    "SaaSUser": {
+      "title": "SaaSUser",
+      "description": "Firebase Auth provisioned school user without plaintext password",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "schoolRole": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "disabled"] }
+      },
+      "required": ["uid", "email", "schoolId", "schoolRole", "status"]
+    },
+    "TenantSlice": {
+      "title": "TenantSlice",
+      "description": "Tenant-isolated ERP data slice stored under schools/{schoolId}/slices",
+      "type": "object",
+      "properties": {
+        "schoolId": { "type": "string" },
+        "slice": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["schoolId", "slice"]
+    }
+  },
+  "firestore": {
+    "/schools/{schoolId}": {
+      "schema": "SchoolTenant",
+      "description": "Multi-tenant school root records and subscription state"
+    },
+    "/schools/{schoolId}/slices/{sliceId}": {
+      "schema": "TenantSlice",
+      "description": "Isolated school ERP slices per tenant"
+    },
+    "/schools/{schoolId}/users/{uid}": {
+      "schema": "SaaSUser",
+      "description": "School-scoped provisioned user directory"
+    },
+    "/subscription_plans/{planId}": {
+      "schema": "SubscriptionPlan",
+      "description": "Platform subscription plans"
+    },
+    "/payment_requests/{requestId}": {
+      "schema": "PaymentRequest",
+      "description": "Manual subscription renewal payment requests"
+    },
+    "/subscription_history/{historyId}": {
+      "schema": "SubscriptionHistory",
+      "description": "Immutable subscription audit trail"
+    },
+    "/saas_users/{uid}": {
+      "schema": "SaaSUser",
+      "description": "Global user-to-school index"
+    }
+  }
+}
