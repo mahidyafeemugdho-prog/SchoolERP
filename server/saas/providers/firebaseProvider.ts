@@ -23,8 +23,18 @@ import {
   getDefaultPlatformPaymentChannels,
 } from '../types';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+function getSafeDirname(): string {
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta.url) {
+      return path.dirname(fileURLToPath(import.meta.url));
+    }
+  } catch {
+    // Fallback for CJS-bundled serverless functions
+  }
+  return process.cwd();
+}
+
+const SAFE_DIRNAME = getSafeDirname();
 
 interface FirebaseAppletConfig {
   projectId: string;
@@ -35,7 +45,13 @@ interface FirebaseAppletConfig {
 function loadAppletConfig(): FirebaseAppletConfig {
   const candidates = [
     path.resolve(process.cwd(), 'firebase-applet-config.json'),
-    path.resolve(__dirname, '../../../firebase-applet-config.json'),
+    ...(process.env.LAMBDA_TASK_ROOT
+      ? [path.resolve(process.env.LAMBDA_TASK_ROOT, 'firebase-applet-config.json')]
+      : []),
+    path.resolve(SAFE_DIRNAME, 'firebase-applet-config.json'),
+    path.resolve(SAFE_DIRNAME, '../firebase-applet-config.json'),
+    path.resolve(SAFE_DIRNAME, '../../firebase-applet-config.json'),
+    path.resolve(SAFE_DIRNAME, '../../../firebase-applet-config.json'),
   ];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
@@ -52,6 +68,38 @@ function loadAppletConfig(): FirebaseAppletConfig {
 let cachedApp: App | null = null;
 let adminInitError: string | null = null;
 
+function parseServiceAccountFromEnv(rawValue: string): Record<string, any> | null {
+  let trimmed = rawValue.trim();
+  if (!trimmed) return null;
+
+  // Strip accidental outer single/double quotes from env UI copy-paste
+  if (
+    (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+  ) {
+    trimmed = trimmed.slice(1, -1).trim();
+  }
+
+  let jsonText = trimmed;
+  if (!jsonText.startsWith('{')) {
+    try {
+      const decoded = Buffer.from(trimmed, 'base64').toString('utf-8').trim();
+      if (decoded.startsWith('{')) {
+        jsonText = decoded;
+      }
+    } catch {
+      // ignore base64 decode failure
+    }
+  }
+
+  if (!jsonText.startsWith('{')) return null;
+  const parsed = JSON.parse(jsonText);
+  if (typeof parsed?.private_key === 'string') {
+    parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+  }
+  return parsed;
+}
+
 function getAdminApp(): { app: App | null; config: FirebaseAppletConfig; hasCredentials: boolean } {
   const config = loadAppletConfig();
   if (cachedApp) {
@@ -64,11 +112,29 @@ function getAdminApp(): { app: App | null; config: FirebaseAppletConfig; hasCred
 
   try {
     const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-    if (serviceAccountJson && serviceAccountJson.trim().startsWith('{')) {
-      const parsed = JSON.parse(serviceAccountJson);
+    if (serviceAccountJson) {
+      const parsed = parseServiceAccountFromEnv(serviceAccountJson);
+      if (parsed?.client_email && parsed?.private_key) {
+        cachedApp = initializeApp({
+          credential: cert(parsed),
+          projectId: parsed.project_id || config.projectId,
+        });
+        return { app: cachedApp, config, hasCredentials: true };
+      }
+    }
+
+    // Alternative split env vars (useful if hosting UI limits single-var formatting)
+    const envClientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+    const envPrivateKey = process.env.FIREBASE_PRIVATE_KEY?.trim();
+    const envProjectId = (process.env.FIREBASE_PROJECT_ID || config.projectId || '').trim();
+    if (envClientEmail && envPrivateKey && envProjectId) {
       cachedApp = initializeApp({
-        credential: cert(parsed),
-        projectId: parsed.project_id || config.projectId,
+        credential: cert({
+          projectId: envProjectId,
+          clientEmail: envClientEmail,
+          privateKey: envPrivateKey.replace(/\\n/g, '\n'),
+        }),
+        projectId: envProjectId,
       });
       return { app: cachedApp, config, hasCredentials: true };
     }

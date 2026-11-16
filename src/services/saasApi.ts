@@ -321,6 +321,8 @@ export function computeClientSubscriptionState(
   };
 }
 
+const SAAS_API_BASE = (import.meta.env.VITE_SAAS_API_BASE || '/api/saas').replace(/\/+$/, '');
+
 async function saasFetch<T>(path: string, options: RequestInit = {}, requireAuthToken = true): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -339,7 +341,7 @@ async function saasFetch<T>(path: string, options: RequestInit = {}, requireAuth
   const timeoutId = setTimeout(() => controller.abort(), 10_000);
   let res: Response;
   try {
-    res = await fetch(`/api/saas${path}`, {
+    res = await fetch(`${SAAS_API_BASE}${path}`, {
       ...options,
       headers,
       signal: options.signal || controller.signal,
