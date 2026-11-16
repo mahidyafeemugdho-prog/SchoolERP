@@ -95,6 +95,7 @@ import {
   generateNextSchoolEmployeeId,
   isMatchingScopedId,
 } from '../utils/schoolIdFormatter';
+import { compareStudentsByClassAndRoll } from '../utils/studentSort';
 
 const STORAGE_KEYS = {
   SCHOOL: 'school_erp_profile',
@@ -223,7 +224,9 @@ function getStored<T>(key: string, defaultValue: T): T {
   try {
     const item = safeGetLocalStorage(key);
     if (!item) {
-      safeSetLocalStorage(key, JSON.stringify(defaultValue));
+      if (!Array.isArray(defaultValue) || defaultValue.length > 0) {
+        safeSetLocalStorage(key, JSON.stringify(defaultValue));
+      }
       return defaultValue;
     }
     return JSON.parse(item) as T;
@@ -317,8 +320,8 @@ export const StorageService = {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('school_profile_updated', { detail: profile }));
     }
-    // Immediately push to cloud Firestore for this domain
-    CloudSyncService.pushLocalToCloud(true);
+    // Push only the profile slice so unrelated slices are never overwritten
+    CloudSyncService.pushSliceToCloud('profile', true);
   },
 
   // MFS Payment Settings (bKash, Nagad & Rocket number and instructions)
@@ -336,9 +339,7 @@ export const StorageService = {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('mfs_settings_updated', { detail: settings }));
     }
-    CloudSyncService.pushSliceToCloud('profile', true).catch(() => {
-      CloudSyncService.pushLocalToCloud(true);
-    });
+    CloudSyncService.pushSliceToCloud('profile', true);
     // Sync to server storage
     try {
       fetch('/api/mfs-settings', {
@@ -350,10 +351,12 @@ export const StorageService = {
   },
 
   getOnlinePaymentRequests(): OnlinePaymentRequest[] {
-    const raw = typeof window !== 'undefined' ? safeGetLocalStorage(STORAGE_KEYS.ONLINE_PAYMENT_REQUESTS) : null;
+    const raw = safeGetLocalStorage(STORAGE_KEYS.ONLINE_PAYMENT_REQUESTS);
     if (raw === null) {
       const list = initialOnlinePaymentRequests || [];
-      setStored(STORAGE_KEYS.ONLINE_PAYMENT_REQUESTS, list);
+      if (list.length > 0) {
+        setStored(STORAGE_KEYS.ONLINE_PAYMENT_REQUESTS, list);
+      }
       return list;
     }
     try {
@@ -368,9 +371,7 @@ export const StorageService = {
       window.dispatchEvent(new CustomEvent('online_payments_updated', { detail: requests }));
     }
     if (syncToCloud) {
-      CloudSyncService.pushSliceToCloud('online_payments', true).catch(() => {
-        CloudSyncService.pushLocalToCloud(true);
-      });
+      CloudSyncService.pushSliceToCloud('online_payments', true);
     }
   },
   upsertOnlinePaymentRequestLocal(request: OnlinePaymentRequest): void {
@@ -494,10 +495,12 @@ export const StorageService = {
   // Students
   getStudents(): Student[] {
     const list = getStored<Student[]>(STORAGE_KEYS.STUDENTS, initialStudents || []);
-    return (list || []).map((s) => ({
-      ...s,
-      ...(s.authUid ? {} : { password: s.password || '1234' }),
-    }));
+    return (list || [])
+      .map((s) => ({
+        ...s,
+        ...(s.authUid ? {} : { password: s.password || '1234' }),
+      }))
+      .sort(compareStudentsByClassAndRoll);
   },
   updateStudentPassword(studentId: string, newPassword: string): boolean {
     const students = this.getStudents();
@@ -541,6 +544,9 @@ export const StorageService = {
     }));
     setStored(STORAGE_KEYS.STUDENTS, updated);
     CloudSyncService.pushSliceToCloud('students', true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('school_cloud_data_synced', { detail: { syncTime: new Date().toISOString() } }));
+    }
   },
   promoteStudentsBatch(
     updates: Array<{
@@ -602,7 +608,7 @@ export const StorageService = {
     if (studentToSave.authUid) {
       delete studentToSave.password;
     }
-    const updated = [studentToSave, ...current];
+    const updated = [...current, studentToSave].sort(compareStudentsByClassAndRoll);
     setStored(STORAGE_KEYS.STUDENTS, updated);
     try {
       setDoc(doc(db, 'students', studentToSave.id), cleanForFirestore(studentToSave)).catch((err: any) =>
@@ -610,6 +616,9 @@ export const StorageService = {
       );
     } catch {}
     CloudSyncService.pushSliceToCloud('students', true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('school_cloud_data_synced', { detail: { syncTime: new Date().toISOString() } }));
+    }
   },
   updateStudent(student: Student): void {
     const current = this.getStudents();
@@ -620,7 +629,9 @@ export const StorageService = {
     if (studentToSave.authUid) {
       delete studentToSave.password;
     }
-    const updated = current.map((s) => (s.id === student.id ? studentToSave : s));
+    const updated = current
+      .map((s) => (s.id === student.id ? studentToSave : s))
+      .sort(compareStudentsByClassAndRoll);
     setStored(STORAGE_KEYS.STUDENTS, updated);
     try {
       setDoc(doc(db, 'students', studentToSave.id), cleanForFirestore(studentToSave)).catch((err: any) =>
@@ -628,6 +639,9 @@ export const StorageService = {
       );
     } catch {}
     CloudSyncService.pushSliceToCloud('students', true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('school_cloud_data_synced', { detail: { syncTime: new Date().toISOString() } }));
+    }
   },
   deleteStudent(id: string): void {
     const current = this.getStudents();
@@ -647,8 +661,14 @@ export const StorageService = {
   },
   bulkAddStudents(newStudents: Student[]): void {
     const current = this.getStudents();
-    setStored(STORAGE_KEYS.STUDENTS, [...newStudents, ...current]);
+    setStored(
+      STORAGE_KEYS.STUDENTS,
+      [...current, ...newStudents].sort(compareStudentsByClassAndRoll)
+    );
     CloudSyncService.pushSliceToCloud('students', true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('school_cloud_data_synced', { detail: { syncTime: new Date().toISOString() } }));
+    }
   },
 
   // Attendance
@@ -1324,7 +1344,7 @@ export const StorageService = {
       }
     });
     setStored(STORAGE_KEYS.MARKS, updated);
-    CloudSyncService.pushLocalToCloud(true);
+    CloudSyncService.pushSliceToCloud('attendance', true);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('school_cloud_data_synced'));
     }
@@ -1362,7 +1382,7 @@ export const StorageService = {
   addInvoice(invoice: FeeInvoice): void {
     const current = this.getInvoices();
     setStored(STORAGE_KEYS.INVOICES, [invoice, ...current]);
-    CloudSyncService.pushLocalToCloud(true);
+    CloudSyncService.pushSliceToCloud('finance', true);
   },
   updateInvoice(invoice: FeeInvoice): void {
     const current = this.getInvoices();
@@ -1370,7 +1390,7 @@ export const StorageService = {
       STORAGE_KEYS.INVOICES,
       current.map((inv) => (inv.id === invoice.id ? invoice : inv))
     );
-    CloudSyncService.pushLocalToCloud(true);
+    CloudSyncService.pushSliceToCloud('finance', true);
   },
   deleteInvoice(id: string): void {
     const current = this.getInvoices();
@@ -1378,7 +1398,7 @@ export const StorageService = {
       STORAGE_KEYS.INVOICES,
       current.filter((inv) => inv.id !== id)
     );
-    CloudSyncService.pushLocalToCloud(true);
+    CloudSyncService.pushSliceToCloud('finance', true);
   },
   getPayments(): FeePayment[] {
     return getStored<FeePayment[]>(STORAGE_KEYS.PAYMENTS, initialPayments || []);
@@ -1403,7 +1423,7 @@ export const StorageService = {
         status: newStatus,
       });
     }
-    CloudSyncService.pushLocalToCloud(true);
+    CloudSyncService.pushSliceToCloud('finance', true);
   },
   updatePayment(payment: FeePayment): void {
     const currentPayments = this.getPayments();
@@ -1425,7 +1445,7 @@ export const StorageService = {
         status: newStatus,
       });
     }
-    CloudSyncService.pushLocalToCloud(true);
+    CloudSyncService.pushSliceToCloud('finance', true);
   },
   deletePayment(id: string): void {
     const currentPayments = this.getPayments();
@@ -1450,7 +1470,7 @@ export const StorageService = {
         status: newStatus,
       });
     }
-    CloudSyncService.pushLocalToCloud(true);
+    CloudSyncService.pushSliceToCloud('finance', true);
   },
 
   // Class Fee Configurations (শ্রেণিভিত্তিক ফি কাঠামো - Nursery to Class 10)
@@ -1642,7 +1662,7 @@ export const StorageService = {
             const sf1 = cleanTitleBn.includes('১ম') || cleanTitleEn.includes('1st') || cleanTitleEn.includes('sem1');
             const it2 = itNameBnClean.includes('২য়') || itNameBnClean.includes('২য়') || itNameClean.includes('2nd') || itNameClean.includes('sem2');
             const sf2 = cleanTitleBn.includes('২য়') || cleanTitleBn.includes('২য়') || cleanTitleEn.includes('2nd') || cleanTitleEn.includes('sem2');
-            const it3 = itNameBnClean.includes('৩য়') || itNameBnClean.includes('৩য়') || itNameClean.includes('3rd') || cleanTitleEn.includes('sem3');
+            const it3 = itNameBnClean.includes('৩য়') || itNameBnClean.includes('৩য়') || itNameClean.includes('3rd') || itNameClean.includes('sem3');
             const sf3 = cleanTitleBn.includes('৩য়') || cleanTitleBn.includes('৩য়') || cleanTitleEn.includes('3rd') || cleanTitleEn.includes('sem3');
 
             return (it1 && sf1) || (it2 && sf2) || (it3 && sf3);
@@ -1656,7 +1676,8 @@ export const StorageService = {
             (itNameBnClean.includes('শিক্ষাসফর') && cleanTitleBn.includes('শিক্ষাসফর')) ||
             (itNameBnClean.includes('ক্রীড়া') && cleanTitleBn.includes('ক্রীড়া')) ||
             (itNameBnClean.includes('অর্ধবার্ষিক') && cleanTitleBn.includes('অর্ধবার্ষিক')) ||
-            (itNameBnClean.includes('সেশন') && cleanTitleBn.includes('সেশন'))
+            ((itNameBnClean.includes('সেশনফি') || itNameBnClean.includes('সেশনচার্জ')) &&
+              (cleanTitleBn.includes('সেশনফি') || cleanTitleBn.includes('সেশনচার্জ')))
           );
         });
 
@@ -1713,6 +1734,14 @@ export const StorageService = {
 
     const studentPayments = this.getPayments().filter(
       (p) => p.studentId === student.id || p.studentId === student.studentId
+    );
+    const approvedOnlineRequests = this.getOnlinePaymentRequests().filter(
+      (r) =>
+        r &&
+        r.status === 'approved' &&
+        (r.studentId === student.id ||
+          r.studentId === student.studentId ||
+          (r.studentRoll === student.roll && r.className === student.className))
     );
 
     const norm = (val?: string) => (val || '').normalize('NFC').toLowerCase();
@@ -1773,16 +1802,33 @@ export const StorageService = {
       const hasPaidTuitionInPayments = studentPayments.some((p) => {
         const linkedInv = invoices.find((i) => i.id === p.invoiceId);
         if (linkedInv && linkedInv.dueAmount > 0 && linkedInv.status !== 'Paid') return false;
-        return (
+        const matchedItems =
           Array.isArray(p.items) &&
           p.items.some((it) => {
             if (hasYearMismatch(it.month || it.headName, currentYear)) return false;
             return isTuitionText(it.headName) && (matchesMonth(it.month) || matchesMonth(it.headName));
-          })
-        );
+          });
+        if (matchedItems) return true;
+        if (p.notes && !hasYearMismatch(p.notes, currentYear)) {
+          return isTuitionText(p.notes) && matchesMonth(p.notes);
+        }
+        return false;
       });
 
-      const hasPaidTuition = hasPaidTuitionInInvoices || hasPaidTuitionInPayments;
+      const hasPaidTuitionInApprovedOnline = approvedOnlineRequests.some((r) => {
+        if (Array.isArray(r.items) && r.items.length > 0) {
+          return r.items.some((it) => {
+            if (hasYearMismatch(it.month || it.headName, currentYear)) return false;
+            return isTuitionText(it.headName) && (matchesMonth(it.month) || matchesMonth(it.headName));
+          });
+        }
+        if (r.feeTitle && !hasYearMismatch(r.feeTitle, currentYear)) {
+          return isTuitionText(r.feeTitle) && matchesMonth(r.feeTitle);
+        }
+        return false;
+      });
+
+      const hasPaidTuition = hasPaidTuitionInInvoices || hasPaidTuitionInPayments || hasPaidTuitionInApprovedOnline;
 
       const alreadyInDueTuition = dues.some(
         (d) =>
@@ -1827,16 +1873,34 @@ export const StorageService = {
         const hasPaidTransportInPayments = studentPayments.some((p) => {
           const linkedInv = invoices.find((i) => i.id === p.invoiceId);
           if (linkedInv && linkedInv.dueAmount > 0 && linkedInv.status !== 'Paid') return false;
-          return (
+          const matchedItems =
             Array.isArray(p.items) &&
             p.items.some((it) => {
               if (hasYearMismatch(it.month || it.headName, currentYear)) return false;
               return isTransportText(it.headName) && (matchesMonth(it.month) || matchesMonth(it.headName));
-            })
-          );
+            });
+          if (matchedItems) return true;
+          if (p.notes && !hasYearMismatch(p.notes, currentYear)) {
+            return isTransportText(p.notes) && matchesMonth(p.notes);
+          }
+          return false;
         });
 
-        const hasPaidTransport = hasPaidTransportInInvoices || hasPaidTransportInPayments;
+        const hasPaidTransportInApprovedOnline = approvedOnlineRequests.some((r) => {
+          if (Array.isArray(r.items) && r.items.length > 0) {
+            return r.items.some((it) => {
+              if (hasYearMismatch(it.month || it.headName, currentYear)) return false;
+              return isTransportText(it.headName) && (matchesMonth(it.month) || matchesMonth(it.headName));
+            });
+          }
+          if (r.feeTitle && !hasYearMismatch(r.feeTitle, currentYear)) {
+            return isTransportText(r.feeTitle) && matchesMonth(r.feeTitle);
+          }
+          return false;
+        });
+
+        const hasPaidTransport =
+          hasPaidTransportInInvoices || hasPaidTransportInPayments || hasPaidTransportInApprovedOnline;
 
         const alreadyInDueTransport = dues.some(
           (d) =>
@@ -1928,7 +1992,130 @@ export const StorageService = {
       }
     } catch {}
 
-    return dues;
+    // 5. Settle approved lump-sum "All Outstanding Dues" payments (when itemized breakdown was not attached)
+    // Deduplicate across invoices, payments, and approved online requests so the same transaction is only credited once.
+    const isAllDuesText = (txt?: string) => {
+      const t = norm(txt);
+      return (
+        t.includes('সকল বকেয়া') ||
+        t.includes('সকল বকেয়া') ||
+        t.includes('all outstanding dues') ||
+        t.includes('all dues')
+      );
+    };
+
+    const lumpSumCredits: Array<{ date: string; amount: number }> = [];
+    const consumedInvoiceCreditKeys: string[] = [];
+
+    invoices.forEach((inv) => {
+      if (isInvoiceSettled(inv) && (!inv.items || inv.items.length === 0) && isAllDuesText(inv.feeType)) {
+        const amt = Number(inv.paidAmount || inv.netAmount || 0);
+        const dt = inv.paymentDate || inv.dueDate || todayStr;
+        if (amt > 0) {
+          lumpSumCredits.push({ date: dt, amount: amt });
+          consumedInvoiceCreditKeys.push(`${amt}_${dt}`);
+        }
+      }
+    });
+
+    const consumedPaymentCreditKeys: string[] = [...consumedInvoiceCreditKeys];
+
+    studentPayments.forEach((p) => {
+      if ((!p.items || p.items.length === 0) && isAllDuesText(p.notes)) {
+        const linkedToExistingInvoice = invoices.some((inv) => inv.id === p.invoiceId);
+        if (linkedToExistingInvoice) return;
+
+        const amt = Number(p.amount || 0);
+        const dt = p.paidDate || p.paymentDate || todayStr;
+        const sig = `${amt}_${dt}`;
+        const existingIdx = consumedInvoiceCreditKeys.indexOf(sig);
+        if (existingIdx !== -1) {
+          // Matches the paired invoice created in the same approval flow
+          consumedInvoiceCreditKeys.splice(existingIdx, 1);
+          return;
+        }
+        if (amt > 0) {
+          lumpSumCredits.push({ date: dt, amount: amt });
+          consumedPaymentCreditKeys.push(sig);
+        }
+      }
+    });
+
+    approvedOnlineRequests.forEach((r) => {
+      if ((!r.items || r.items.length === 0) && (r.isPayAll || isAllDuesText(r.feeTitle))) {
+        const amt = Number(r.amount || 0);
+        const approvedDate = r.approvedAt ? r.approvedAt.split('T')[0] : '';
+        const reqDate = r.requestDate || todayStr;
+        const dt = approvedDate || reqDate;
+
+        const alreadyInPaymentsOrInvoices =
+          studentPayments.some(
+            (p) =>
+              (r.transactionId && p.transactionId === r.transactionId) ||
+              (r.receiptNo && p.receiptNo === r.receiptNo) ||
+              (isAllDuesText(p.notes) && Number(p.amount) === amt && (p.paidDate === dt || p.paidDate === reqDate))
+          ) ||
+          invoices.some(
+            (inv) =>
+              isInvoiceSettled(inv) &&
+              isAllDuesText(inv.feeType) &&
+              Number(inv.paidAmount || inv.netAmount) === amt &&
+              (inv.dueDate === dt || inv.dueDate === reqDate)
+          );
+
+        if (!alreadyInPaymentsOrInvoices && amt > 0) {
+          lumpSumCredits.push({ date: dt, amount: amt });
+        }
+      }
+    });
+
+    // Also remove any individual dues matched by approved online requests that carried explicit items
+    // (e.g., if online_payments synced before finance slice)
+    const approvedExplicitItems = approvedOnlineRequests.flatMap((r) => (Array.isArray(r.items) ? r.items : []));
+    let workingDues = dues.filter((due) => {
+      if (approvedExplicitItems.length === 0) return true;
+      return !approvedExplicitItems.some((it) => {
+        if (it.id && it.id === due.id) return true;
+        return norm(it.headName) === norm(due.headName) && norm(it.month) === norm(due.month);
+      });
+    });
+
+    if (lumpSumCredits.length > 0 && workingDues.length > 0) {
+      // Sort chronologically so oldest dues are settled first
+      workingDues = workingDues
+        .map((d) => ({ ...d }))
+        .sort((a, b) => (a.dueDate || '9999-12-31').localeCompare(b.dueDate || '9999-12-31'));
+
+      lumpSumCredits
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .forEach((credit) => {
+          let remaining = credit.amount;
+          const creditMonth = credit.date.slice(0, 7);
+          const nextDues: FeeItem[] = [];
+
+          for (const due of workingDues) {
+            const isEligible =
+              !due.dueDate ||
+              due.dueDate <= credit.date ||
+              due.dueDate.slice(0, 7) <= creditMonth;
+
+            if (remaining > 0 && isEligible) {
+              if (due.amount <= remaining) {
+                remaining -= due.amount;
+                continue; // Fully settled
+              } else {
+                due.amount = Math.max(0, due.amount - remaining);
+                remaining = 0;
+              }
+            }
+            nextDues.push(due);
+          }
+
+          workingDues = nextDues;
+        });
+    }
+
+    return workingDues;
   },
 
   // Expenses
@@ -3713,7 +3900,10 @@ export const StorageService = {
   addEnquiry(enquiry: AdmissionEnquiry): void {
     const current = this.getEnquiries();
     setStored(STORAGE_KEYS.ENQUIRIES, [enquiry, ...current]);
-    CloudSyncService.pushSliceToCloud('students');
+    CloudSyncService.pushSliceToCloud('students', true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('school_cloud_data_synced', { detail: { syncTime: new Date().toISOString() } }));
+    }
   },
   updateEnquiryStatus(id: string, status: AdmissionEnquiry['status']): void {
     const current = this.getEnquiries();
@@ -3721,7 +3911,10 @@ export const StorageService = {
       STORAGE_KEYS.ENQUIRIES,
       current.map((e) => (e.id === id ? { ...e, status } : e))
     );
-    CloudSyncService.pushSliceToCloud('students');
+    CloudSyncService.pushSliceToCloud('students', true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('school_cloud_data_synced', { detail: { syncTime: new Date().toISOString() } }));
+    }
   },
   convertEnquiryToStudent(
     enquiryId: string,
@@ -3895,13 +4088,19 @@ export const StorageService = {
       console.warn('Could not auto-generate admission invoice:', err);
     }
 
-    CloudSyncService.pushSliceToCloud('students');
+    CloudSyncService.pushSliceToCloud('students', true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('school_cloud_data_synced', { detail: { syncTime: new Date().toISOString() } }));
+    }
     return newStudent;
   },
   deleteEnquiry(id: string): void {
     const current = this.getEnquiries();
     setStored(STORAGE_KEYS.ENQUIRIES, current.filter((e) => e.id !== id));
-    CloudSyncService.pushSliceToCloud('students');
+    CloudSyncService.pushSliceToCloud('students', true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('school_cloud_data_synced', { detail: { syncTime: new Date().toISOString() } }));
+    }
   },
 
   // Website Contact Messages (Direct for Super Admin)

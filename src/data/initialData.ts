@@ -47,6 +47,7 @@ export const initialSchoolProfile: SchoolProfile = {
   website: 'www.smartschoolbd.com',
   principalNameEn: '',
   principalNameBn: '',
+  principalSignatureUrl: '',
   establishedYear: '2026',
   currentSession: '2026',
   logoUrl: DEFAULT_SCHOOL_LOGO,

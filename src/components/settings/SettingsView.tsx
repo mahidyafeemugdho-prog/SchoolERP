@@ -24,13 +24,20 @@ import {
   User,
   Sparkles,
   QrCode,
+  PenTool,
 } from 'lucide-react';
 
 import { useSchool } from '../../context/SchoolContext';
 import { AIService } from '../../services/aiService';
 import { getDomainTenantId, getCustomWorkspaceId, CloudSyncService } from '../../services/cloudSync';
-import { safeGetLocalStorage, safeSetLocalStorage, compressImageToPassportSize } from '../../utils/storageHelper';
+import {
+  safeGetLocalStorage,
+  safeSetLocalStorage,
+  compressImageToPassportSize,
+  compressSignatureImage,
+} from '../../utils/storageHelper';
 import { AccountCredentialsModal } from '../auth/AccountCredentialsModal';
+import { hydrateSchoolProfileFromSaaSSchool } from '../../utils/schoolNameResolver';
 
 export const SettingsView: React.FC = () => {
   const { currentUser, activeRole, isFirebaseConnected, syncStatus, syncNow, saasSession } = useAuth();
@@ -38,9 +45,12 @@ export const SettingsView: React.FC = () => {
   const [showCredsModal, setShowCredsModal] = useState<boolean>(false);
   const { language } = useLanguage();
   const { schoolProfile, updateSchoolProfile } = useSchool();
-  const [profile, setProfile] = useState<SchoolProfile>(schoolProfile);
+  const [profile, setProfile] = useState<SchoolProfile>(
+    () => hydrateSchoolProfileFromSaaSSchool(schoolProfile, saasSession?.school).profile
+  );
   const [saveSuccess, setSaveSuccess] = useState<string>('');
   const [importNotice, setImportNotice] = useState<string>('');
+  const [autoTransparentSig, setAutoTransparentSig] = useState<boolean>(true);
 
   // Super Admin Credentials state
   const [adminCreds, setAdminCreds] = useState<SuperAdminCredentials>(() =>
@@ -61,9 +71,9 @@ export const SettingsView: React.FC = () => {
 
   // Keep local form in sync if schoolProfile or cloud data changes externally
   React.useEffect(() => {
-    setProfile(schoolProfile);
+    setProfile(hydrateSchoolProfileFromSaaSSchool(schoolProfile, saasSession?.school).profile);
     AIService.checkAIStatus().then((s) => setAiStatus(s));
-  }, [schoolProfile]);
+  }, [schoolProfile, saasSession?.school]);
 
   React.useEffect(() => {
     const handleCloudSynced = () => {
@@ -167,6 +177,50 @@ export const SettingsView: React.FC = () => {
 
   const handleRemoveLogo = () => {
     setProfile((prev) => ({ ...prev, logoUrl: '' }));
+  };
+
+  const handleSignatureUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const compressed = await compressSignatureImage(file, {
+        maxWidth: 420,
+        maxHeight: 140,
+        autoTransparentBg: autoTransparentSig,
+      });
+      if (!compressed) return;
+      const updated = { ...profile, principalSignatureUrl: compressed };
+      setProfile(updated);
+      updateSchoolProfile(updated);
+      setSaveSuccess(
+        language === 'bn'
+          ? 'প্রধান শিক্ষকের স্বাক্ষর আপলোড ও সংরক্ষিত হয়েছে — সকল সনদ, মার্কশিট, প্রবেশপত্র ও আইডি কার্ডে প্রদর্শিত হবে।'
+          : 'Principal signature uploaded & saved — it will now appear across all certificates, marksheets, admit cards, and ID cards.'
+      );
+      setTimeout(() => setSaveSuccess(''), 3500);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const updated = { ...profile, principalSignatureUrl: result };
+        setProfile(updated);
+        updateSchoolProfile(updated);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleRemoveSignature = () => {
+    const updated = { ...profile, principalSignatureUrl: '' };
+    setProfile(updated);
+    updateSchoolProfile(updated);
+    setSaveSuccess(
+      language === 'bn'
+        ? 'প্রধান শিক্ষকের স্বাক্ষর মুছে ফেলা হয়েছে।'
+        : 'Principal signature removed.'
+    );
+    setTimeout(() => setSaveSuccess(''), 3000);
   };
 
   const handleHeroImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -581,6 +635,87 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
 
+          {/* Principal / Head Teacher Digital Signature Upload Card */}
+          <div className="p-4 bg-indigo-50/50 rounded-xl border border-indigo-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center space-x-4">
+              <div className="w-40 h-16 rounded-xl border-2 border-dashed border-indigo-300 bg-white flex items-center justify-center overflow-hidden shrink-0 shadow-xs px-2">
+                {profile.principalSignatureUrl ? (
+                  <img
+                    src={profile.principalSignatureUrl}
+                    alt="Principal Signature"
+                    className="max-h-14 max-w-full object-contain"
+                  />
+                ) : (
+                  <div className="text-center text-slate-400 flex flex-col items-center">
+                    <PenTool className="w-4 h-4 text-indigo-400 mb-0.5" />
+                    <span className="text-[10px]">
+                      {language === 'bn' ? 'স্বাক্ষর নেই' : 'No Signature'}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900 text-xs flex items-center space-x-1.5">
+                  <span>
+                    {language === 'bn'
+                      ? 'অধ্যক্ষ / প্রধান শিক্ষকের ডিজিটাল স্বাক্ষর (Principal Signature)'
+                      : 'Principal / Head Teacher Signature'}
+                  </span>
+                </h4>
+                <p className="text-[11px] text-slate-600 mt-0.5">
+                  {language === 'bn'
+                    ? 'প্রশংসাপত্র, ছাড়পত্র (TC), চারিত্রিক ও অধ্যয়ন সনদ, প্রবেশপত্র, মার্কশিট ও আইডি কার্ডসহ সকল সনদে স্বয়ংক্রিয়ভাবে যুক্ত হবে।'
+                    : 'Automatically printed on all certificates (Testimonial, TC, Character, Bonafide), admit cards, marksheets, and ID cards.'}
+                </p>
+                <label className="inline-flex items-center space-x-1.5 mt-1.5 text-[11px] text-indigo-900 font-medium cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={autoTransparentSig}
+                    onChange={(e) => setAutoTransparentSig(e.target.checked)}
+                    className="rounded border-indigo-300 text-indigo-600"
+                  />
+                  <span>
+                    {language === 'bn'
+                      ? 'সাদা কাগজের ব্যাকগ্রাউন্ড স্বয়ংক্রিয়ভাবে স্বচ্ছ করুন (Transparent PNG)'
+                      : 'Auto-remove white paper background (Transparent PNG)'}
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2 shrink-0">
+              <label className="flex items-center space-x-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold cursor-pointer shadow-xs transition-colors">
+                <PenTool className="w-3.5 h-3.5" />
+                <span>
+                  {language === 'bn'
+                    ? profile.principalSignatureUrl
+                      ? 'স্বাক্ষর পরিবর্তন'
+                      : 'স্বাক্ষর আপলোড করুন'
+                    : profile.principalSignatureUrl
+                    ? 'Change Signature'
+                    : 'Upload Signature'}
+                </span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleSignatureUpload}
+                  className="hidden"
+                />
+              </label>
+              {profile.principalSignatureUrl && (
+                <button
+                  type="button"
+                  onClick={handleRemoveSignature}
+                  className="flex items-center space-x-1 px-2.5 py-2 bg-white hover:bg-rose-50 border border-slate-200 text-rose-600 rounded-lg text-xs font-semibold transition-colors"
+                  title="Remove Signature"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{language === 'bn' ? 'মুছে ফেলুন' : 'Remove'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block font-semibold text-slate-700 mb-1">
@@ -890,7 +1025,8 @@ export const SettingsView: React.FC = () => {
                   <span className="text-[10px] text-slate-500 block mb-0.5 font-semibold">শিক্ষার্থী সংখ্যা (Students)</span>
                   <input
                     type="text"
-                    value={profile.statsStudents || '৫০০+'}
+                    value={profile.statsStudents ?? ''}
+                    placeholder="০"
                     onChange={(e) => setProfile({ ...profile, statsStudents: e.target.value })}
                     className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-bold text-blue-800"
                   />
@@ -899,7 +1035,8 @@ export const SettingsView: React.FC = () => {
                   <span className="text-[10px] text-slate-500 block mb-0.5 font-semibold">শিক্ষক-শিক্ষিকা (Teachers)</span>
                   <input
                     type="text"
-                    value={profile.statsTeachers || '২৫+'}
+                    value={profile.statsTeachers ?? ''}
+                    placeholder="০"
                     onChange={(e) => setProfile({ ...profile, statsTeachers: e.target.value })}
                     className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-bold text-emerald-800"
                   />
@@ -908,7 +1045,8 @@ export const SettingsView: React.FC = () => {
                   <span className="text-[10px] text-slate-500 block mb-0.5 font-semibold">ক্লাস রুম (Classrooms)</span>
                   <input
                     type="text"
-                    value={profile.statsClassrooms || '১০+'}
+                    value={profile.statsClassrooms ?? ''}
+                    placeholder="০"
                     onChange={(e) => setProfile({ ...profile, statsClassrooms: e.target.value })}
                     className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-bold text-purple-800"
                   />
@@ -917,7 +1055,8 @@ export const SettingsView: React.FC = () => {
                   <span className="text-[10px] text-slate-500 block mb-0.5 font-semibold">অভিজ্ঞতা (Experience)</span>
                   <input
                     type="text"
-                    value={profile.statsExperience || '১০+ বছর'}
+                    value={profile.statsExperience ?? ''}
+                    placeholder="১+ বছর"
                     onChange={(e) => setProfile({ ...profile, statsExperience: e.target.value })}
                     className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-bold text-rose-800"
                   />

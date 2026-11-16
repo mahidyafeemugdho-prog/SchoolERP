@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { calculateSubjectGrade, calculateTotalGPA } from '../../utils/grading';
+import { compareStudentsByClassAndRoll, compareStudentsByRoll } from '../../utils/studentSort';
 import {
   BarChart3,
   Printer,
@@ -75,7 +76,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialReportType, jum
 
   const filteredStudents = useMemo(() => {
     const base = selectedClass === 'all' ? students : students.filter((s) => s.className === selectedClass);
-    return [...base].sort((a, b) => (parseInt(a.roll, 10) || 9999) - (parseInt(b.roll, 10) || 9999));
+    return [...base].sort(compareStudentsByClassAndRoll);
   }, [students, selectedClass]);
 
   // Student Attendance Report Rows for selectedMonthYear
@@ -144,7 +145,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialReportType, jum
       if (a.status === 'PASSED' && b.status !== 'PASSED') return -1;
       if (a.status !== 'PASSED' && b.status === 'PASSED') return 1;
       if (b.gpa !== a.gpa) return b.gpa - a.gpa;
-      return b.totalObtained - a.totalObtained;
+      if (b.totalObtained !== a.totalObtained) return b.totalObtained - a.totalObtained;
+      return compareStudentsByRoll(a.student, b.student);
     });
 
     let meritCounter = 0;

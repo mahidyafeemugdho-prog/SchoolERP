@@ -28,6 +28,7 @@ import { useAuth } from '../../context/AuthContext';
 import QRCode from 'qrcode';
 import { formatGroupName } from '../../utils/i18n';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
+import { compareStudentsByClassAndRoll } from '../../utils/studentSort';
 import {
   ModernTeacherIDCardFront,
   ModernTeacherIDCardBack,
@@ -100,13 +101,7 @@ export const StudentIDCardsTab: React.FC = () => {
     setStaffList(StorageService.getStaff());
   }, []);
 
-  const parseRollNum = (roll?: string | number): number => {
-    const normalized = String(roll ?? '').replace(/[০-৯]/g, (d) => String('০১২৩৪৫৬৭৮৯'.indexOf(d)));
-    const parsed = parseInt(normalized.replace(/\D/g, ''), 10);
-    return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
-  };
-
-  // Filter students (active first/only & sorted ascending by roll 1, 2, 3...)
+  // Filter students (active first/only & sorted ascending by class and roll 1, 2, 3...)
   const filteredStudents = students
     .filter((s) => {
       if (s.status && s.status !== 'active') return false;
@@ -123,11 +118,7 @@ export const StudentIDCardsTab: React.FC = () => {
         scopedId.toLowerCase().includes(q);
       return matchClass && matchSection && matchSearch;
     })
-    .sort((a, b) => {
-      const rDiff = parseRollNum(a.roll) - parseRollNum(b.roll);
-      if (rDiff !== 0) return rDiff;
-      return String(a.roll || '').localeCompare(String(b.roll || ''), undefined, { numeric: true });
-    });
+    .sort(compareStudentsByClassAndRoll);
 
   // Filter staff
   const filteredStaff = staffList.filter((st) => {

@@ -841,6 +841,8 @@ export function createSaasRouter(deps: SaasRouterDeps) {
           section: String(body.section || '').trim(),
           feeTitle,
           amount,
+          ...(Array.isArray(body.items) && body.items.length > 0 ? { items: body.items } : {}),
+          ...(body.isPayAll !== undefined ? { isPayAll: Boolean(body.isPayAll) } : {}),
           paymentMethod,
           senderPhone,
           transactionId: cleanTrx,

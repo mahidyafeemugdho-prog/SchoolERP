@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { SchoolProfile, Student } from '../../types';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
+import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 
 export type LandscapeCertDocType = 'testimonial' | 'transfer' | 'character' | 'bonafide';
 
@@ -727,14 +728,23 @@ export const LandscapeCertificate3x2: React.FC<LandscapeCertificate3x2Props> = (
 
               {/* Right Signature: Principal / Headmaster */}
               <div className="flex flex-col items-center text-center">
-                <div
-                  className="h-8 flex items-end justify-center font-serif italic font-bold text-[17px] truncate max-w-[220px] bg-white/80 px-2 rounded-t"
-                  style={{ color: t.primary }}
-                >
-                  {school.principalNameEn || 'Principal / Headmaster'}
+                <div className="w-54 bg-white/80 px-2 rounded-t">
+                  <PrincipalSignatureDisplay
+                    school={school}
+                    fallbackText="Principal / Headmaster"
+                    heightClass="h-11"
+                    imgClassName="max-h-10 max-w-[180px] object-contain mx-auto"
+                    textClassName="font-serif italic font-bold text-[17px] truncate max-w-[220px]"
+                    textStyle={{ color: t.primary }}
+                  />
                 </div>
                 <div className="w-54 border-t-[1.5px] pt-1 bg-white/85 rounded-b px-2" style={{ borderColor: t.primary }}>
                   <div className="text-[12.5px] font-bold text-slate-900">Principal / Headmaster</div>
+                  {(school.principalNameEn || school.principalNameBn) && school.principalSignatureUrl && (
+                    <div className="text-[10px] font-semibold text-slate-700 truncate">
+                      {school.principalNameEn || school.principalNameBn}
+                    </div>
+                  )}
                   <div className="text-[10px] text-slate-600 truncate">
                     প্রধান শিক্ষক / অধ্যক্ষ · {school.nameBn || school.nameEn}
                   </div>

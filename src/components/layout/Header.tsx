@@ -29,6 +29,7 @@ import { OnlinePaymentRequest } from '../../types';
 import { isTabAuthorized } from '../../utils/permissions';
 import { SaturdayOffToggle } from '../common/SaturdayOffToggle';
 import { CloudSyncService, subscribeToSyncStatus, SyncStatus } from '../../services/cloudSync';
+import { resolveSchoolDisplayName } from '../../utils/schoolNameResolver';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -145,8 +146,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, activeTab, onNa
               <h1 className="text-sm sm:text-base font-bold text-slate-900 leading-tight truncate max-w-[150px] xs:max-w-[200px] sm:max-w-none">
                 {isMasterConsoleMode
                   ? 'Smart School BD ERP'
-                  : saasSession?.school?.schoolName ||
-                    (language === 'bn' ? schoolProfile.nameBn : schoolProfile.nameEn)}
+                  : resolveSchoolDisplayName(schoolProfile, saasSession?.school, language)}
               </h1>
               {isMasterConsoleMode ? (
                 <span className="hidden md:inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono font-bold bg-slate-900 text-white rounded">

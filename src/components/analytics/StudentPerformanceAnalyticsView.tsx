@@ -4,6 +4,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { AIService } from '../../services/aiService';
 import { Student, StudentPerformanceAnalytics, ClassLevel } from '../../types';
+import { compareStudentsByClassAndRoll } from '../../utils/studentSort';
 import {
   Sparkles,
   TrendingUp,
@@ -113,7 +114,7 @@ export const StudentPerformanceAnalyticsView: React.FC = () => {
         s.nameBn.includes(searchQuery) ||
         s.roll.includes(searchQuery);
       return matchClass && matchSection && matchSearch;
-    });
+    }).sort(compareStudentsByClassAndRoll);
   }, [students, selectedClass, selectedSection, searchQuery, activeRole, authenticatedStudent]);
 
   // Calculate current student analytics

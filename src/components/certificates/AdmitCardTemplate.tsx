@@ -2,6 +2,7 @@ import React from 'react';
 import { SchoolProfile, Student, Exam, ExamScheduleItem } from '../../types';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
+import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 
 export type AdmitCardFormat = 'a4_full' | 'half_a4' | 'two_per_page';
 export type InstructionMode = 'full' | 'compact' | 'minimal' | 'none';
@@ -325,6 +326,14 @@ export const SingleAdmitCard: React.FC<AdmitCardTemplateProps> = ({
         </div>
 
         <div className="text-center w-44">
+          {school.principalSignatureUrl && (
+            <PrincipalSignatureDisplay
+              school={school}
+              fallbackText=""
+              heightClass={isHalfA4 || isHighSubjectCount ? 'h-7' : 'h-9'}
+              imgClassName="max-h-full max-w-[140px] object-contain mx-auto"
+            />
+          )}
           <div className="border-t border-slate-800 pt-0.5 font-bold text-slate-900">
             Controller / Principal
             <span className="block text-[8px] text-slate-500 font-normal">(পরীক্ষা নিয়ন্ত্রক / অধ্যক্ষ)</span>

@@ -51,6 +51,7 @@ export interface SchoolProfile {
   website: string;
   principalNameEn: string;
   principalNameBn: string;
+  principalSignatureUrl?: string;
   establishedYear: string;
   currentSession: string;
   logoUrl?: string;
@@ -862,6 +863,8 @@ export interface OnlinePaymentRequest {
   section: string;
   feeTitle: string;
   amount: number;
+  items?: FeeItem[];
+  isPayAll?: boolean;
   paymentMethod: 'bKash' | 'Nagad' | 'Rocket';
   senderPhone: string;
   transactionId: string;

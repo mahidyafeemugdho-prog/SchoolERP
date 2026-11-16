@@ -97,17 +97,26 @@ export function cleanupOversizedLocalStorage(): void {
 export function safeSetLocalStorage(key: string, value: string): boolean {
   try {
     localStorage.setItem(key, value);
+    try {
+      sessionStorage.removeItem(key);
+    } catch {}
     return true;
   } catch (e: any) {
     console.warn(`localStorage.setItem failed for key "${key}", running quota cleanup:`, e);
     try {
       cleanupOversizedLocalStorage();
       localStorage.setItem(key, value);
+      try {
+        sessionStorage.removeItem(key);
+      } catch {}
       return true;
     } catch (e2) {
       console.warn(`localStorage quota still exceeded for "${key}", storing in sessionStorage:`, e2);
       try {
         sessionStorage.setItem(key, value);
+        try {
+          localStorage.removeItem(key);
+        } catch {}
         return true;
       } catch {}
       return false;
@@ -199,3 +208,127 @@ export async function compressImageToPassportSize(
     }
   });
 }
+
+/**
+ * Converts near-white paper backgrounds into clean transparency for scanned/photographed
+ * signatures while leaving already-transparent PNGs and dark ink strokes crisp.
+ */
+export function removeLightBackgroundFromRgba(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+): boolean {
+  if (!data || data.length < 4 || width <= 0 || height <= 0) return false;
+
+  const samplePoints = [
+    0,
+    (width - 1) * 4,
+    ((height - 1) * width) * 4,
+    ((height - 1) * width + (width - 1)) * 4,
+  ];
+
+  // If any corner already has transparency, respect the existing transparent PNG alpha
+  const hasTransparentCorner = samplePoints.some((idx) => (data[idx + 3] ?? 255) < 230);
+  if (hasTransparentCorner) return false;
+
+  // Only strip background if corners look opaque & near-white (e.g. photo/scan on paper)
+  const hasLightOpaqueCorner = samplePoints.some((idx) => {
+    const r = data[idx] ?? 0;
+    const g = data[idx + 1] ?? 0;
+    const b = data[idx + 2] ?? 0;
+    const a = data[idx + 3] ?? 0;
+    return a >= 230 && r >= 200 && g >= 200 && b >= 200;
+  });
+
+  if (!hasLightOpaqueCorner) return false;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const a = data[i + 3];
+    if (a === 0) continue;
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const minChannel = Math.min(r, g, b);
+    const maxChannel = Math.max(r, g, b);
+    const spread = maxChannel - minChannel;
+
+    // Low-saturation bright pixels belong to paper background
+    if (minChannel >= 218 && spread <= 42) {
+      data[i + 3] = 0;
+    } else if (minChannel >= 180 && spread <= 45) {
+      // Smooth anti-aliased edge feathering between ink and paper
+      const ratio = (218 - minChannel) / (218 - 180);
+      data[i + 3] = Math.round(a * Math.max(0, Math.min(1, ratio)));
+    }
+  }
+  return true;
+}
+
+/**
+ * Compresses a signature image into a compact transparent PNG data URL (< 40KB typical).
+ */
+export async function compressSignatureImage(
+  imageSource: string | File,
+  options?: { maxWidth?: number; maxHeight?: number; autoTransparentBg?: boolean }
+): Promise<string> {
+  const maxWidth = options?.maxWidth ?? 420;
+  const maxHeight = options?.maxHeight ?? 140;
+  const autoTransparentBg = options?.autoTransparentBg ?? true;
+
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        let width = img.width || maxWidth;
+        let height = img.height || maxHeight;
+
+        const scale = Math.min(1, maxWidth / width, maxHeight / height);
+        width = Math.max(1, Math.round(width * scale));
+        height = Math.max(1, Math.round(height * scale));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(typeof imageSource === 'string' ? imageSource : '');
+          return;
+        }
+
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        if (autoTransparentBg) {
+          try {
+            const imgData = ctx.getImageData(0, 0, width, height);
+            if (removeLightBackgroundFromRgba(imgData.data, width, height)) {
+              ctx.putImageData(imgData, 0, 0);
+            }
+          } catch {
+            // Ignore CORS tainted canvas errors and return drawn canvas
+          }
+        }
+
+        resolve(canvas.toDataURL('image/png'));
+      };
+
+      img.onerror = () => {
+        resolve(typeof imageSource === 'string' ? imageSource : '');
+      };
+
+      if (typeof imageSource === 'string') {
+        img.src = imageSource;
+      } else {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          img.src = e.target?.result as string;
+        };
+        reader.readAsDataURL(imageSource);
+      }
+    } catch {
+      resolve(typeof imageSource === 'string' ? imageSource : '');
+    }
+  });
+}
+

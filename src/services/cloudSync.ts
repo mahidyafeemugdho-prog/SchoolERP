@@ -164,6 +164,7 @@ export function getSyncStatus(): SyncStatus {
 let applyingDepth = 0;
 let syncTimeout: any = null;
 let hasCompletedInitialPull = false;
+let lastPullSucceeded = false;
 let activePullPromise: Promise<boolean> | null = null;
 let lastFocusPullTime = 0;
 let activeCleanup: (() => void) | null = null;
@@ -279,23 +280,22 @@ async function resolveSliceDocData(
       Array.from({ length: count }, (_, idx) => getDoc(getSliceChunkDocRef(schoolId, sliceName, idx)))
     );
     let combined = '';
-    for (const snap of chunkSnaps) {
-      if (snap.exists()) {
-        combined += snap.data()?.data || '';
+    for (let idx = 0; idx < chunkSnaps.length; idx++) {
+      const snap = chunkSnaps[idx];
+      if (!snap.exists()) {
+        throw new Error(`Missing chunk ${idx + 1}/${count} for slice ${sliceName}`);
       }
+      combined += snap.data()?.data || '';
     }
-    if (combined) {
-      try {
-        const parsed = JSON.parse(combined);
-        return {
-          ...parsed,
-          updatedAt: docData.updatedAt,
-          deviceId: docData.deviceId,
-        };
-      } catch (e) {
-        console.warn(`[CloudSync] Failed parsing chunked slice ${sliceName}:`, e);
-      }
+    if (!combined) {
+      throw new Error(`Empty chunk payload for slice ${sliceName}`);
     }
+    const parsed = JSON.parse(combined);
+    return {
+      ...parsed,
+      updatedAt: docData.updatedAt,
+      deviceId: docData.deviceId,
+    };
   }
   return docData;
 }
@@ -307,6 +307,15 @@ export const CloudSyncService = {
    * to prevent cross-school data leakage on shared browsers.
    */
   async setActiveSaaSTenant(schoolId: string | null, accessAllowed: boolean): Promise<void> {
+    if (syncTimeout) {
+      clearTimeout(syncTimeout);
+      syncTimeout = null;
+    }
+    if (activeCleanup) {
+      activeCleanup();
+      activeCleanup = null;
+    }
+
     const prevSchoolId = safeGetLocalStorage(SAAS_ACTIVE_SCHOOL_KEY);
     const normalizedNew = schoolId ? schoolId.trim() : null;
 
@@ -326,21 +335,27 @@ export const CloudSyncService = {
     }
 
     hasCompletedInitialPull = false;
+    lastPullSucceeded = false;
     notifyStatus({
       tenantId: normalizedNew || getDomainTenantId(),
       error: null,
     });
 
-    this.reinitialize();
     if (saasAccessAllowed) {
       await this.pullFromCloud();
+      this.reinitialize({ skipInitialPull: true });
     }
   },
 
   clearTenantSession(): void {
+    if (syncTimeout) {
+      clearTimeout(syncTimeout);
+      syncTimeout = null;
+    }
     activeSaaSSchoolId = null;
     saasAccessAllowed = false;
     hasCompletedInitialPull = false;
+    lastPullSucceeded = false;
     safeRemoveLocalStorage(SAAS_ACTIVE_SCHOOL_KEY);
     clearLocalTenantCache();
     if (activeCleanup) {
@@ -540,21 +555,30 @@ export const CloudSyncService = {
     if (!auth.currentUser || !activeSaaSSchoolId || !saasAccessAllowed) {
       return false;
     }
-    if (!hasCompletedInitialPull && !force) {
-      if (activePullPromise) {
-        await activePullPromise.catch(() => {});
-      } else {
+    if (activePullPromise) {
+      await activePullPromise.catch(() => false);
+    }
+    if (!hasCompletedInitialPull || !lastPullSucceeded) {
+      if (!force) {
+        return false;
+      }
+      const pulled = await this.pullFromCloud();
+      if (!pulled) {
         return false;
       }
     }
 
     const schoolId = activeSaaSSchoolId;
     try {
+      const keys = DATA_SLICES[sliceName];
+      const sliceData = this.getSlicePayload(keys);
+      if (Object.keys(sliceData).length === 0) {
+        return false;
+      }
+
       const timestamp = new Date().toISOString();
       const myDeviceId = getDeviceId();
       const domain = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-      const keys = DATA_SLICES[sliceName];
-      const sliceData = this.getSlicePayload(keys);
 
       await writeSliceDocWithChunking(schoolId, sliceName, sliceData, {
         domain,
@@ -588,8 +612,17 @@ export const CloudSyncService = {
     if (!auth.currentUser || !activeSaaSSchoolId || !saasAccessAllowed) {
       return false;
     }
-    if (!hasCompletedInitialPull && !force) {
-      return false;
+    if (activePullPromise) {
+      await activePullPromise.catch(() => false);
+    }
+    if (!hasCompletedInitialPull || !lastPullSucceeded) {
+      if (!force) {
+        return false;
+      }
+      const pulled = await this.pullFromCloud();
+      if (!pulled) {
+        return false;
+      }
     }
 
     const schoolId = activeSaaSSchoolId;
@@ -603,6 +636,9 @@ export const CloudSyncService = {
       await Promise.all(
         sliceEntries.map(async ([sliceName, keys]) => {
           const sliceData = this.getSlicePayload(keys);
+          if (Object.keys(sliceData).length === 0) {
+            return;
+          }
           await writeSliceDocWithChunking(schoolId, sliceName, sliceData, {
             domain,
             deviceId: myDeviceId,
@@ -669,12 +705,14 @@ export const CloudSyncService = {
         if (!hasAnyCloudData) {
           purgeAllDemoDataFromLocalStorage();
           hasCompletedInitialPull = true;
+          lastPullSucceeded = true;
           notifyStatus({ isSyncing: false, hasCloudData: false, tenantId: schoolId, error: null });
           return true;
         }
 
         const localPurgeRes = purgeAllDemoDataFromLocalStorage();
         hasCompletedInitialPull = true;
+        lastPullSucceeded = true;
 
         if (strippedDemoFromCloud || localPurgeRes.changed) {
           await this.pushLocalToCloud(true);
@@ -688,7 +726,7 @@ export const CloudSyncService = {
         return true;
       } catch (err: any) {
         console.warn(`[CloudSync] Pull from Firestore failed for ${schoolId}:`, err);
-        hasCompletedInitialPull = true;
+        lastPullSucceeded = false;
         notifyStatus({
           isSyncing: false,
           error: err?.message || 'Could not fetch from cloud database',
@@ -707,6 +745,9 @@ export const CloudSyncService = {
       return false;
     }
     const pulled = await this.pullFromCloud();
+    if (!pulled) {
+      return false;
+    }
     const pushed = await this.pushLocalToCloud(true);
     return pulled && pushed;
   },
@@ -723,7 +764,7 @@ export const CloudSyncService = {
 
   scheduleCloudSync(delayMs: number = 350): void {
     if (applyingDepth > 0) return;
-    if (!hasCompletedInitialPull) return;
+    if (!hasCompletedInitialPull || !lastPullSucceeded) return;
     if (!auth.currentUser || !activeSaaSSchoolId || !saasAccessAllowed) return;
     if (syncTimeout) clearTimeout(syncTimeout);
     syncTimeout = setTimeout(() => {
@@ -731,15 +772,15 @@ export const CloudSyncService = {
     }, delayMs);
   },
 
-  reinitialize(): () => void {
+  reinitialize(options?: { skipInitialPull?: boolean }): () => void {
     if (activeCleanup) {
       activeCleanup();
       activeCleanup = null;
     }
-    return this.initialize();
+    return this.initialize(options);
   },
 
-  initialize(): () => void {
+  initialize(options?: { skipInitialPull?: boolean }): () => void {
     if (activeCleanup) {
       return activeCleanup;
     }
@@ -752,7 +793,9 @@ export const CloudSyncService = {
     const myDeviceId = getDeviceId();
     const unsubscribers: (() => void)[] = [];
 
-    this.pullFromCloud().catch(() => {});
+    if (!options?.skipInitialPull) {
+      this.pullFromCloud().catch(() => {});
+    }
 
     const sliceNames = Object.keys(DATA_SLICES) as SliceType[];
     sliceNames.forEach((sliceName) => {
@@ -769,10 +812,15 @@ export const CloudSyncService = {
             const incomingDeviceId = data.deviceId || '';
 
             if (incomingDeviceId !== myDeviceId && cloudTime && cloudTime !== lastSliceTime) {
-              const resolvedData = await resolveSliceDocData(schoolId, sliceName, data);
-              this.applySnapshotToLocal(resolvedData, cloudTime);
-              safeSetLocalStorage(sliceSyncKey, cloudTime);
-              hasCompletedInitialPull = true;
+              try {
+                const resolvedData = await resolveSliceDocData(schoolId, sliceName, data);
+                this.applySnapshotToLocal(resolvedData, cloudTime);
+                safeSetLocalStorage(sliceSyncKey, cloudTime);
+                hasCompletedInitialPull = true;
+                lastPullSucceeded = true;
+              } catch (resolveErr) {
+                console.warn(`[CloudSync] Failed resolving snapshot for ${schoolId}/${sliceName}:`, resolveErr);
+              }
             }
           },
           (err: any) => {

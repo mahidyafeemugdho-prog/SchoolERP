@@ -6,7 +6,9 @@ import { Student, StudentDocument, ClassLevel, ShiftType, GroupType } from '../.
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
+import { compareStudentsByClassAndRoll } from '../../utils/studentSort';
 import { LiveCameraModal } from '../common/LiveCameraModal';
+import { buildPrincipalSignatureHtml } from '../../utils/signatureHelper';
 import {
   Search,
   Filter,
@@ -93,6 +95,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
     const handleSync = () => {
       setStudents(StorageService.getStudents());
     };
+    handleSync();
     window.addEventListener('school_cloud_data_synced', handleSync);
     window.addEventListener('storage', handleSync);
     return () => {
@@ -356,7 +359,10 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
           </div>
           <div class="footer">
             <div>যাচাইকৃত ডিজিটাল কপি • মুদ্রণের তারিখ: ${new Date().toLocaleDateString('bn-BD')}</div>
-            <div style="border-top: 1px solid #000; width: 180px; text-align: center; padding-top: 5px;">অধ্যক্ষের স্বাক্ষর ও সিল</div>
+            <div style="text-align: center;">
+              ${buildPrincipalSignatureHtml(school)}
+              <div style="border-top: 1px solid #000; width: 180px; text-align: center; padding-top: 5px;">অধ্যক্ষের স্বাক্ষর ও সিল</div>
+            </div>
           </div>
           <script>
             window.onload = function() { window.print(); };
@@ -459,7 +465,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
       return matchName || matchId || matchRoll || matchPhone;
     }
     return true;
-  });
+  }).sort(compareStudentsByClassAndRoll);
 
   const handleUploadHardCopy = async (e: React.ChangeEvent<HTMLInputElement>, category: string, defaultTitle?: string) => {
     const file = e.target.files?.[0];

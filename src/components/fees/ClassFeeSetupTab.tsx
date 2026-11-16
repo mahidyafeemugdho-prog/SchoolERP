@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { CloudSyncService } from '../../services/cloudSync';
+import { safeSetLocalStorage } from '../../utils/storageHelper';
 import { ClassFeeConfig, ClassLevel } from '../../types';
 import {
   Save,
@@ -140,7 +141,7 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
       const updatedHidden = [...hiddenStandardColumns, id];
       setHiddenStandardColumns(updatedHidden);
       try {
-        localStorage.setItem('school_erp_hidden_class_fee_columns', JSON.stringify(updatedHidden));
+        safeSetLocalStorage('school_erp_hidden_class_fee_columns', JSON.stringify(updatedHidden));
       } catch {}
 
       // Also set the value to 0 across classes so it won't charge in future calculations
@@ -151,7 +152,7 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
       setConfigs(updatedConfigs);
       StorageService.saveClassFeeConfigs(updatedConfigs);
       if (onConfigsUpdated) onConfigsUpdated(updatedConfigs);
-      CloudSyncService.pushLocalToCloud(true);
+      CloudSyncService.pushSliceToCloud('finance', true);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('school_profile_updated'));
       }
@@ -162,7 +163,7 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
       const updatedCols = customColumns.filter((c) => c.id !== id);
       setCustomColumns(updatedCols);
       try {
-        localStorage.setItem('school_erp_custom_class_fee_columns', JSON.stringify(updatedCols));
+        safeSetLocalStorage('school_erp_custom_class_fee_columns', JSON.stringify(updatedCols));
       } catch {}
 
       const updatedConfigs = configs.map((c) => {
@@ -173,7 +174,7 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
       setConfigs(updatedConfigs);
       StorageService.saveClassFeeConfigs(updatedConfigs);
       if (onConfigsUpdated) onConfigsUpdated(updatedConfigs);
-      CloudSyncService.pushLocalToCloud(true);
+      CloudSyncService.pushSliceToCloud('finance', true);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('school_profile_updated'));
       }
@@ -189,8 +190,9 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
     const updated = hiddenStandardColumns.filter((id) => id !== colId);
     setHiddenStandardColumns(updated);
     try {
-      localStorage.setItem('school_erp_hidden_class_fee_columns', JSON.stringify(updated));
+      safeSetLocalStorage('school_erp_hidden_class_fee_columns', JSON.stringify(updated));
     } catch {}
+    CloudSyncService.pushSliceToCloud('finance', true);
     setActionNotice(language === 'bn' ? 'কলাম সফলভাবে পুনরুদ্ধার করা হয়েছে!' : 'Column restored successfully!');
     setTimeout(() => setActionNotice(''), 3000);
   };

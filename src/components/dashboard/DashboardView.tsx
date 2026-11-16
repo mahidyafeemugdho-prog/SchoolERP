@@ -79,7 +79,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
   const enquiries = StorageService.getEnquiries();
 
   // Dynamic Metrics
-  const activeStudentsCount = students.filter((s) => s.status === 'active').length;
+  const activeStudents = students.filter((s) => s.status !== 'inactive' && s.status !== 'transferred');
+  const activeStudentsCount = activeStudents.length;
   const activeStaffCount = staff.filter((s) => s.status === 'active').length;
 
   const todayStr = useMemo(() => {
@@ -89,7 +90,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
       const dates = Array.from(new Set(attendance.map((a) => a.date).filter(Boolean))).sort().reverse();
       if (dates.length > 0) return dates[0];
     }
-    return '2026-10-25';
+    return realToday;
   }, [attendance]);
   const todayAttendance = attendance.filter((a) => a.targetType === 'student' && a.date === todayStr);
   const presentCount = todayAttendance.filter((a) => a.status === 'Present').length;
@@ -114,9 +115,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
   })();
   const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
 
-  // Class wise distribution
+  // Class wise distribution (matches active enrollment count)
   const classCounts: Record<string, number> = {};
-  students.forEach((s) => {
+  activeStudents.forEach((s) => {
     classCounts[s.className] = (classCounts[s.className] || 0) + 1;
   });
 
@@ -555,7 +556,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
               { cls: 'Class 9', bn: '৯ম শ্রেণি' },
               { cls: 'Class 10', bn: '১০ম শ্রেণি' },
             ].map((item) => {
-              const count = classCounts[item.cls] || (item.cls === 'Class 10' ? 3 : item.cls === 'Class 9' ? 1 : 1);
+              const count = classCounts[item.cls] || 0;
               return (
                 <div
                   key={item.cls}

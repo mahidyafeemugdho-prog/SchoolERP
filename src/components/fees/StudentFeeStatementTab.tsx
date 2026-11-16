@@ -4,6 +4,7 @@ import { useSchool } from '../../context/SchoolContext';
 import { StorageService } from '../../services/storage';
 import { Student, FeePayment, FeeInvoice, FeeItem } from '../../types';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
+import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 import {
   Search,
   Printer,
@@ -797,6 +798,7 @@ export const StudentFeeStatementTab: React.FC<StudentFeeStatementTabProps> = ({
                   </div>
                 </div>
                 <div>
+                  <PrincipalSignatureDisplay school={schoolProfile} fallbackText="" heightClass="h-10" />
                   <div className="border-t border-slate-400 pt-1.5 font-semibold text-slate-700">
                     Headmaster / Principal
                   </div>

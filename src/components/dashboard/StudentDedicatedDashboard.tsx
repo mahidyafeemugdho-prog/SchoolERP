@@ -778,11 +778,33 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
       status: string;
     }> = [];
 
+    const matchedInvoiceIds = new Set<string>();
+
     // Prioritize actual payment receipts
     studentPayments.forEach((p) => {
-      const matchingInv = studentInvoices.find(
-        (inv) => inv.id === p.invoiceId || (inv.invoiceNo && p.receiptNo === inv.invoiceNo)
+      let matchingInv = studentInvoices.find(
+        (inv) =>
+          !matchedInvoiceIds.has(inv.id) &&
+          (inv.id === p.invoiceId || (inv.invoiceNo && p.receiptNo === inv.invoiceNo))
       );
+
+      // Legacy online approval fallback: invoiceId differed by a few ms when both payment & invoice were created together
+      if (!matchingInv && p.notes?.includes('অনলাইন পেমেন্ট অনুমোদন')) {
+        matchingInv = studentInvoices.find(
+          (inv) =>
+            !matchedInvoiceIds.has(inv.id) &&
+            !studentPayments.some((other) => other.invoiceId === inv.id) &&
+            inv.paidAmount === p.amount &&
+            inv.dueDate === p.paidDate &&
+            Boolean(inv.feeType) &&
+            p.notes!.includes(inv.feeType)
+        );
+      }
+
+      if (matchingInv) {
+        matchedInvoiceIds.add(matchingInv.id);
+      }
+
       list.push({
         id: p.id,
         invoiceNo: matchingInv?.invoiceNo,
@@ -798,7 +820,7 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
 
     // Invoices with paidAmount > 0 that do not have a matching payment record in studentPayments
     studentInvoices.forEach((inv) => {
-      if (inv.paidAmount > 0) {
+      if (inv.paidAmount > 0 && !matchedInvoiceIds.has(inv.id)) {
         const alreadyLinked = studentPayments.some(
           (p) => p.invoiceId === inv.id || p.receiptNo === inv.invoiceNo
         );
@@ -926,7 +948,9 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
 
     setIsProcessingPayment(true);
     const amountToPay = payingDue === 'all' ? totalFeeDue : payingDue.amount;
-    const feeTitle = payingDue === 'all' ? 'সকল বকেয়া ফি (All Outstanding Dues)' : payingDue.headName;
+    const isPayAll = payingDue === 'all';
+    const itemsToPay: FeeItem[] = isPayAll ? studentDues : [payingDue];
+    const feeTitle = isPayAll ? 'সকল বকেয়া ফি (All Outstanding Dues)' : payingDue.headName;
     const receiptNo = `REQ-${Date.now().toString().slice(-6)}`;
 
     const newRequest: OnlinePaymentRequest = {
@@ -939,6 +963,8 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
       section: student.section,
       feeTitle,
       amount: amountToPay,
+      items: itemsToPay,
+      isPayAll,
       paymentMethod,
       senderPhone: paymentPhone.trim(),
       transactionId: cleanTrx,

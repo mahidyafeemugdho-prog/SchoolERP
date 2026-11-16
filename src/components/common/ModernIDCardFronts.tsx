@@ -10,6 +10,7 @@ import {
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { SchoolProfile, Staff, Student } from '../../types';
 import { StorageService } from '../../services/storage';
+import { isValidSignatureSrc } from './PrincipalSignatureDisplay';
 
 export type IDCardTheme =
   | 'executive_royal'
@@ -160,24 +161,39 @@ export const DeterministicBarcodeSVG: React.FC<{
 
 const PrincipalSignatureBlock: React.FC<{
   principalName?: string;
+  signatureUrl?: string;
   darkBg?: boolean;
   accentColor?: string;
-}> = ({ principalName, darkBg = false, accentColor = '#0F2744' }) => (
+}> = ({ principalName, signatureUrl, darkBg = false, accentColor = '#0F2744' }) => (
   <div className="text-center min-w-[92px] max-w-[136px]">
-    <svg
-      viewBox="0 0 96 22"
-      className={`w-16 h-4 mx-auto -mb-0.5 ${darkBg ? 'text-white' : 'text-slate-900'}`}
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M8,16 C14,4 22,4 20,14 C18,20 10,18 14,12 C18,6 28,15 35,12 C42,9 46,15 54,11 C62,7 72,13 88,8"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    {isValidSignatureSrc(signatureUrl) ? (
+      <div
+        className={`h-6 flex items-end justify-center mx-auto mb-0.5 ${
+          darkBg ? 'bg-white/95 rounded px-1.5 py-0.5' : ''
+        }`}
+      >
+        <img
+          src={signatureUrl}
+          alt={principalName ? `${principalName} Signature` : 'Principal Signature'}
+          className="max-h-full max-w-[100px] object-contain mx-auto"
+        />
+      </div>
+    ) : (
+      <svg
+        viewBox="0 0 96 22"
+        className={`w-16 h-4 mx-auto -mb-0.5 ${darkBg ? 'text-white' : 'text-slate-900'}`}
+        fill="none"
+        aria-hidden="true"
+      >
+        <path
+          d="M8,16 C14,4 22,4 20,14 C18,20 10,18 14,12 C18,6 28,15 35,12 C42,9 46,15 54,11 C62,7 72,13 88,8"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    )}
     <div
       className={`border-t pt-0.5 ${darkBg ? 'border-white/50' : 'border-slate-700'}`}
     >
@@ -725,6 +741,7 @@ export const ModernStudentIDCardBack: React.FC<ModernStudentIDCardBackProps> = (
           </span>
           <PrincipalSignatureBlock
             principalName={school.principalNameEn}
+            signatureUrl={school.principalSignatureUrl}
             accentColor={themeAccent.primary}
           />
         </div>
@@ -1244,6 +1261,7 @@ export const ModernTeacherIDCardBack: React.FC<ModernTeacherIDCardBackProps> = (
           </span>
           <PrincipalSignatureBlock
             principalName={school.principalNameEn}
+            signatureUrl={school.principalSignatureUrl}
             darkBg={isDarkBack}
             accentColor={palette.primary}
           />

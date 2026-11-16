@@ -11,6 +11,7 @@ import {
   AIEvaluationResult,
 } from '../../types';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
+import { compareStudentsByRoll } from '../../utils/studentSort';
 import {
   FileCheck,
   Search,
@@ -883,9 +884,13 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
       };
     });
 
-    // Rank by obtainedMarks desc, percentage desc, submittedCount desc
+    // Rank by obtainedMarks desc, percentage desc, submittedCount desc, then Roll asc
     studentSummaries.sort(
-      (a, b) => b.obtainedMarks - a.obtainedMarks || b.percentage - a.percentage || b.submittedCount - a.submittedCount
+      (a, b) =>
+        b.obtainedMarks - a.obtainedMarks ||
+        b.percentage - a.percentage ||
+        b.submittedCount - a.submittedCount ||
+        compareStudentsByRoll(a.student, b.student)
     );
 
     const rankedSummaries = studentSummaries.map((item, idx) => ({

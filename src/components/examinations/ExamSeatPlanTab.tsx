@@ -8,7 +8,9 @@ import {
   Student,
 } from '../../types';
 import { StorageService } from '../../services/storage';
+import { compareRolls, compareStudentsByClassAndRoll } from '../../utils/studentSort';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
+import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 import {
   Building,
   CheckCircle2,
@@ -207,14 +209,7 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
         if (shiftFilter !== 'all' && s.shift !== shiftFilter) return false;
         return true;
       })
-      .sort((a, b) => {
-        const clsA = ALL_CLASSES.indexOf(a.className);
-        const clsB = ALL_CLASSES.indexOf(b.className);
-        if (clsA !== clsB) return clsA - clsB;
-        const rollDiff = Number(a.roll) - Number(b.roll);
-        if (!Number.isNaN(rollDiff) && rollDiff !== 0) return rollDiff;
-        return String(a.roll).localeCompare(String(b.roll));
-      });
+      .sort(compareStudentsByClassAndRoll);
   }, [activeStudents, selectedClasses, sectionFilter, shiftFilter]);
 
   const totalCapacity = useMemo(
@@ -529,7 +524,7 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
         classGroups.get(seat.className)!.push(seat.roll);
       });
       const breakdown = Array.from(classGroups.entries()).map(([cls, rolls]) => {
-        const sortedRolls = [...rolls].sort((a, b) => Number(a) - Number(b));
+        const sortedRolls = [...rolls].sort((a, b) => compareRolls(a, b));
         const minRoll = sortedRolls[0];
         const maxRoll = sortedRolls[sortedRolls.length - 1];
         return {
@@ -1351,6 +1346,7 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
                       </div>
                     </div>
                     <div className="text-center">
+                      <PrincipalSignatureDisplay school={school} fallbackText="" heightClass="h-9" />
                       <div className="border-t border-slate-800 pt-1 w-44">
                         {language === 'bn' ? 'অধ্যক্ষ / প্রধান শিক্ষক' : 'Principal / Head Teacher'}
                       </div>
@@ -1546,6 +1542,7 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
                   </div>
                 </div>
                 <div className="text-center">
+                  <PrincipalSignatureDisplay school={school} fallbackText="" heightClass="h-10" />
                   <div className="border-t-2 border-slate-800 pt-1 w-52">
                     {language === 'bn'
                       ? 'অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল'

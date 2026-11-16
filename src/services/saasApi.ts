@@ -628,6 +628,8 @@ export const SaaSApi = {
     section?: string;
     feeTitle: string;
     amount: number;
+    items?: any[];
+    isPayAll?: boolean;
     paymentMethod: 'bKash' | 'Nagad' | 'Rocket';
     senderPhone: string;
     transactionId: string;

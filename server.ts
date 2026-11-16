@@ -124,7 +124,7 @@ app.post('/api/export-full-codebase-zip', async (req: Request, res: Response) =>
       if (!fs.existsSync(dirPath)) return;
       const items = fs.readdirSync(dirPath);
       for (const item of items) {
-        if (['node_modules', '.git', 'dist', '.aistudio', 'data_storage', 'backups', '.DS_Store'].includes(item)) {
+        if (['node_modules', '.git', 'dist', '.aistudio', 'data_storage', 'backups', 'secrets', '.DS_Store'].includes(item)) {
           continue;
         }
         const fullPath = path.join(dirPath, item);

@@ -7,6 +7,7 @@ import { Student } from '../../types';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
+import { compareStudentsByClassAndRoll } from '../../utils/studentSort';
 import QRCode from 'qrcode';
 import {
   ModernStudentIDCardFront,
@@ -14,6 +15,7 @@ import {
   ID_CARD_THEME_OPTIONS,
   IDCardTheme,
 } from '../common/ModernIDCardFronts';
+import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 import {
   FileBadge,
   Printer,
@@ -44,13 +46,6 @@ import {
 } from './AdmitCardTemplate';
 import { LandscapeCertificate3x2, LandscapeCertDocType } from './LandscapeCertificate3x2';
 
-const parseRollNumber = (roll: string | number | undefined): number => {
-  if (roll === undefined || roll === null) return Number.MAX_SAFE_INTEGER;
-  const bnToEn = String(roll).replace(/[০-৯]/g, (d) => '0123456789'['০১২৩৪৫৬৭৮৯'.indexOf(d)]);
-  const match = bnToEn.match(/\d+/);
-  return match ? parseInt(match[0], 10) : Number.MAX_SAFE_INTEGER;
-};
-
 export const CertificatesView: React.FC = () => {
   const { saasSession } = useAuth();
   const { language, toBnNumber } = useLanguage();
@@ -68,7 +63,7 @@ export const CertificatesView: React.FC = () => {
   }, []);
 
   const [selectedStudentId, setSelectedStudentId] = useState<string>(() => {
-    const sorted = students.slice().sort((a, b) => parseRollNumber(a.roll) - parseRollNumber(b.roll));
+    const sorted = students.slice().sort(compareStudentsByClassAndRoll);
     return sorted[0]?.id || 'std_1';
   });
   const [selectedClassFilter, setSelectedClassFilter] = useState<string>('all');
@@ -94,11 +89,7 @@ export const CertificatesView: React.FC = () => {
     : students.filter((s) => s.className === selectedClassFilter)
   )
     .slice()
-    .sort((a, b) => {
-      const diff = parseRollNumber(a.roll) - parseRollNumber(b.roll);
-      if (diff !== 0) return diff;
-      return String(a.roll || '').localeCompare(String(b.roll || ''), undefined, { numeric: true });
-    });
+    .sort(compareStudentsByClassAndRoll);
 
   const student = filteredStudents.find((s) => s.id === selectedStudentId) || filteredStudents[0] || students[0];
   const exam = exams.find((e) => e.id === selectedExamId) || exams[0];
@@ -204,7 +195,7 @@ export const CertificatesView: React.FC = () => {
                   : students.filter((s) => s.className === e.target.value)
                 )
                   .slice()
-                  .sort((a, b) => parseRollNumber(a.roll) - parseRollNumber(b.roll));
+                  .sort(compareStudentsByClassAndRoll);
                 if (matching.length > 0) {
                   setSelectedStudentId(matching[0].id);
                 }
@@ -829,12 +820,23 @@ export const CertificatesView: React.FC = () => {
 
                 {/* Principal Signature */}
                 <div>
-                  <div className="font-serif italic font-black text-sm text-blue-950 border-b border-slate-700 pb-0.5 truncate">
-                    {school.principalNameEn || 'Principal / Head Teacher'}
+                  <div className="border-b border-slate-700 pb-0.5">
+                    <PrincipalSignatureDisplay
+                      school={school}
+                      fallbackText="Principal / Head Teacher"
+                      heightClass="h-11"
+                      imgClassName="max-h-10 max-w-[165px] object-contain mx-auto"
+                      textClassName="font-serif italic font-black text-sm text-blue-950 truncate"
+                    />
                   </div>
                   <div className="pt-1 font-bold text-slate-900">
                     Principal / Headmaster
                   </div>
+                  {school.principalSignatureUrl && (school.principalNameEn || school.principalNameBn) && (
+                    <span className="text-[10px] font-semibold text-slate-700 block truncate">
+                      {school.principalNameEn || school.principalNameBn}
+                    </span>
+                  )}
                   <span className="text-[10px] text-slate-500 block">অধ্যক্ষ / প্রধান শিক্ষক</span>
                 </div>
               </div>
@@ -967,12 +969,23 @@ export const CertificatesView: React.FC = () => {
                 </div>
 
                 <div>
-                  <div className="font-serif italic font-black text-sm text-rose-950 border-b border-slate-700 pb-0.5 truncate">
-                    {school.principalNameEn || 'Principal / Head Teacher'}
+                  <div className="border-b border-slate-700 pb-0.5">
+                    <PrincipalSignatureDisplay
+                      school={school}
+                      fallbackText="Principal / Head Teacher"
+                      heightClass="h-11"
+                      imgClassName="max-h-10 max-w-[165px] object-contain mx-auto"
+                      textClassName="font-serif italic font-black text-sm text-rose-950 truncate"
+                    />
                   </div>
                   <div className="pt-1 font-bold text-slate-900">
                     Principal / Headmaster
                   </div>
+                  {school.principalSignatureUrl && (school.principalNameEn || school.principalNameBn) && (
+                    <span className="text-[10px] font-semibold text-slate-700 block truncate">
+                      {school.principalNameEn || school.principalNameBn}
+                    </span>
+                  )}
                   <span className="text-[10px] text-slate-500 block">প্রধান শিক্ষক / অধ্যক্ষ</span>
                 </div>
               </div>
@@ -1069,12 +1082,23 @@ export const CertificatesView: React.FC = () => {
                 </div>
 
                 <div>
-                  <div className="font-serif italic font-black text-sm text-indigo-950 border-b border-slate-700 pb-0.5 truncate">
-                    {school.principalNameEn || 'Principal / Head Teacher'}
+                  <div className="border-b border-slate-700 pb-0.5">
+                    <PrincipalSignatureDisplay
+                      school={school}
+                      fallbackText="Principal / Head Teacher"
+                      heightClass="h-11"
+                      imgClassName="max-h-10 max-w-[165px] object-contain mx-auto"
+                      textClassName="font-serif italic font-black text-sm text-indigo-950 truncate"
+                    />
                   </div>
                   <div className="pt-1 font-bold text-slate-900">
                     Principal / Headmaster
                   </div>
+                  {school.principalSignatureUrl && (school.principalNameEn || school.principalNameBn) && (
+                    <span className="text-[10px] font-semibold text-slate-700 block truncate">
+                      {school.principalNameEn || school.principalNameBn}
+                    </span>
+                  )}
                   <span className="text-[10px] text-slate-500 block">প্রধান শিক্ষক / অধ্যক্ষ</span>
                 </div>
               </div>
@@ -1174,12 +1198,23 @@ export const CertificatesView: React.FC = () => {
                 </div>
 
                 <div>
-                  <div className="font-serif italic font-black text-sm text-emerald-950 border-b border-slate-700 pb-0.5 truncate">
-                    {school.principalNameEn || 'Principal / Head Teacher'}
+                  <div className="border-b border-slate-700 pb-0.5">
+                    <PrincipalSignatureDisplay
+                      school={school}
+                      fallbackText="Principal / Head Teacher"
+                      heightClass="h-11"
+                      imgClassName="max-h-10 max-w-[165px] object-contain mx-auto"
+                      textClassName="font-serif italic font-black text-sm text-emerald-950 truncate"
+                    />
                   </div>
                   <div className="pt-1 font-bold text-slate-900">
                     Principal / Headmaster
                   </div>
+                  {school.principalSignatureUrl && (school.principalNameEn || school.principalNameBn) && (
+                    <span className="text-[10px] font-semibold text-slate-700 block truncate">
+                      {school.principalNameEn || school.principalNameBn}
+                    </span>
+                  )}
                   <span className="text-[10px] text-slate-500 block">প্রধান শিক্ষক / অধ্যক্ষ</span>
                 </div>
               </div>

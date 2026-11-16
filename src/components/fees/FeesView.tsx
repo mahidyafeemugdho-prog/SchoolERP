@@ -11,6 +11,9 @@ import { StudentFeeStatementTab } from './StudentFeeStatementTab';
 import { StaffSalaryPayrollTab } from '../staff/StaffSalaryPayrollTab';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
+import { findDuplicatePaidFee } from '../../utils/feeDuplicateCheck';
+import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
+import { buildPrincipalSignatureHtml } from '../../utils/signatureHelper';
 import {
   Wallet,
   Search,
@@ -334,46 +337,148 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
 
   const handleExecuteApproval = (req: OnlinePaymentRequest) => {
     try {
-      const officialReceiptNo = `MR-${Date.now().toString().slice(-6)}`;
+      if (req.status === 'approved') return;
+
+      const nowMs = Date.now();
+      const officialReceiptNo = `MR-${String(nowMs).slice(-6)}`;
       const nowIso = new Date().toISOString();
       const todayStr = nowIso.split('T')[0];
 
-      // 1. Create matching FeePayment
-      const newPayment: FeePayment = {
-        id: `pay_${Date.now()}`,
-        receiptNo: officialReceiptNo,
-        invoiceId: `inv_${Date.now()}`,
-        studentId: req.studentId,
-        studentName: req.studentName,
-        className: req.className as any,
-        roll: req.studentRoll,
-        amount: req.amount,
-        paidDate: todayStr,
-        paymentMethod: req.paymentMethod as any,
-        transactionId: req.transactionId,
-        collectedBy: `${req.paymentMethod} Online (Approved by ${currentUser.name})`,
-        notes: `${req.feeTitle} - অনলাইন পেমেন্ট অনুমোদন। প্রেরক: ${req.senderPhone}, TrxID: ${req.transactionId}`,
-      };
-      StorageService.addPayment(newPayment);
-
-      // 2. Settle existing unpaid invoice or create matching paid FeeInvoice
-      const allInvs = StorageService.getInvoices();
-      const existingUnpaid = allInvs.find(
-        (inv) =>
-          inv.studentId === req.studentId &&
-          (inv.status === 'Unpaid' || inv.status === 'Partial') &&
-          (inv.feeType === req.feeTitle || inv.dueAmount === req.amount)
+      const matchedStudent = students.find(
+        (st) =>
+          st.id === req.studentId ||
+          st.studentId === req.studentId ||
+          (st.roll === req.studentRoll && st.className === req.className)
       );
 
-      if (existingUnpaid) {
-        existingUnpaid.paidAmount = (existingUnpaid.paidAmount || 0) + req.amount;
-        existingUnpaid.dueAmount = Math.max(0, existingUnpaid.netAmount - existingUnpaid.paidAmount);
-        existingUnpaid.status = existingUnpaid.dueAmount === 0 ? 'Paid' : 'Partial';
-        StorageService.updateInvoice(existingUnpaid);
+      const isPayAllReq =
+        Boolean(req.isPayAll) ||
+        /সকল\s*বকে(?:য়া|য়া)|all\s*outstanding\s*dues|all\s*dues/i.test(req.feeTitle || '');
+
+      let resolvedItems: FeeItem[] = Array.isArray(req.items) && req.items.length > 0 ? [...req.items] : [];
+      if (resolvedItems.length === 0 && isPayAllReq && matchedStudent) {
+        const currentDues = StorageService.getStudentDueFees(matchedStudent, req.requestDate || todayStr);
+        let remainingBudget = Number(req.amount) || 0;
+        for (const d of currentDues) {
+          if (remainingBudget <= 0) break;
+          if (d.amount <= remainingBudget) {
+            resolvedItems.push(d);
+            remainingBudget -= d.amount;
+          } else {
+            resolvedItems.push({ ...d, amount: remainingBudget });
+            remainingBudget = 0;
+          }
+        }
+      }
+      if (resolvedItems.length === 0) {
+        resolvedItems = [
+          {
+            id: `online_${nowMs}`,
+            headName: req.feeTitle,
+            month: req.requestDate || todayStr,
+            amount: req.amount,
+          },
+        ];
+      }
+
+      const allInvs = StorageService.getInvoices();
+      const studentUnpaidInvs = allInvs.filter(
+        (inv) =>
+          (inv.studentId === req.studentId ||
+            (matchedStudent && (inv.studentId === matchedStudent.id || inv.studentId === matchedStudent.studentId))) &&
+          (inv.status === 'Unpaid' || inv.status === 'Partial') &&
+          inv.dueAmount > 0
+      );
+
+      // 1. Settle matching existing unpaid invoice(s) first if applicable
+      let remainingAmount = Number(req.amount) || 0;
+      const nonInvoiceItems: FeeItem[] = [];
+
+      if (isPayAllReq) {
+        const explicitInvIds = new Set(
+          resolvedItems
+            .filter((it) => it.id && it.id.startsWith('due_inv_'))
+            .map((it) => it.id.replace('due_inv_', ''))
+        );
+        for (const inv of studentUnpaidInvs) {
+          if (remainingAmount <= 0) break;
+          if (explicitInvIds.size === 0 || explicitInvIds.has(inv.id)) {
+            const payPart = Math.min(remainingAmount, inv.dueAmount);
+            if (payPart > 0) {
+              const oldPayment: FeePayment = {
+                id: `pay_${nowMs}_inv_${inv.id}`,
+                receiptNo: officialReceiptNo,
+                invoiceId: inv.id,
+                studentId: req.studentId,
+                studentName: req.studentName,
+                className: req.className as any,
+                roll: req.studentRoll,
+                amount: payPart,
+                items:
+                  inv.items && inv.items.length > 0
+                    ? inv.items
+                    : [{ id: `due_inv_${inv.id}`, headName: inv.feeType, month: inv.month, amount: payPart }],
+                paidDate: todayStr,
+                paymentMethod: req.paymentMethod as any,
+                transactionId: req.transactionId,
+                collectedBy: `${req.paymentMethod} Online (Approved by ${currentUser.name})`,
+                notes: `${inv.feeType} - অনলাইন পেমেন্ট অনুমোদন। প্রেরক: ${req.senderPhone}, TrxID: ${req.transactionId}`,
+              };
+              StorageService.addPayment(oldPayment);
+              remainingAmount -= payPart;
+            }
+          }
+        }
+        resolvedItems.forEach((it) => {
+          if (!it.id || !it.id.startsWith('due_inv_')) {
+            nonInvoiceItems.push(it);
+          }
+        });
       } else {
+        const exactUnpaid = studentUnpaidInvs.find(
+          (inv) =>
+            resolvedItems.some((it) => it.id === `due_inv_${inv.id}`) ||
+            inv.feeType === req.feeTitle ||
+            inv.dueAmount === req.amount
+        );
+        if (exactUnpaid) {
+          const payPart = Math.min(remainingAmount, exactUnpaid.dueAmount);
+          const linkedPayment: FeePayment = {
+            id: `pay_${nowMs}`,
+            receiptNo: officialReceiptNo,
+            invoiceId: exactUnpaid.id,
+            studentId: req.studentId,
+            studentName: req.studentName,
+            className: req.className as any,
+            roll: req.studentRoll,
+            amount: payPart,
+            items: resolvedItems,
+            paidDate: todayStr,
+            paymentMethod: req.paymentMethod as any,
+            transactionId: req.transactionId,
+            collectedBy: `${req.paymentMethod} Online (Approved by ${currentUser.name})`,
+            notes: `${req.feeTitle} - অনলাইন পেমেন্ট অনুমোদন। প্রেরক: ${req.senderPhone}, TrxID: ${req.transactionId}`,
+          };
+          StorageService.addPayment(linkedPayment);
+          remainingAmount -= payPart;
+        } else {
+          nonInvoiceItems.push(...resolvedItems);
+        }
+      }
+
+      // 2. For remaining non-invoice dues (monthly tuition, scheduled fees, transport, custom fees),
+      // create ONE invoice first and link the payment to invoiceId = newInvoice.id
+      if (remainingAmount > 0) {
+        const invoiceId = `inv_${nowMs}`;
+        const itemsForInvoice = nonInvoiceItems.length > 0 ? nonInvoiceItems : resolvedItems;
+        const itemMonths = itemsForInvoice
+          .map((it) => it.month)
+          .filter((m): m is string => Boolean(m && m.trim()));
+        const monthSummary = itemMonths.length > 0 ? Array.from(new Set(itemMonths)).join(', ') : todayStr;
+
         const newInvoice: FeeInvoice = {
-          id: `inv_${Date.now()}`,
-          invoiceNo: `INV-${Date.now().toString().slice(-6)}`,
+          id: invoiceId,
+          invoiceNo: `INV-${String(nowMs).slice(-6)}`,
           studentId: req.studentId,
           studentNameEn: req.studentName,
           studentNameBn: req.studentName,
@@ -382,15 +487,35 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           roll: req.studentRoll,
           session: schoolProfile.currentSession || '2026',
           feeType: req.feeTitle,
-          dueDate: todayStr,
-          amount: req.amount,
+          month: monthSummary,
+          items: itemsForInvoice,
+          amount: remainingAmount,
           discount: 0,
-          netAmount: req.amount,
-          paidAmount: req.amount,
-          dueAmount: 0,
-          status: 'Paid',
+          netAmount: remainingAmount,
+          paidAmount: 0,
+          dueAmount: remainingAmount,
+          dueDate: todayStr,
+          status: 'Unpaid',
         };
         StorageService.addInvoice(newInvoice);
+
+        const newPayment: FeePayment = {
+          id: `pay_${nowMs}`,
+          receiptNo: officialReceiptNo,
+          invoiceId: newInvoice.id,
+          studentId: req.studentId,
+          studentName: req.studentName,
+          className: req.className as any,
+          roll: req.studentRoll,
+          amount: remainingAmount,
+          items: itemsForInvoice,
+          paidDate: todayStr,
+          paymentMethod: req.paymentMethod as any,
+          transactionId: req.transactionId,
+          collectedBy: `${req.paymentMethod} Online (Approved by ${currentUser.name})`,
+          notes: `${req.feeTitle} - অনলাইন পেমেন্ট অনুমোদন। প্রেরক: ${req.senderPhone}, TrxID: ${req.transactionId}`,
+        };
+        StorageService.addPayment(newPayment);
       }
 
       // 3. Mark Online Request as Approved
@@ -399,6 +524,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
         approvedAt: nowIso,
         approvedBy: currentUser.name,
         receiptNo: officialReceiptNo,
+        items: resolvedItems,
       });
 
       // Update local states
@@ -580,7 +706,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const studentAllDues = useMemo(() => {
     if (!selectedStudent) return [];
     return StorageService.getStudentDueFees(selectedStudent);
-  }, [selectedStudent, invoices]);
+  }, [selectedStudent, invoices, payments, onlineRequests, syncTick]);
 
   // Filter out dues that are ALREADY included in current invoice builder
   const pendingDuesToDisplay = useMemo(() => {
@@ -675,135 +801,16 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   } | null>(null);
 
   // Helper to check duplicate fee before adding
-  const checkDuplicateFee = (feeTitle: string, period?: string): { isDuplicate: boolean; record?: any } => {
+  const checkDuplicateFee = (
+    feeTitle: string,
+    period?: string,
+    alternateTitles: string[] = []
+  ): { isDuplicate: boolean; record?: any } => {
     if (!selectedStudent) return { isDuplicate: false };
     const studentInvoices = invoices.filter(
       (i) => i.studentId === selectedStudent.id || i.studentId === selectedStudent.studentId
     );
-
-    const cleanFee = feeTitle.toLowerCase().replace(/[^a-z0-9\u0980-\u09FF]/g, '');
-    const cleanPeriod = (period || '').toLowerCase().replace(/[^a-z0-9\u0980-\u09FF]/g, '');
-
-    for (const inv of studentInvoices) {
-      if (inv.items && inv.items.length > 0) {
-        for (const it of inv.items) {
-          const itName = it.headName.toLowerCase().replace(/[^a-z0-9\u0980-\u09FF]/g, '');
-          const itMonth = (it.month || '').toLowerCase().replace(/[^a-z0-9\u0980-\u09FF]/g, '');
-
-          if (cleanPeriod && itMonth && (itMonth.includes(cleanPeriod) || cleanPeriod.includes(itMonth))) {
-            if (cleanFee.includes('tuition') || cleanFee.includes('বেতন') || itName.includes('tuition') || itName.includes('বেতন')) {
-              return {
-                isDuplicate: true,
-                record: {
-                  feeName: it.headName,
-                  month: it.month,
-                  amount: it.amount,
-                  invoiceNo: inv.invoiceNo,
-                  date: inv.dueDate || '2026',
-                  status: inv.status,
-                },
-              };
-            }
-          }
-
-          // Model Test explicit ordinal matching (1st, 2nd, 3rd)
-          const isFeeMt = cleanFee.includes('মডেলটেস্ট') || cleanFee.includes('modeltest');
-          const isItMt = itName.includes('মডেলটেস্ট') || itName.includes('modeltest');
-          if (isFeeMt && isItMt) {
-            const fee1 = cleanFee.includes('১ম') || cleanFee.includes('1st') || cleanFee.includes('mt1');
-            const it1 = itName.includes('১ম') || itName.includes('1st') || itName.includes('mt1');
-            const fee2 = cleanFee.includes('২য়') || cleanFee.includes('২য়') || cleanFee.includes('2nd') || cleanFee.includes('mt2');
-            const it2 = itName.includes('২য়') || itName.includes('২য়') || itName.includes('2nd') || itName.includes('mt2');
-            const fee3 = cleanFee.includes('৩য়') || cleanFee.includes('৩য়') || cleanFee.includes('3rd') || cleanFee.includes('mt3');
-            const it3 = itName.includes('৩য়') || itName.includes('৩য়') || itName.includes('3rd') || itName.includes('mt3');
-
-            if ((fee1 && it1) || (fee2 && it2) || (fee3 && it3)) {
-              return {
-                isDuplicate: true,
-                record: {
-                  feeName: it.headName,
-                  month: it.month,
-                  amount: it.amount,
-                  invoiceNo: inv.invoiceNo,
-                  date: inv.dueDate || '2026',
-                  status: inv.status,
-                },
-              };
-            }
-            // If both are Model Tests but different numbers (e.g. 1st vs 3rd), they DO NOT match!
-            continue;
-          }
-
-          // Semester Exam explicit ordinal matching (1st, 2nd, 3rd)
-          const isFeeSem = cleanFee.includes('সেমিস্টার') || cleanFee.includes('semester');
-          const isItSem = itName.includes('সেমিস্টার') || itName.includes('semester');
-          if (isFeeSem && isItSem) {
-            const fee1 = cleanFee.includes('১ম') || cleanFee.includes('1st') || cleanFee.includes('sem1');
-            const it1 = itName.includes('১ম') || itName.includes('1st') || itName.includes('sem1');
-            const fee2 = cleanFee.includes('২য়') || cleanFee.includes('২য়') || cleanFee.includes('2nd') || cleanFee.includes('sem2');
-            const it2 = itName.includes('২য়') || itName.includes('২য়') || itName.includes('2nd') || itName.includes('sem2');
-            const fee3 = cleanFee.includes('৩য়') || cleanFee.includes('৩য়') || cleanFee.includes('3rd') || cleanFee.includes('sem3');
-            const it3 = itName.includes('৩য়') || itName.includes('৩য়') || itName.includes('3rd') || itName.includes('sem3');
-
-            if ((fee1 && it1) || (fee2 && it2) || (fee3 && it3)) {
-              return {
-                isDuplicate: true,
-                record: {
-                  feeName: it.headName,
-                  month: it.month,
-                  amount: it.amount,
-                  invoiceNo: inv.invoiceNo,
-                  date: inv.dueDate || '2026',
-                  status: inv.status,
-                },
-              };
-            }
-            // If both are Semesters but different numbers, they DO NOT match!
-            continue;
-          }
-
-          const isNameMatch =
-            (cleanFee.length > 5 && itName.includes(cleanFee)) ||
-            (itName.length > 5 && cleanFee.includes(itName)) ||
-            (cleanFee.includes('শিক্ষাসফর') && itName.includes('শিক্ষাসফর')) ||
-            (cleanFee.includes('ক্রীড়া') && itName.includes('ক্রীড়া')) ||
-            (cleanFee.includes('ভর্তি') && itName.includes('ভর্তি')) ||
-            (cleanFee.includes('সেশন') && itName.includes('সেশন'));
-
-          if (isNameMatch) {
-            return {
-              isDuplicate: true,
-              record: {
-                feeName: it.headName,
-                month: it.month,
-                amount: it.amount,
-                invoiceNo: inv.invoiceNo,
-                date: inv.dueDate || '2026',
-                status: inv.status,
-              },
-            };
-          }
-        }
-      }
-
-      const invType = (inv.feeType || '').toLowerCase().replace(/[^a-z0-9\u0980-\u09FF]/g, '');
-      const invMonth = (inv.month || '').toLowerCase().replace(/[^a-z0-9\u0980-\u09FF]/g, '');
-      if (cleanPeriod && invMonth && (invMonth.includes(cleanPeriod) || cleanPeriod.includes(invMonth))) {
-        return {
-          isDuplicate: true,
-          record: {
-            feeName: inv.feeType,
-            month: inv.month,
-            amount: inv.paidAmount > 0 ? inv.paidAmount : inv.netAmount,
-            invoiceNo: inv.invoiceNo,
-            date: inv.dueDate || '2026',
-            status: inv.status,
-          },
-        };
-      }
-    }
-
-    return { isDuplicate: false };
+    return findDuplicatePaidFee(studentInvoices, feeTitle, period, alternateTitles);
   };
 
   // AUTO-SET CLASS TUITION RATE & RECALCULATE ON STUDENT CHANGE
@@ -975,7 +982,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
 
   // Quick add preset fee with duplicate alert
   const handleAddPreset = (preset: typeof dynamicPresets[0]) => {
-    const dup = checkDuplicateFee(preset.nameBn, `${academicYear} Session`);
+    const dup = checkDuplicateFee(preset.nameBn, `${academicYear} Session`, [preset.nameEn]);
     if (dup.isDuplicate && dup.record) {
       setDuplicateWarning({
         isOpen: true,
@@ -1682,7 +1689,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   </table>
   <div class="footer">
     <div class="sig">Accounts Officer</div>
-    <div class="sig">Head Teacher / Principal</div>
+    <div class="sig">${buildPrincipalSignatureHtml(school)}Head Teacher / Principal</div>
   </div>
 </body>
 </html>`;
@@ -2387,7 +2394,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                         <div className="flex flex-wrap gap-1.5">
                           {dynamicPresets.map((preset) => {
                             const Icon = preset.icon || Sparkles;
-                            const isDup = checkDuplicateFee(preset.nameBn, `${academicYear} Session`).isDuplicate;
+                            const isDup = checkDuplicateFee(preset.nameBn, `${academicYear} Session`, [preset.nameEn]).isDuplicate;
                             return (
                               <button
                                 key={preset.id}
@@ -5241,9 +5248,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                   </div>
                 </div>
                 <div className="text-center">
-                  <div className="font-serif italic font-bold text-xs text-slate-900 pb-0.5">
-                    {school.principalNameEn || ''}
-                  </div>
+                  <PrincipalSignatureDisplay
+                    school={school}
+                    fallbackText=""
+                    heightClass="h-10"
+                    textClassName="font-serif italic font-bold text-xs text-slate-900 pb-0.5"
+                  />
                   <div className="border-t border-slate-400 pt-1 px-6 font-semibold">
                     {language === 'bn' ? 'প্রধান শিক্ষক / অধ্যক্ষ' : 'Principal / Head Teacher'}
                   </div>

@@ -41,6 +41,7 @@ import { StudentIDCardsTab } from './StudentIDCardsTab';
 import { ClassTimingsTab } from './ClassTimingsTab';
 import { SaturdayOffToggle } from '../common/SaturdayOffToggle';
 import { resolveTeacherStaffProfile } from '../../utils/teacherResolver';
+import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 
 export type AttendanceSubTab =
   | 'daily'
@@ -1243,6 +1244,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({ initialSubTab, j
                 <div className="border-t border-slate-800 pt-1 font-bold">Class Teacher Signature</div>
               </div>
               <div className="text-center w-48">
+                <PrincipalSignatureDisplay school={school} fallbackText="" heightClass="h-9" />
                 <div className="border-t border-slate-800 pt-1 font-bold">Principal / Headmaster Signature</div>
               </div>
             </div>
@@ -1573,6 +1575,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({ initialSubTab, j
                     </span>
                   </div>
                   <div className="text-center w-48">
+                    <PrincipalSignatureDisplay school={school} fallbackText="" heightClass="h-10" />
                     <div className="border-t border-slate-800 pt-1 font-bold text-slate-900 text-[11px]">
                       Principal / Headmaster
                       <span className="block text-[9px] text-slate-500 font-normal">(প্রধান শিক্ষকের প্রতিস্বাক্ষর)</span>

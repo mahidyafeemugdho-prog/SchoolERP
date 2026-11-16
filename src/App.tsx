@@ -53,6 +53,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { OnlinePaymentRequest } from './types';
+import { resolveSchoolDisplayName } from './utils/schoolNameResolver';
 
 function AppContent() {
   const { isAuthenticated, activeRole, currentUser, saasSession, logout, firebaseUser } = useAuth();
@@ -152,7 +153,7 @@ function AppContent() {
       document.title = 'Smart School BD ERP • Master Admin Console';
       return;
     }
-    const activeName = saasSession?.school?.schoolName || schoolProfile?.nameEn;
+    const activeName = resolveSchoolDisplayName(schoolProfile, saasSession?.school, 'en');
     if (activeName && activeName !== 'Smart School BD ERP') {
       document.title = `${activeName} • Smart School BD ERP`;
     } else {

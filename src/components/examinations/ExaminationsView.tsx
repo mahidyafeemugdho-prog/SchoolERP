@@ -13,6 +13,9 @@ import {
 import { Exam, MarksEntry, Student, Subject, ExamScheduleItem, ClassLevel } from '../../types';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
+import { compareStudentsByRoll } from '../../utils/studentSort';
+import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
+import { buildPrincipalSignatureHtml } from '../../utils/signatureHelper';
 import {
   Award,
   Search,
@@ -426,7 +429,9 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
     if (activeRole === 'student' && authenticatedStudent) {
       return [authenticatedStudent];
     }
-    return students.filter((s) => s.className === selectedClass && s.status === 'active');
+    return students
+      .filter((s) => s.className === selectedClass && s.status === 'active')
+      .sort(compareStudentsByRoll);
   }, [students, selectedClass, activeRole, authenticatedStudent]);
 
   // Subjects for selected class
@@ -2921,7 +2926,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
           .sort((a, b) => {
             if (b.gpa !== a.gpa) return b.gpa - a.gpa;
             if (b.totalObtained !== a.totalObtained) return b.totalObtained - a.totalObtained;
-            return Number(a.student.roll) - Number(b.student.roll);
+            return compareStudentsByRoll(a.student, b.student);
           });
 
         // 2. Failed / Incomplete students
@@ -2929,7 +2934,8 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
           .filter((m) => m.hasFail || m.subjectsWithMarksCount === 0)
           .sort((a, b) => {
             if (a.failedCount !== b.failedCount) return a.failedCount - b.failedCount;
-            return b.totalObtained - a.totalObtained;
+            if (b.totalObtained !== a.totalObtained) return b.totalObtained - a.totalObtained;
+            return compareStudentsByRoll(a.student, b.student);
           });
 
         const top1 = passedStudents[0];
@@ -3735,6 +3741,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                 </div>
               </div>
               <div className="text-center">
+                <PrincipalSignatureDisplay school={school} fallbackText="" heightClass="h-10" />
                 <div className="border-t-2 border-slate-800 pt-1 w-48">
                   {language === 'bn' ? 'অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল' : 'Principal Signature & Seal'}
                 </div>
@@ -4001,7 +4008,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                       <div class="sig">শ্রেণি শিক্ষকের স্বাক্ষর<br/><span style="font-size:9px;font-weight:400;color:#64748b;">Class Teacher</span></div>
                       <div class="sig">পরীক্ষা নিয়ন্ত্রকের স্বাক্ষর<br/><span style="font-size:9px;font-weight:400;color:#64748b;">Controller of Examinations</span></div>
                       <div class="sig">
-                        <div style="font-style:italic;font-weight:800;margin-bottom:2px;">${escapeHtml(school.principalNameEn || school.principalNameBn || '')}</div>
+                        ${buildPrincipalSignatureHtml(school)}
                         অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল<br/><span style="font-size:9px;font-weight:400;color:#64748b;">Principal Signature & Seal</span>
                       </div>
                     </div>`
@@ -4570,9 +4577,12 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                             <span className="text-[10px] text-slate-500">Controller of Examinations</span>
                           </div>
                           <div className="text-center">
-                            <div className="font-serif italic font-black text-sm text-slate-900 mb-0.5">
-                              {school.principalNameEn || school.principalNameBn || ''}
-                            </div>
+                            <PrincipalSignatureDisplay
+                              school={school}
+                              fallbackText=""
+                              heightClass="h-10"
+                              textClassName="font-serif italic font-black text-sm text-slate-900 mb-0.5"
+                            />
                             <div className="border-t-2 border-slate-800 pt-1 w-48 font-bold">
                               অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল
                             </div>
@@ -4885,6 +4895,13 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                   </div>
                 </div>
                 <div>
+                  <PrincipalSignatureDisplay
+                    school={school}
+                    fallbackText=""
+                    heightClass="h-9"
+                    imgClassName="max-h-full max-w-[140px] object-contain mx-auto"
+                    textClassName="font-serif italic font-bold text-xs text-slate-900"
+                  />
                   <div className="border-t border-slate-500 pt-1 font-bold text-slate-900 mx-4">
                     প্রধান শিক্ষকের স্বাক্ষর ও সিল
                   </div>
@@ -5706,9 +5723,12 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                   <span className="text-[10px] text-slate-500">Controller of Examinations</span>
                 </div>
                 <div className="text-center">
-                  <div className="font-serif italic font-black text-sm text-slate-900 mb-0.5">
-                    {school.principalNameEn || school.principalNameBn || 'Principal'}
-                  </div>
+                  <PrincipalSignatureDisplay
+                    school={school}
+                    fallbackText="Principal"
+                    heightClass="h-11"
+                    textClassName="font-serif italic font-black text-sm text-slate-900 mb-0.5"
+                  />
                   <div className="border-t-2 border-slate-800 pt-1 w-48 font-bold">
                     অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল
                   </div>

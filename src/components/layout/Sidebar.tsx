@@ -29,6 +29,8 @@ import {
 
 import { isTabAuthorized } from '../../utils/permissions';
 import { StorageService } from '../../services/storage';
+import { useSchool } from '../../context/SchoolContext';
+import { resolveSchoolDisplayName } from '../../utils/schoolNameResolver';
 
 interface SidebarProps {
   activeTab: string;
@@ -47,6 +49,7 @@ interface NavItem {
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, onClose }) => {
   const { activeRole, currentUser, saasSession } = useAuth();
   const { t, language, toBnNumber } = useLanguage();
+  const { schoolProfile } = useSchool();
   const [pendingOnlineCount, setPendingOnlineCount] = React.useState<number>(() =>
     StorageService.getOnlinePaymentRequests().filter((r) => r.status === 'pending').length
   );
@@ -249,7 +252,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
             <span className="truncate">
               {(activeRole === 'master_admin' || saasSession?.principal?.isMasterAdmin) && !saasSession?.school
                 ? 'Smart School BD ERP'
-                : saasSession?.school?.schoolName || 'Smart School BD ERP'}
+                : resolveSchoolDisplayName(schoolProfile, saasSession?.school, language)}
             </span>
             <span className="px-1.5 py-0.2 bg-blue-950 text-blue-300 border border-blue-800 rounded text-[10px] font-mono shrink-0 ml-1">
               {saasSession?.principal?.isMasterAdmin

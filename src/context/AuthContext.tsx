@@ -27,6 +27,7 @@ import {
   SaaSPlanId,
   SaaSSchoolRecord,
 } from '../services/saasApi';
+import { hydrateSchoolProfileFromSaaSSchool } from '../utils/schoolNameResolver';
 
 export interface LoginResult {
   success: boolean;
@@ -434,10 +435,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setSaasSession(me);
 
+      // Pull active tenant slices from Firestore BEFORE matching staff/student records or mounting authenticated views
+      if (me.principal.schoolId) {
+        await CloudSyncService.setActiveSaaSTenant(me.principal.schoolId, me.accessAllowed);
+      } else {
+        await CloudSyncService.setActiveSaaSTenant(null, false);
+      }
+
       const resolvedRole = mapClaimsRoleToUserRole(
         me.principal.schoolRole ?? null,
         Boolean(me.principal.isMasterAdmin)
       );
+
+      if (me.principal.schoolId && me.school) {
+        const currentProfile = StorageService.getSchoolProfile();
+        const { profile: hydratedProfile, changed } = hydrateSchoolProfileFromSaaSSchool(
+          currentProfile,
+          me.school
+        );
+        if (changed) {
+          const canPersistProfileToCloud =
+            me.accessAllowed &&
+            (resolvedRole === 'super_admin' ||
+              resolvedRole === 'admin' ||
+              Boolean(me.principal.isMasterAdmin));
+          if (canPersistProfileToCloud) {
+            StorageService.saveSchoolProfile(hydratedProfile);
+          } else {
+            StorageService.saveSchoolProfileLocally(hydratedProfile);
+          }
+        }
+      }
       const principalEmailLower = (me.principal.email || fbUser.email || '').toLowerCase();
       const matchedStaff = me.principal.schoolId
         ? StorageService.getStaff().find(
@@ -507,12 +535,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       safeSetLocalStorage('school_erp_role', resolvedRole);
       safeSetLocalStorage('school_erp_authenticated', 'true');
       safeSetLocalStorage('school_erp_user', JSON.stringify(userProfile));
-
-      if (me.principal.schoolId) {
-        await CloudSyncService.setActiveSaaSTenant(me.principal.schoolId, me.accessAllowed);
-      } else {
-        await CloudSyncService.setActiveSaaSTenant(null, false);
-      }
 
       return me;
     } catch (err: any) {
