@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { initializeApp, getApps, cert, applicationDefault, App } from 'firebase-admin/app';
 import { getAuth, Auth } from 'firebase-admin/auth';
 import { getFirestore, Firestore, Timestamp } from 'firebase-admin/firestore';
+import bundledAppletConfig from '../../../firebase-applet-config.json';
 import {
   AuthPrincipal,
   AuthProviderInterface,
@@ -58,30 +59,72 @@ function loadAppletConfig(): FirebaseAppletConfig {
       return JSON.parse(fs.readFileSync(candidate, 'utf-8'));
     }
   }
+  const fallback = bundledAppletConfig as Partial<FirebaseAppletConfig>;
   return {
-    projectId: process.env.FIREBASE_PROJECT_ID || '',
-    apiKey: process.env.FIREBASE_WEB_API_KEY || '',
-    firestoreDatabaseId: process.env.FIRESTORE_DATABASE_ID || '(default)',
+    projectId: process.env.FIREBASE_PROJECT_ID || fallback.projectId || '',
+    apiKey: process.env.FIREBASE_WEB_API_KEY || fallback.apiKey || '',
+    firestoreDatabaseId: process.env.FIRESTORE_DATABASE_ID || fallback.firestoreDatabaseId || '(default)',
   };
 }
 
 let cachedApp: App | null = null;
 let adminInitError: string | null = null;
+let adminInitStatus: 'ok' | 'missing_credentials' | 'invalid_json' | 'missing_fields' | 'init_error' = 'missing_credentials';
 
-function parseServiceAccountFromEnv(rawValue: string): Record<string, any> | null {
-  let trimmed = rawValue.trim();
+function stripWrappingQuotesAndFences(raw: string): string {
+  let value = raw.replace(/^\uFEFF/, '').trim();
+  if (value.startsWith('```')) {
+    value = value.replace(/^```[a-zA-Z]*\r?\n?/, '').replace(/\r?\n?```$/, '').trim();
+  }
+  if (
+    (value.startsWith("'") && value.endsWith("'")) ||
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith('`') && value.endsWith('`'))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  return value;
+}
+
+function escapeLiteralNewlinesInJsonStrings(jsonText: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < jsonText.length; i++) {
+    const ch = jsonText[i];
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      out += ch;
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      out += ch;
+      continue;
+    }
+    if (inString && (ch === '\n' || ch === '\r')) {
+      if (ch === '\r' && jsonText[i + 1] === '\n') {
+        i++;
+      }
+      out += '\\n';
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+export function parseServiceAccountFromEnv(rawValue: string): Record<string, any> | null {
+  let trimmed = stripWrappingQuotesAndFences(rawValue);
   if (!trimmed) return null;
 
-  // Strip accidental outer single/double quotes from env UI copy-paste
-  if (
-    (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
-    (trimmed.startsWith('"') && trimmed.endsWith('"'))
-  ) {
-    trimmed = trimmed.slice(1, -1).trim();
-  }
-
   let jsonText = trimmed;
-  if (!jsonText.startsWith('{')) {
+  if (!jsonText.startsWith('{') && !jsonText.startsWith('"{')) {
     try {
       const decoded = Buffer.from(trimmed, 'base64').toString('utf-8').trim();
       if (decoded.startsWith('{')) {
@@ -92,50 +135,108 @@ function parseServiceAccountFromEnv(rawValue: string): Record<string, any> | nul
     }
   }
 
-  if (!jsonText.startsWith('{')) return null;
-  const parsed = JSON.parse(jsonText);
-  if (typeof parsed?.private_key === 'string') {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    try {
+      parsed = JSON.parse(escapeLiteralNewlinesInJsonStrings(jsonText));
+    } catch {
+      // Handle env var pasted with escaped quotes like {\"type\":...}
+      const unescapedQuotes = jsonText.replace(/\\"/g, '"');
+      parsed = JSON.parse(escapeLiteralNewlinesInJsonStrings(unescapedQuotes));
+    }
+  }
+
+  // Handle double-JSON-encoded string ("{\"type\":...}")
+  if (typeof parsed === 'string') {
+    parsed = JSON.parse(escapeLiteralNewlinesInJsonStrings(parsed.trim()));
+  }
+
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (typeof parsed.private_key === 'string') {
     parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
   }
   return parsed;
 }
 
+function resolvePrivateKeyFromEnv(rawKey?: string, rawBase64Key?: string): string {
+  const direct = rawKey ? stripWrappingQuotesAndFences(rawKey) : '';
+  if (direct) {
+    return direct.replace(/\\n/g, '\n');
+  }
+  const b64 = rawBase64Key ? stripWrappingQuotesAndFences(rawBase64Key) : '';
+  if (b64) {
+    return Buffer.from(b64, 'base64').toString('utf-8').replace(/\\n/g, '\n');
+  }
+  return '';
+}
+
+function getRawServiceAccountEnv(): string {
+  return (
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+    process.env.FIREBASE_SERVICE_ACCOUNT_BASE64 ||
+    process.env.FIREBASE_SERVICE_ACCOUNT ||
+    process.env.FIREBASE_ADMIN_CREDENTIALS ||
+    ''
+  );
+}
+
 function getAdminApp(): { app: App | null; config: FirebaseAppletConfig; hasCredentials: boolean } {
   const config = loadAppletConfig();
   if (cachedApp) {
+    adminInitStatus = 'ok';
     return { app: cachedApp, config, hasCredentials: true };
   }
   if (getApps().length > 0) {
     cachedApp = getApps()[0];
+    adminInitStatus = 'ok';
     return { app: cachedApp, config, hasCredentials: true };
   }
 
   try {
-    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-    if (serviceAccountJson) {
-      const parsed = parseServiceAccountFromEnv(serviceAccountJson);
+    const serviceAccountJson = getRawServiceAccountEnv();
+    if (serviceAccountJson && serviceAccountJson.trim()) {
+      let parsed: Record<string, any> | null = null;
+      try {
+        parsed = parseServiceAccountFromEnv(serviceAccountJson);
+      } catch (parseErr: any) {
+        adminInitStatus = 'invalid_json';
+        adminInitError = `FIREBASE_SERVICE_ACCOUNT_JSON is present on the server but could not be parsed as valid JSON (${parseErr?.message || 'parse error'}).`;
+        return { app: null, config, hasCredentials: false };
+      }
       if (parsed?.client_email && parsed?.private_key) {
         cachedApp = initializeApp({
           credential: cert(parsed),
           projectId: parsed.project_id || config.projectId,
         });
+        adminInitStatus = 'ok';
+        adminInitError = null;
         return { app: cachedApp, config, hasCredentials: true };
       }
+      adminInitStatus = 'missing_fields';
+      adminInitError = 'FIREBASE_SERVICE_ACCOUNT_JSON was parsed but is missing client_email or private_key.';
+      return { app: null, config, hasCredentials: false };
     }
 
     // Alternative split env vars (useful if hosting UI limits single-var formatting)
-    const envClientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
-    const envPrivateKey = process.env.FIREBASE_PRIVATE_KEY?.trim();
+    const envClientEmail = stripWrappingQuotesAndFences(process.env.FIREBASE_CLIENT_EMAIL || '');
+    const envPrivateKey = resolvePrivateKeyFromEnv(
+      process.env.FIREBASE_PRIVATE_KEY,
+      process.env.FIREBASE_PRIVATE_KEY_BASE64
+    );
     const envProjectId = (process.env.FIREBASE_PROJECT_ID || config.projectId || '').trim();
     if (envClientEmail && envPrivateKey && envProjectId) {
       cachedApp = initializeApp({
         credential: cert({
           projectId: envProjectId,
           clientEmail: envClientEmail,
-          privateKey: envPrivateKey.replace(/\\n/g, '\n'),
+          privateKey: envPrivateKey,
         }),
         projectId: envProjectId,
       });
+      adminInitStatus = 'ok';
+      adminInitError = null;
       return { app: cachedApp, config, hasCredentials: true };
     }
 
@@ -149,6 +250,8 @@ function getAdminApp(): { app: App | null; config: FirebaseAppletConfig; hasCred
               credential: cert(parsed),
               projectId: parsed.project_id || config.projectId,
             });
+            adminInitStatus = 'ok';
+            adminInitError = null;
             return { app: cachedApp, config, hasCredentials: true };
           }
         } catch {
@@ -158,6 +261,8 @@ function getAdminApp(): { app: App | null; config: FirebaseAppletConfig; hasCred
           credential: applicationDefault(),
           projectId: config.projectId,
         });
+        adminInitStatus = 'ok';
+        adminInitError = null;
         return { app: cachedApp, config, hasCredentials: true };
       }
     }
@@ -169,16 +274,42 @@ function getAdminApp(): { app: App | null; config: FirebaseAppletConfig; hasCred
         credential: applicationDefault(),
         projectId: config.projectId,
       });
+      adminInitStatus = 'ok';
+      adminInitError = null;
       return { app: cachedApp, config, hasCredentials: true };
     }
 
+    adminInitStatus = 'missing_credentials';
     adminInitError =
       'Firebase Admin credentials (FIREBASE_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS) are not configured on this server.';
     return { app: null, config, hasCredentials: false };
   } catch (err: any) {
+    adminInitStatus = 'init_error';
     adminInitError = err?.message || 'Failed to initialize Firebase Admin SDK';
     return { app: null, config, hasCredentials: false };
   }
+}
+
+export function getFirebaseAdminDiagnostics() {
+  const { config, hasCredentials } = getAdminApp();
+  const hasServiceAccountJson = Boolean(getRawServiceAccountEnv().trim());
+  const hasClientEmail = Boolean(process.env.FIREBASE_CLIENT_EMAIL?.trim());
+  const hasPrivateKey = Boolean(
+    process.env.FIREBASE_PRIVATE_KEY?.trim() || process.env.FIREBASE_PRIVATE_KEY_BASE64?.trim()
+  );
+  return {
+    adminSdkReady: hasCredentials,
+    initStatus: adminInitStatus,
+    hasServiceAccountJson,
+    hasSplitCredentials: hasClientEmail && hasPrivateKey,
+    hasClientEmail,
+    hasPrivateKey,
+    hasGoogleAppCreds: Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim()),
+    hasProjectId: Boolean(config.projectId),
+    isNetlifyRuntime: Boolean(
+      process.env.NETLIFY === 'true' || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT
+    ),
+  };
 }
 
 function getMasterAdminEmailAllowlist(): Set<string> {

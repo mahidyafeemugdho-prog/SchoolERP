@@ -19,6 +19,7 @@ export interface SaasRouterDeps {
   auth: AuthProviderInterface;
   nowProvider?: () => Date;
   adminSdkReady?: boolean;
+  getHealthDiagnostics?: () => { adminSdkReady: boolean; [key: string]: any };
 }
 
 function handleRouteError(res: Response, err: unknown) {
@@ -55,12 +56,14 @@ export function createSaasRouter(deps: SaasRouterDeps) {
 
   // Public health & provider info
   router.get('/health', (_req, res) => {
+    const diagnostics = deps.getHealthDiagnostics ? deps.getHealthDiagnostics() : undefined;
     res.json({
       success: true,
       service: 'SmartSchoolBD Multi-Tenant SaaS API',
       dbProvider: deps.db.providerName,
       authProvider: deps.auth.providerName,
-      adminSdkReady: deps.adminSdkReady ?? true,
+      adminSdkReady: diagnostics ? diagnostics.adminSdkReady : (deps.adminSdkReady ?? true),
+      ...(diagnostics ? { diagnostics } : {}),
       serverTime: nowProvider().toISOString(),
     });
   });

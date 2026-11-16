@@ -52,7 +52,7 @@ import {
 import { useSchool } from '../../context/SchoolContext';
 import QRCode from 'qrcode';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
-import { SaaSApi } from '../../services/saasApi';
+import { SaaSApi, isSaaSBackendUnavailableError } from '../../services/saasApi';
 import {
   ModernStudentIDCardFront,
   ModernStudentIDCardBack,
@@ -228,7 +228,15 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
           : `Student Firebase login (${cleanEmail}) saved successfully!`
       );
     } catch (err: any) {
-      setPasswordChangeError(err?.message || 'Failed to update student login credentials.');
+      if (isSaaSBackendUnavailableError(err)) {
+        setPasswordChangeError(
+          language === 'bn'
+            ? `${err?.message || 'সার্ভারে Firebase Admin SDK কনফিগার করা নেই।'} (Netlify-তে চালালে Environment variables-এ FIREBASE_SERVICE_ACCOUNT_JSON বা FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY যোগ করে Scopes: All scopes দিয়ে Clear cache and deploy site করুন।)`
+            : `${err?.message || 'Firebase Admin SDK is not configured on the server.'} (On Netlify, add FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY in Environment variables with All scopes, then redeploy.)`
+        );
+      } else {
+        setPasswordChangeError(err?.message || 'Failed to update student login credentials.');
+      }
     } finally {
       setSavingStudentPassword(false);
     }

@@ -181,6 +181,13 @@ export function createSaaSMiddleware(
 
       return next();
     } catch (err: any) {
+      if (err instanceof SaaSServiceError) {
+        return res.status(err.statusCode).json({
+          success: false,
+          code: err.code,
+          error: err.message,
+        });
+      }
       return res.status(500).json({
         success: false,
         code: 'SUBSCRIPTION_CHECK_FAILED',

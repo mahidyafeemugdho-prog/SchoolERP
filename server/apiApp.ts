@@ -7,6 +7,7 @@ import { createSaasRouter } from './saas/router';
 import {
   FirebaseAuthProvider,
   FirebaseDatabaseProvider,
+  getFirebaseAdminDiagnostics,
   isFirebaseAdminConfigured,
 } from './saas/providers/firebaseProvider';
 
@@ -75,6 +76,7 @@ export function createApiApp(options: CreateApiAppOptions = {}): express.Express
       auth: saasAuthProvider,
       db: saasDbProvider,
       adminSdkReady: isFirebaseAdminConfigured(),
+      getHealthDiagnostics: getFirebaseAdminDiagnostics,
     })
   );
 
