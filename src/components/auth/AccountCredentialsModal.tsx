@@ -44,6 +44,7 @@ import {
   RefreshCw,
   Building2,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 
 export interface AccountCredentialsModalProps {
@@ -143,6 +144,10 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
   });
   const [showEditUserPass, setShowEditUserPass] = useState<boolean>(false);
 
+  // Delete user confirmation state
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState<SaaSUserDTO | null>(null);
+  const [deletingUid, setDeletingUid] = useState<string | null>(null);
+
   useEffect(() => {
     if (!isOpen) return;
     setTab(initialTab);
@@ -158,6 +163,8 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
     setMyFeedback(null);
     setUsersFeedback(null);
     setEditingUser(null);
+    setConfirmDeleteUser(null);
+    setDeletingUid(null);
     setShowCreateForm(false);
   }, [isOpen, initialTab, currentUser, saasSession]);
 
@@ -767,6 +774,64 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
     }
   };
 
+  const handleConfirmDeleteUser = async (u: SaaSUserDTO) => {
+    setUsersFeedback(null);
+    setDeletingUid(u.uid);
+    try {
+      await SaaSApi.deleteUser(u.uid);
+
+      // Unlink Firebase auth reference from local Staff or Student profile without deleting their directory record
+      if (isViewingActiveLocalSchool) {
+        const matchedStaff = StorageService.getStaff().find(
+          (st) => st.authUid === u.uid || (u.linkedStaffId && st.id === u.linkedStaffId)
+        );
+        if (matchedStaff) {
+          StorageService.updateStaff({
+            ...matchedStaff,
+            authUid: undefined,
+            authProvisionStatus: undefined,
+          });
+        }
+        if (u.schoolRole === 'student') {
+          const matchedStudent = StorageService.getStudents().find(
+            (stu) => stu.authUid === u.uid || (u.linkedStudentId && stu.id === u.linkedStudentId)
+          );
+          if (matchedStudent) {
+            StorageService.updateStudent({
+              ...matchedStudent,
+              authUid: undefined,
+            });
+          }
+        }
+      }
+
+      if (editingUser?.uid === u.uid) {
+        setEditingUser(null);
+      }
+      setConfirmDeleteUser(null);
+      setUsersFeedback({
+        type: 'success',
+        text:
+          language === 'bn'
+            ? `${u.displayName} (${u.email})-এর ইউজার ও পাসওয়ার্ড স্থায়ীভাবে মুছে ফেলা হয়েছে। সে আর লগইন করতে পারবে না।`
+            : `Login credentials for ${u.displayName} (${u.email}) have been permanently deleted. They can no longer log in.`,
+      });
+      await fetchSchoolUsers(selectedSchoolId);
+    } catch (err: any) {
+      const msg = isSaaSBackendUnavailableError(err)
+        ? language === 'bn'
+          ? 'ইউজারের লগইন একাউন্ট স্থায়ীভাবে মুছে ফেলতে মূল সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON কনফিগার থাকতে হবে।'
+          : 'Permanently deleting another user’s login account requires FIREBASE_SERVICE_ACCOUNT_JSON configured on the server.'
+        : err?.message || 'Failed to delete user login.';
+      setUsersFeedback({
+        type: 'error',
+        text: msg,
+      });
+    } finally {
+      setDeletingUid(null);
+    }
+  };
+
   const handleCopyUserInfo = (u: SaaSUserDTO) => {
     const text = `School ID: ${u.schoolId}\nName: ${u.displayName}\nRole: ${u.schoolRole}\nLogin Email: ${u.email}`;
     navigator.clipboard?.writeText(text).then(() => {
@@ -1095,6 +1160,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                       onChange={(e) => {
                         setSelectedSchoolId(e.target.value);
                         setEditingUser(null);
+                        setConfirmDeleteUser(null);
                       }}
                       className="w-full sm:max-w-xs px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     >
@@ -1590,83 +1656,153 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                 <div className="divide-y divide-slate-200 border border-slate-200 rounded-xl overflow-hidden bg-white">
                   {filteredUsers.map((u) => {
                     const isSelf = u.uid === currentUser.authUid || u.uid === currentUser.id;
+                    const canDeleteThisUser =
+                      !isSelf &&
+                      u.schoolRole !== 'master_admin' &&
+                      (isMaster ||
+                        activeRole === 'super_admin' ||
+                        (activeRole === 'admin' && u.schoolRole !== 'super_admin'));
+                    const isConfirmingDelete = confirmDeleteUser?.uid === u.uid;
+                    const isDeletingThis = deletingUid === u.uid;
+
                     return (
-                      <div
-                        key={u.uid}
-                        className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/70 transition-colors"
-                      >
-                        <div className="min-w-0 space-y-0.5">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-bold text-slate-900 text-xs truncate">
-                              {u.displayName}
-                            </span>
-                            <span className="text-[11px] font-bold text-blue-700">
-                              · {getRoleLabel(u.schoolRole)}
-                            </span>
-                            <span
-                              className={`text-[11px] font-bold ${
-                                u.status === 'active' ? 'text-emerald-700' : 'text-rose-600'
-                              }`}
-                            >
-                              · {u.status === 'active' ? (language === 'bn' ? 'সক্রিয়' : 'Active') : (language === 'bn' ? 'নিষ্ক্রিয়' : 'Disabled')}
-                            </span>
-                            {isSelf && (
-                              <span className="text-[10px] font-bold text-slate-500">(You)</span>
-                            )}
+                      <div key={u.uid} className="hover:bg-slate-50/70 transition-colors">
+                        <div className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-bold text-slate-900 text-xs truncate">
+                                {u.displayName}
+                              </span>
+                              <span className="text-[11px] font-bold text-blue-700">
+                                · {getRoleLabel(u.schoolRole)}
+                              </span>
+                              <span
+                                className={`text-[11px] font-bold ${
+                                  u.status === 'active' ? 'text-emerald-700' : 'text-rose-600'
+                                }`}
+                              >
+                                · {u.status === 'active' ? (language === 'bn' ? 'সক্রিয়' : 'Active') : (language === 'bn' ? 'নিষ্ক্রিয়' : 'Disabled')}
+                              </span>
+                              {isSelf && (
+                                <span className="text-[10px] font-bold text-slate-500">(You)</span>
+                              )}
+                            </div>
+                            <div className="text-[11px] font-mono text-slate-600 truncate">
+                              {u.email}
+                              {u.phone ? ` • ${u.phone}` : ''}
+                              {u.linkedStudentId && (() => {
+                                const stu = allLocalStudents.find((s) => s.id === u.linkedStudentId || s.studentId === u.linkedStudentId);
+                                return stu ? ` • শিক্ষার্থী: ${stu.nameBn || stu.nameEn} (${stu.className}, রোল ${stu.roll})` : '';
+                              })()}
+                            </div>
                           </div>
-                          <div className="text-[11px] font-mono text-slate-600 truncate">
-                            {u.email}
-                            {u.phone ? ` • ${u.phone}` : ''}
-                            {u.linkedStudentId && (() => {
-                              const stu = allLocalStudents.find((s) => s.id === u.linkedStudentId || s.studentId === u.linkedStudentId);
-                              return stu ? ` • শিক্ষার্থী: ${stu.nameBn || stu.nameEn} (${stu.className}, রোল ${stu.roll})` : '';
-                            })()}
+
+                          <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setConfirmDeleteUser(null);
+                                handleOpenEditUser(u);
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 text-[11px] font-bold flex items-center gap-1"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                              <span>{language === 'bn' ? 'ইমেইল/পাসওয়ার্ড' : 'Edit / Pass'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyUserInfo(u)}
+                              title="Copy login details"
+                              className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 text-[11px] font-semibold flex items-center gap-1"
+                            >
+                              {copiedUid === u.uid ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5" />
+                              )}
+                              <span className="hidden md:inline">
+                                {copiedUid === u.uid ? 'Copied' : 'Copy'}
+                              </span>
+                            </button>
+                            {!isSelf && (
+                              <button
+                                type="button"
+                                onClick={() => handleToggleUserStatus(u)}
+                                title={u.status === 'active' ? 'Disable login' : 'Enable login'}
+                                className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-bold flex items-center gap-1 ${
+                                  u.status === 'active'
+                                    ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                    : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                }`}
+                              >
+                                {u.status === 'active' ? (
+                                  <Ban className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Unlock className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            )}
+                            {canDeleteThisUser && (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteUser(isConfirmingDelete ? null : u)}
+                                title={language === 'bn' ? 'ইউজার ও পাসওয়ার্ড ডিলিট করুন' : 'Delete user login'}
+                                className="px-2.5 py-1.5 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 text-[11px] font-bold flex items-center gap-1"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>{language === 'bn' ? 'ডিলিট' : 'Delete'}</span>
+                              </button>
+                            )}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEditUser(u)}
-                            className="px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 text-[11px] font-bold flex items-center gap-1"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                            <span>{language === 'bn' ? 'ইমেইল/পাসওয়ার্ড' : 'Edit / Pass'}</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleCopyUserInfo(u)}
-                            title="Copy login details"
-                            className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 text-[11px] font-semibold flex items-center gap-1"
-                          >
-                            {copiedUid === u.uid ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-600" />
-                            ) : (
-                              <Copy className="w-3.5 h-3.5" />
-                            )}
-                            <span className="hidden md:inline">
-                              {copiedUid === u.uid ? 'Copied' : 'Copy'}
-                            </span>
-                          </button>
-                          {!isSelf && (
-                            <button
-                              type="button"
-                              onClick={() => handleToggleUserStatus(u)}
-                              title={u.status === 'active' ? 'Disable login' : 'Enable login'}
-                              className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-bold flex items-center gap-1 ${
-                                u.status === 'active'
-                                  ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
-                                  : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                              }`}
-                            >
-                              {u.status === 'active' ? (
-                                <Ban className="w-3.5 h-3.5" />
-                              ) : (
-                                <Unlock className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                          )}
-                        </div>
+                        {isConfirmingDelete && (
+                          <div className="mx-3.5 mb-3.5 p-3 rounded-xl border border-rose-300 bg-rose-50 text-rose-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                            <div className="flex items-start gap-2 text-[11px] leading-relaxed">
+                              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                              <span>
+                                {language === 'bn' ? (
+                                  <>
+                                    আপনি কি নিশ্চিতভাবে <strong>{u.displayName}</strong> (<span className="font-mono">{u.email}</span>)-এর ইউজার ও পাসওয়ার্ড স্থায়ীভাবে মুছে ফেলতে চান? ডিলিট করলে সে আর লগইন করতে পারবে না।
+                                  </>
+                                ) : (
+                                  <>
+                                    Permanently delete login credentials for <strong>{u.displayName}</strong> (<span className="font-mono">{u.email}</span>)? They will no longer be able to log in.
+                                  </>
+                                )}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0 justify-end">
+                              <button
+                                type="button"
+                                disabled={isDeletingThis}
+                                onClick={() => setConfirmDeleteUser(null)}
+                                className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 font-semibold hover:bg-slate-50 disabled:opacity-50"
+                              >
+                                {language === 'bn' ? 'বাতিল' : 'Cancel'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isDeletingThis}
+                                onClick={() => handleConfirmDeleteUser(u)}
+                                className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold flex items-center gap-1.5 disabled:opacity-60"
+                              >
+                                {isDeletingThis && (
+                                  <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                )}
+                                <span>
+                                  {isDeletingThis
+                                    ? language === 'bn'
+                                      ? 'মুছে ফেলা হচ্ছে...'
+                                      : 'Deleting...'
+                                    : language === 'bn'
+                                    ? 'হ্যাঁ, ডিলিট করুন'
+                                    : 'Confirm Delete'}
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

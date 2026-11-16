@@ -61,7 +61,21 @@ import { formatGroupName } from '../../utils/i18n';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { AccountCredentialsModal } from '../auth/AccountCredentialsModal';
 import { SaaSApi, isSaaSBackendUnavailableError } from '../../services/saasApi';
-import { isPublishedForStudents, isSeatPlanPublishedForStudents } from '../../utils/approvalWorkflow';
+import { isPublishedForStudents } from '../../utils/approvalWorkflow';
+import {
+  getPublishedExamRoutineGroupsForStudent,
+  getPublishedSeatPlansForStudent,
+} from '../../utils/studentExamPortal';
+import {
+  getLocalCalendarDateString,
+  doesSubmissionBelongToStudent,
+  getClassHomeworkForStudent,
+  computeStudentHomeworkAccounting,
+} from '../../utils/homeworkPortal';
+import {
+  findSubjectForMark,
+  getMarksheetRowBreakdown,
+} from '../../utils/marksheetBreakdown';
 
 interface StudentDedicatedDashboardProps {
   onNavigateTab?: (tab: string) => void;
@@ -73,7 +87,7 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
   const isGuardianView = activeRole === 'guardian';
 
   // Active module tab within Student/Guardian Dashboard (ID Card & QR Download hidden; Fees strictly Guardian-only; Blogs strictly Read-Only)
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'attendance' | 'homework' | 'routine' | 'notices' | 'exams' | 'fees' | 'blogs'>('overview');
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'attendance' | 'homework' | 'routine' | 'exam_routine' | 'notices' | 'exams' | 'fees' | 'blogs'>('overview');
   const [showStudentCredsModal, setShowStudentCredsModal] = useState<boolean>(false);
   const [selectedChildId, setSelectedChildId] = useState<string>('');
   const [syncTick, setSyncTick] = useState<number>(0);
@@ -87,6 +101,38 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
     }
   }, [isGuardianView, activeSubTab]);
 
+  // Listen for cloud sync snapshots, homework updates, and cross-tab storage updates
+  useEffect(() => {
+    const bumpSync = () => {
+      setSyncTick((n) => n + 1);
+    };
+    window.addEventListener('school_cloud_data_synced', bumpSync);
+    window.addEventListener('homework_submissions_updated', bumpSync);
+    window.addEventListener('storage', bumpSync);
+    return () => {
+      window.removeEventListener('school_cloud_data_synced', bumpSync);
+      window.removeEventListener('homework_submissions_updated', bumpSync);
+      window.removeEventListener('storage', bumpSync);
+    };
+  }, []);
+
+  // Reconcile homework submissions from server Admin SDK slice so student/guardian always sees latest submissions across devices
+  useEffect(() => {
+    if (!saasSession?.school?.schoolId) return;
+    let cancelled = false;
+    SaaSApi.listHomeworkSubmissions()
+      .then((res) => {
+        if (!cancelled && res?.success && Array.isArray(res.submissions)) {
+          StorageService.replaceHomeworkSubmissionsLocal(res.submissions);
+          setSyncTick((n) => n + 1);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [saasSession?.school?.schoolId]);
+
   // Load all system data for student's class context (memoized on syncTick for referential stability)
   const students = useMemo(() => StorageService.getStudents(), [syncTick]);
   const allAttendance = useMemo(() => StorageService.getAttendance(), [syncTick]);
@@ -99,6 +145,7 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
   const allExamRoutines = useMemo(() => StorageService.getExamRoutines(), [syncTick]);
   const allSeatPlans = useMemo(() => StorageService.getExamSeatPlans(), [syncTick]);
   const allMarks = useMemo(() => StorageService.getMarks(), [syncTick]);
+  const allSubjects = useMemo(() => StorageService.getSubjects(), [syncTick]);
   const allNotices = useMemo(() => StorageService.getNotices(), [syncTick]);
   const publishedBlogs = useMemo(() => StorageService.getPublishedBlogPosts(), [syncTick]);
   const school = useMemo(() => StorageService.getSchoolProfile(), [syncTick]);
@@ -257,13 +304,7 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
 
   // Real calendar date for current moment (YYYY-MM-DD in local time)
   // Ensures after midnight (12 AM) the date accurately turns to the new day
-  const todayCalendarDate = useMemo(() => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }, []);
+  const todayCalendarDate = useMemo(() => getLocalCalendarDateString(), []);
 
   // Strict Today's attendance: only matches today's real calendar date!
   // When midnight (12 AM) passes to the next day, this will be null until scanned or marked!
@@ -272,44 +313,20 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
   }, [studentAttendance, todayCalendarDate]);
 
   // 2. HOMEWORK DATA ISOLATION
-  const classHomework: Homework[] = useMemo(() => {
-    return allHomework.filter(
-      (h) => h && h.className === student.className && (!h.section || h.section === 'all' || h.section === student.section)
-    ).sort((a, b) => (b.dueDate || '').localeCompare(a.dueDate || ''));
-  }, [allHomework, student]);
+  const classHomework: Homework[] = useMemo(
+    () => getClassHomeworkForStudent(allHomework, student),
+    [allHomework, student]
+  );
 
   const studentSubmissions: HomeworkSubmission[] = useMemo(() => {
-    return allSubmissions.filter(
-      (s) => s && (s.studentId === student.id || (s.studentRoll === student.roll && s.className === student.className))
-    );
+    return allSubmissions.filter((s) => doesSubmissionBelongToStudent(s, student));
   }, [allSubmissions, student]);
 
   // Strict Homework Accounting for logged-in student (Tracks submitted, expired/missed, and active pending)
-  const studentHwAccounting = useMemo(() => {
-    const total = classHomework.length;
-    const submitted = studentSubmissions.length;
-    let expiredCount = 0;
-    let activePendingCount = 0;
-
-    classHomework.forEach((hw) => {
-      const isSub = studentSubmissions.some((s) => s.homeworkId === hw.id);
-      if (!isSub) {
-        if (hw.dueDate && todayCalendarDate > hw.dueDate) {
-          expiredCount++;
-        } else {
-          activePendingCount++;
-        }
-      }
-    });
-
-    return {
-      total,
-      submitted,
-      expiredCount,
-      activePendingCount,
-      dueTotal: expiredCount + activePendingCount,
-    };
-  }, [classHomework, studentSubmissions, todayCalendarDate]);
+  const studentHwAccounting = useMemo(
+    () => computeStudentHomeworkAccounting(classHomework, studentSubmissions, todayCalendarDate),
+    [classHomework, studentSubmissions, todayCalendarDate]
+  );
 
   // Homework Portal Sub-tab: 'assignments' | 'report'
   const [studentHwViewTab, setStudentHwViewTab] = useState<'assignments' | 'report'>('report');
@@ -318,7 +335,7 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
   });
-  const [hwReportEndDate, setHwReportEndDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [hwReportEndDate, setHwReportEndDate] = useState<string>(() => getLocalCalendarDateString());
   const [hwReportSubject, setHwReportSubject] = useState<string>('all');
   const [hwReportSearch, setHwReportSearch] = useState<string>('');
   const [hwReportSection, setHwReportSection] = useState<string>('all');
@@ -335,7 +352,7 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
   // STRICT STUDENT DATA ISOLATION: Calculate homework report strictly for the logged-in student's personal records
   const personalHwReport = useMemo(() => {
     const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
+    const todayStr = todayCalendarDate;
     let startDateStr = '';
     let endDateStr = todayStr;
 
@@ -347,7 +364,7 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
       const day = d.getDay();
       const diff = d.getDate() - day + (day === 0 ? -6 : 1);
       const start = new Date(d.setDate(diff));
-      startDateStr = start.toISOString().split('T')[0];
+      startDateStr = getLocalCalendarDateString(start);
     } else if (hwReportDateRange === 'this_month') {
       startDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
     } else if (hwReportDateRange === 'this_year') {
@@ -357,9 +374,11 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
       endDateStr = hwReportEndDate;
     }
 
-    // Filter assignments strictly for this student's class and active in this period
+    // Filter assignments strictly for this student's class and section in this period
     const periodHomework = allHomework.filter((h) => {
       if (h.className !== student.className) return false;
+      const studentSectionOk = !h.section || h.section === 'all' || !student.section || h.section === student.section;
+      if (!studentSectionOk) return false;
       const hDate = h.assignedDate || h.dueDate || '';
       const inDate =
         (hDate >= startDateStr && hDate <= endDateStr) ||
@@ -373,9 +392,9 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
     const periodHwIds = new Set(periodHomework.map((h) => h.id));
     const totalPossibleMarks = periodHomework.reduce((acc, h) => acc + (h.fullMarks || 10), 0);
 
-    // Only this student's submissions
+    // Only this student's submissions matching assignments in this period
     const mySubs = studentSubmissions.filter((sub) => periodHwIds.has(sub.homeworkId));
-    const submittedCount = mySubs.length;
+    const submittedCount = periodHomework.filter((hw) => mySubs.some((sub) => sub.homeworkId === hw.id)).length;
     let missedCount = 0;
     let activePendingCount = 0;
 
@@ -468,13 +487,15 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
     setSubmissionMessage('');
   };
 
+  const [isEvaluatingAi, setIsEvaluatingAi] = useState<boolean>(false);
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
     Array.from(files).forEach(async (file) => {
       if (file.type.startsWith('image/')) {
         try {
-          const compressed = await compressImageToPassportSize(file, 900, 1200, 0.72);
+          const compressed = await compressImageToPassportSize(file, 720, 960, 0.65);
           if (compressed) {
             setSubmissionImages((prev) => [...prev, compressed]);
             return;
@@ -491,12 +512,41 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
     });
   };
 
+  const persistHomeworkSubmission = async (sub: HomeworkSubmission): Promise<HomeworkSubmission> => {
+    if (saasSession?.school?.schoolId) {
+      try {
+        const res = await SaaSApi.submitHomeworkSubmission(sub);
+        if (res?.submissions && Array.isArray(res.submissions)) {
+          StorageService.replaceHomeworkSubmissionsLocal(res.submissions);
+          setSyncTick((n) => n + 1);
+          return (res.submission as HomeworkSubmission) || sub;
+        }
+        if (res?.submission) {
+          StorageService.upsertHomeworkSubmissionLocal(res.submission as HomeworkSubmission);
+          setSyncTick((n) => n + 1);
+          return res.submission as HomeworkSubmission;
+        }
+      } catch (apiErr: any) {
+        if (!isSaaSBackendUnavailableError(apiErr)) {
+          console.warn('Server homework submission sync warning:', apiErr);
+        }
+      }
+    }
+    const saved = StorageService.saveOrUpdateSubmission(sub, {
+      skipCloudPush: Boolean(saasSession?.school?.schoolId),
+    });
+    setSyncTick((n) => n + 1);
+    return saved;
+  };
+
   const handleSubmitHomework = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!submittingHw) return;
+    if (!submittingHw || isSubmitting || isEvaluatingAi) return;
 
-    // Check deadline: if passed, cannot submit
-    if (submittingHw.dueDate && todayCalendarDate > submittingHw.dueDate) {
+    const existingSub = studentSubmissions.find((s) => s.homeworkId === submittingHw.id);
+
+    // Check deadline: if passed and no prior submission, cannot submit
+    if (!existingSub && submittingHw.dueDate && todayCalendarDate > submittingHw.dueDate) {
       alert(
         language === 'bn'
           ? 'এই বাড়ির কাজের নির্ধারিত জমার সময় উত্তীর্ণ হয়ে গেছে। সময়সীমা পার হওয়ায় জমা গ্রহণ করা সম্ভব নয়।'
@@ -511,59 +561,110 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
       return;
     }
 
+    const targetHw = submittingHw;
     setIsSubmitting(true);
+    setSubmissionMessage('');
+
     const newSub: HomeworkSubmission = {
-      id: `sub_${Date.now()}_${student.id}`,
-      homeworkId: submittingHw.id,
+      id: existingSub?.id || `sub_${Date.now()}_${student.id}`,
+      homeworkId: targetHw.id,
       studentId: student.id,
+      studentCode: student.studentId,
       studentName: student.nameEn || student.nameBn,
       studentRoll: student.roll,
-      className: submittingHw.className,
-      section: submittingHw.section,
+      className: targetHw.className,
+      section: targetHw.section || student.section,
       submissionDate: new Date().toISOString().replace('T', ' ').slice(0, 16),
-      submissionType: submissionImages.length > 0 ? 'handwritten_image' : 'text',
+      submissionType:
+        submissionImages.length > 0 && submissionText.trim()
+          ? 'mixed'
+          : submissionImages.length > 0
+          ? 'handwritten_image'
+          : 'text',
       imageUrls: submissionImages,
       textAnswer: submissionText,
       status: 'submitted',
-      version: 1,
+      version: existingSub ? (existingSub.version || 1) + 1 : 1,
     };
 
-    StorageService.saveOrUpdateSubmission(newSub);
+    // Save locally immediately so UI switches to Submitted right away, then persist to SaaS backend
+    StorageService.upsertHomeworkSubmissionLocal(newSub);
     setSyncTick((n) => n + 1);
+    const persistedSub = await persistHomeworkSubmission(newSub);
+
     setIsSubmitting(false);
+    setIsEvaluatingAi(true);
     setSubmissionMessage(
       language === 'bn'
-        ? 'হোমওয়ার্ক সফলভাবে জমা হয়েছে এবং এআই তাৎক্ষণিকভাবে নম্বর ও মূল্যায়ন প্রদান করেছে!'
-        : 'Homework submitted successfully and AI graded with marks!'
+        ? 'হোমওয়ার্ক সফলভাবে জমা হয়েছে! এআই এখন আপনার উত্তর যাচাই ও মূল্যায়ন করছে...'
+        : 'Homework submitted! AI is evaluating your answers...'
     );
 
-    // Auto-evaluate unconditionally with AI - no teacher approval needed!
-    AIService.evaluateHomework({
-      homework: submittingHw,
-      student,
-      textAnswer: submissionText,
-      images: submissionImages,
-    }).then((res) => {
+    try {
+      const res = await AIService.evaluateHomework({
+        homework: targetHw,
+        student,
+        textAnswer: submissionText,
+        images: submissionImages,
+      });
+
       if (res.success && res.evaluation) {
-        const fullMarks = submittingHw.fullMarks || 10;
-        const assignedMarks = res.evaluation.suggestedMarks !== undefined ? res.evaluation.suggestedMarks : Math.round(fullMarks * 0.9);
-        const updatedSub: HomeworkSubmission = {
-          ...newSub,
-          status: 'approved',
-          teacherMarks: assignedMarks,
-          teacherFeedback: res.evaluation.feedback,
-          reviewedBy: 'Gemini AI Evaluator (স্বয়ংক্রিয়)',
-          reviewedAt: new Date().toISOString(),
-          aiEvaluation: {
-            ...res.evaluation,
-            suggestedMarks: assignedMarks,
-            requiresTeacherReview: false,
-          },
-        };
-        StorageService.saveOrUpdateSubmission(updatedSub);
+        const evalData = res.evaluation;
+        const fullMarks = targetHw.fullMarks || 10;
+        const needsReview = Boolean(evalData.requiresTeacherReview || evalData.status === 'review_required');
+
+        const updatedSub: HomeworkSubmission = needsReview
+          ? {
+              ...persistedSub,
+              status: 'review_required',
+              teacherFeedback: evalData.feedback,
+              aiEvaluation: evalData,
+            }
+          : {
+              ...persistedSub,
+              status: 'approved',
+              teacherMarks: evalData.suggestedMarks,
+              teacherFeedback: evalData.feedback,
+              reviewedBy: 'Gemini AI Evaluator (স্বয়ংক্রিয়)',
+              reviewedAt: new Date().toISOString(),
+              aiEvaluation: {
+                ...evalData,
+                requiresTeacherReview: false,
+              },
+            };
+
+        StorageService.upsertHomeworkSubmissionLocal(updatedSub);
+        await persistHomeworkSubmission(updatedSub);
         setSyncTick((n) => n + 1);
+
+        setSubmissionMessage(
+          needsReview
+            ? language === 'bn'
+              ? `হোমওয়ার্ক জমা হয়েছে! ${evalData.feedback || 'শিক্ষকের যাচাইয়ের জন্য পাঠানো হয়েছে।'}`
+              : `Homework submitted and queued for teacher review.`
+            : language === 'bn'
+            ? `হোমওয়ার্ক সফলভাবে জমা ও মূল্যায়ন সম্পন্ন হয়েছে! প্রাপ্ত নম্বর: ${toBnNumber(evalData.suggestedMarks)} / ${toBnNumber(fullMarks)}`
+            : `Homework submitted and graded! Score: ${evalData.suggestedMarks} / ${fullMarks}`
+        );
+      } else {
+        const reviewSub: HomeworkSubmission = {
+          ...persistedSub,
+          status: 'review_required',
+          teacherFeedback: res.message || 'এআই মূল্যায়ন সম্পন্ন হয়নি; শিক্ষকের যাচাইয়ের জন্য অপেক্ষমাণ।',
+        };
+        StorageService.upsertHomeworkSubmissionLocal(reviewSub);
+        await persistHomeworkSubmission(reviewSub);
+        setSyncTick((n) => n + 1);
+
+        setSubmissionMessage(
+          language === 'bn'
+            ? 'হোমওয়ার্ক সফলভাবে জমা হয়েছে! এআই মূল্যায়ন এই মুহূর্তে পাওয়া যায়নি, শিক্ষকের রিভিউয়ের পর নম্বর যুক্ত হবে।'
+            : 'Homework submitted successfully! Pending teacher review.'
+        );
       }
-    });
+    } finally {
+      setIsEvaluatingAi(false);
+    }
   };
 
   // 3. CLASS ROUTINE DATA ISOLATION (Strictly SuperAdmin-published routines only)
@@ -631,34 +732,19 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
     );
   }, [allMarks, currentExam, student]);
 
-  // Published Exam Routines & Seat Plan for Student's Class
-  const studentPublishedExamRoutines = useMemo(() => {
-    return allExamRoutines
-      .filter(
-        (er) =>
-          er.className === student.className &&
-          isPublishedForStudents(er.approvalStatus)
-      )
-      .sort((a, b) => (a.examDate || '').localeCompare(b.examDate || ''));
-  }, [allExamRoutines, student]);
+  // Published Exam Routines & Strictly Personal Seat Plans for Active Student
+  const {
+    flatItems: studentPublishedExamRoutines,
+    groups: studentPublishedExamRoutineGroups,
+  } = useMemo(
+    () => getPublishedExamRoutineGroupsForStudent(allExamRoutines, allExams, student),
+    [allExamRoutines, allExams, student]
+  );
 
-  const studentPublishedSeatPlanInfo = useMemo(() => {
-    for (const plan of Object.values(allSeatPlans || {})) {
-      if (!isSeatPlanPublishedForStudents(plan)) continue;
-      const assignment = plan.assignments.find(
-        (a) =>
-          a.studentId === student.id ||
-          a.studentId === student.studentId ||
-          (a.roll === student.roll && a.className === student.className)
-      );
-      if (assignment) {
-        const room = plan.rooms.find((r) => r.id === assignment.roomId);
-        const examObj = allExams.find((e) => e.id === plan.examId);
-        return { plan, assignment, room, examObj };
-      }
-    }
-    return null;
-  }, [allSeatPlans, allExams, student]);
+  const studentPublishedSeatPlans = useMemo(
+    () => getPublishedSeatPlansForStudent(allSeatPlans, allExams, student),
+    [allSeatPlans, allExams, student]
+  );
 
   // Class Merit List Calculation for student's class and section (Published exam & published marks only)
   const classMeritList = useMemo(() => {
@@ -1099,7 +1185,7 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
             <div className={`p-2 ${isGuardianView ? 'border-x border-white/20' : 'border-l border-white/20'}`}>
               <span className="text-[10px] text-blue-200 block font-bold">বাড়ির কাজ জমা</span>
               <span className="text-lg font-black text-amber-300">
-                {toBnNumber(studentSubmissions.length)}/{toBnNumber(classHomework.length)}
+                {toBnNumber(studentHwAccounting.submitted)}/{toBnNumber(studentHwAccounting.total)}
               </span>
             </div>
             {isGuardianView && (
@@ -1170,9 +1256,9 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
         >
           <BookOpen className="w-3.5 h-3.5" />
           <span>২. বাড়ির কাজ রিপোর্ট (Homework)</span>
-          {classHomework.length - studentSubmissions.length > 0 && (
+          {studentHwAccounting.dueTotal > 0 && (
             <span className="px-1.5 py-0.2 bg-amber-500 text-white rounded-full text-[10px]">
-              {classHomework.length - studentSubmissions.length}
+              {studentHwAccounting.dueTotal}
             </span>
           )}
         </button>
@@ -1188,13 +1274,28 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
         </button>
 
         <button
+          onClick={() => setActiveSubTab('exam_routine')}
+          className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+            activeSubTab === 'exam_routine' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Calendar className="w-3.5 h-3.5" />
+          <span>{language === 'bn' ? '৪. পরীক্ষার রুটিন ও আসন (Exam Routine)' : '4. Exam Routine & Seat'}</span>
+          {(studentPublishedExamRoutines.length > 0 || studentPublishedSeatPlans.length > 0) && (
+            <span className="px-1.5 py-0.2 bg-emerald-600 text-white rounded-full text-[10px]">
+              {studentPublishedExamRoutines.length > 0 ? toBnNumber(studentPublishedExamRoutines.length) : '✓'}
+            </span>
+          )}
+        </button>
+
+        <button
           onClick={() => setActiveSubTab('notices')}
           className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
             activeSubTab === 'notices' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           <Bell className="w-3.5 h-3.5" />
-          <span>৪. নোটিশ বোর্ড (Notices)</span>
+          <span>৫. নোটিশ বোর্ড (Notices)</span>
           {studentNotices.length > 0 && (
             <span className="px-1.5 py-0.2 bg-blue-600 text-white rounded-full text-[10px]">
               {studentNotices.length}
@@ -1209,7 +1310,7 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
           }`}
         >
           <Award className="w-3.5 h-3.5" />
-          <span>৫. পরীক্ষার মার্কশিট ও মেধা তালিকা (Results)</span>
+          <span>৬. পরীক্ষার মার্কশিট ও মেধা তালিকা (Results)</span>
         </button>
 
         {isGuardianView && (
@@ -1220,7 +1321,7 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
             }`}
           >
             <Wallet className="w-3.5 h-3.5" />
-            <span>৬. ফি জমার স্টেটমেন্ট (Fees)</span>
+            <span>৭. ফি জমার স্টেটমেন্ট (Fees)</span>
           </button>
         )}
 
@@ -1231,7 +1332,7 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
           }`}
         >
           <Newspaper className="w-3.5 h-3.5" />
-          <span>{isGuardianView ? '৭. স্কুল ব্লগ (Blogs)' : '৬. স্কুল ব্লগ (Blogs)'}</span>
+          <span>{isGuardianView ? '৮. স্কুল ব্লগ (Blogs)' : '৭. স্কুল ব্লগ (Blogs)'}</span>
           {publishedBlogs.length > 0 && (
             <span className="px-1.5 py-0.2 bg-indigo-600 text-white rounded-full text-[10px]">
               {toBnNumber(publishedBlogs.length)}
@@ -1336,11 +1437,9 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
               >
                 {todayRecord?.status === 'Absent'
                   ? todayRecord.remarks || 'শ্রেণিকক্ষে অনুপস্থিত হিসেবে নথিভুক্ত করা হয়েছে'
-                  : todayRecord?.status === 'Late'
-                  ? `দেরিতে চেক-ইন: ${todayRecord.scanTime || '০৯:১৫ AM'}`
-                  : todayRecord?.status === 'Present'
-                  ? `চেক-ইন: ${todayRecord.scanTime || '০৮:২৫ AM'} (${todayRecord.method === 'qr_scanner' ? 'QR স্ক্যান' : 'শ্রেণিকক্ষ হাজিরা'})`
-                  : 'আজকের ক্লাসের হাজিরা এখনও নেওয়া হয়নি বা কিউআর কোড স্ক্যান করা হয়নি। হাজিরা সম্পন্ন হলে এখানে স্ট্যাটাস আপডেট হবে।'}
+                  : todayRecord?.status === 'Late' || todayRecord?.status === 'Present'
+                  ? `${todayRecord.status === 'Late' ? 'দেরিতে চেক-ইন' : 'চেক-ইন'}: ${todayRecord.inTime || todayRecord.scanTime || '০৮:২৫ AM'}${todayRecord.outTime ? ` • চেক-আউট: ${todayRecord.outTime}` : ''}${todayRecord.stayDuration ? ` (${todayRecord.stayDuration})` : ''} (${todayRecord.method === 'face_scan' ? 'AI ফেস স্ক্যান' : todayRecord.method === 'qr_scanner' ? 'QR স্ক্যান' : 'শ্রেণিকক্ষ হাজিরা'})`
+                  : 'আজকের ক্লাসের হাজিরা এখনও নেওয়া হয়নি বা কিউআর/ফেস স্ক্যান করা হয়নি। হাজিরা সম্পন্ন হলে এখানে স্ট্যাটাস আপডেট হবে।'}
               </p>
             </div>
 
@@ -1414,6 +1513,45 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
             )}
           </div>
 
+          {/* Published Exam Routine & Personal Seat Plan Highlight Banner */}
+          {(studentPublishedExamRoutines.length > 0 || studentPublishedSeatPlans.length > 0) && (
+            <div className="p-4 rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-blue-50 to-emerald-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-black text-slate-900">
+                      {language === 'bn'
+                        ? `পরীক্ষার রুটিন ও ব্যক্তিগত আসন প্রকাশিত হয়েছে (${student.className})`
+                        : `Published Exam Routine & Your Seat Plan (${student.className})`}
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      {language === 'bn' ? 'প্রকাশিত' : 'Published'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    {studentPublishedExamRoutines.length > 0
+                      ? `${toBnNumber(studentPublishedExamRoutines.length)}টি বিষয়ের পরীক্ষার সময়সূচি`
+                      : 'রুটিন অপেক্ষমাণ'}
+                    {studentPublishedSeatPlans.length > 0
+                      ? ` • নির্ধারিত আসন: ${studentPublishedSeatPlans[0].room?.roomNo || studentPublishedSeatPlans[0].assignment.roomNo} (${studentPublishedSeatPlans[0].assignment.seatLabel || `বেঞ্চ ${toBnNumber(studentPublishedSeatPlans[0].assignment.benchNumber)}`})`
+                      : ' • আসন বিন্যাস এখনো প্রকাশিত হয়নি'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('exam_routine')}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs transition-colors shrink-0 inline-flex items-center justify-center gap-1.5"
+              >
+                <span>{language === 'bn' ? 'রুটিন ও আমার আসন দেখুন' : 'View Routine & My Seat'}</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {/* Quick Modules Row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Recent Homework Preview */}
@@ -1450,7 +1588,11 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
                       <div>
                         {sub ? (
                           <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                            জমা দেওয়া হয়েছে ({sub.aiEvaluation?.suggestedMarks || hw.fullMarks}/{hw.fullMarks})
+                            {sub.teacherMarks !== undefined || (sub.aiEvaluation && !sub.aiEvaluation.requiresTeacherReview)
+                              ? `জমা দেওয়া হয়েছে (${toBnNumber(sub.teacherMarks ?? sub.aiEvaluation?.suggestedMarks ?? 0)}/${toBnNumber(hw.fullMarks || 10)})`
+                              : sub.status === 'review_required'
+                              ? 'জমা দেওয়া হয়েছে (রিভিউ অপেক্ষমাণ)'
+                              : 'জমা দেওয়া হয়েছে (মূল্যায়ন চলছে)'}
                           </span>
                         ) : isExpired ? (
                           <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200 inline-flex items-center gap-1">
@@ -1638,13 +1780,11 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
                     : `আজ (${formatDate(todayCalendarDate)}) এখনও হাজিরা নিশ্চিত বা স্ক্যান করা হয়নি`}
                 </span>
                 <span className="text-[11px] opacity-90 block mt-0.5">
-                  {todayRecord?.status === 'Present'
-                    ? `চেক-ইন সময়: ${todayRecord.scanTime || '০৮:২৫ AM'} • পদ্ধতি: ${todayRecord.method === 'qr_scanner' ? 'কিউআর কোড স্ক্যানার' : 'শ্রেণিকক্ষ রোল কল'}`
+                  {todayRecord?.status === 'Present' || todayRecord?.status === 'Late'
+                    ? `${todayRecord.status === 'Late' ? 'দেরিতে চেক-ইন' : 'চেক-ইন সময়'}: ${todayRecord.inTime || todayRecord.scanTime || '০৮:২৫ AM'}${todayRecord.outTime ? ` • চেক-আউট: ${todayRecord.outTime}` : ''}${todayRecord.stayDuration ? ` (${todayRecord.stayDuration})` : ''} • পদ্ধতি: ${todayRecord.method === 'face_scan' ? 'AI ফেস স্ক্যানার' : todayRecord.method === 'qr_scanner' ? 'কিউআর কোড স্ক্যানার' : 'শ্রেণিকক্ষ রোল কল'}`
                     : todayRecord?.status === 'Absent'
                     ? 'শ্রেণিকক্ষে অনুপস্থিত হিসেবে নথিভুক্ত করা হয়েছে'
-                    : todayRecord?.status === 'Late'
-                    ? `দেরিতে আগমন: ${todayRecord.scanTime || '০৯:১৫ AM'}`
-                    : 'শ্রেণি শিক্ষক বা আইডি কার্ড কিউআর স্ক্যানারের মাধ্যমে হাজিরা গৃহীত হলে এখানে রিয়েল-টাইম আপডেট দেখতে পাবেন।'}
+                    : 'শ্রেণি শিক্ষক, ফেস স্ক্যান বা আইডি কার্ড কিউআর স্ক্যানারের মাধ্যমে হাজিরা গৃহীত হলে এখানে রিয়েল-টাইম আপডেট দেখতে পাবেন।'}
                 </span>
               </div>
             </div>
@@ -1718,18 +1858,33 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
                           </span>
                         </td>
                         <td className="py-3 px-4 font-mono text-slate-600">
-                          {rec.status === 'Absent' ? '—' : rec.scanTime || '০৮:২৫ AM'}
+                          {rec.status === 'Absent' ? (
+                            '—'
+                          ) : (
+                            <div className="space-y-0.5">
+                              <div>ইন: {rec.inTime || rec.scanTime || '০৮:২৫ AM'}</div>
+                              {rec.outTime && (
+                                <div className="text-[10px] text-amber-700 font-semibold">
+                                  আউট: {rec.outTime}{rec.stayDuration ? ` (${rec.stayDuration})` : ''}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-4">
                           <span
                             className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                               rec.status === 'Absent'
                                 ? 'bg-rose-50 text-rose-700'
+                                : rec.method === 'face_scan'
+                                ? 'bg-emerald-50 text-emerald-700'
                                 : 'bg-indigo-50 text-indigo-700'
                             }`}
                           >
                             {rec.status === 'Absent'
                               ? 'অনুপস্থিত রেকর্ড'
+                              : rec.method === 'face_scan'
+                              ? 'স্মার্ট AI ফেস স্ক্যান'
                               : rec.method === 'qr_scanner'
                               ? 'স্মার্ট কিউআর কোড স্ক্যান'
                               : 'শ্রেণিকক্ষ হাজিরা'}
@@ -2104,8 +2259,19 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
                         personalHwReport.periodHomework.map((hw) => {
                           const sub = personalHwReport.submissions.find((s) => s.homeworkId === hw.id);
                           const isSubmitted = !!sub;
-                          const obtained = sub ? (sub.teacherMarks !== undefined ? sub.teacherMarks : sub.aiEvaluation?.suggestedMarks || 0) : 0;
-                          const feedback = sub?.teacherFeedback || sub?.aiEvaluation?.feedback || (isSubmitted ? 'মূল্যায়নাধীন' : 'এখনও জমা দেওয়া হয়নি');
+                          const hasScore =
+                            Boolean(sub) &&
+                            (sub!.teacherMarks !== undefined ||
+                              (sub!.aiEvaluation !== undefined && !sub!.aiEvaluation.requiresTeacherReview));
+                          const obtained = hasScore
+                            ? sub!.teacherMarks !== undefined
+                              ? sub!.teacherMarks
+                              : sub!.aiEvaluation?.suggestedMarks ?? 0
+                            : 0;
+                          const feedback =
+                            sub?.teacherFeedback ||
+                            sub?.aiEvaluation?.feedback ||
+                            (isSubmitted ? 'মূল্যায়নাধীন' : 'এখনও জমা দেওয়া হয়নি');
 
                           return (
                             <tr key={hw.id} className="hover:bg-slate-50 transition-colors">
@@ -2130,9 +2296,13 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
                               </td>
                               <td className="p-3 text-center font-black">
                                 {isSubmitted ? (
-                                  <span className="text-blue-700">
-                                    {toBnNumber(obtained)} / {toBnNumber(hw.fullMarks || 10)}
-                                  </span>
+                                  hasScore ? (
+                                    <span className="text-blue-700">
+                                      {toBnNumber(obtained)} / {toBnNumber(hw.fullMarks || 10)}
+                                    </span>
+                                  ) : (
+                                    <span className="text-amber-700 text-[10px] font-bold">রিভিউ অপেক্ষমাণ</span>
+                                  )
                                 ) : (
                                   <span className="text-slate-400">-</span>
                                 )}
@@ -2301,7 +2471,11 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
                                 <span>মূল্যায়ন ও প্রাপ্ত নম্বর:</span>
                               </span>
                               <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-indigo-600 text-white">
-                                প্রাপ্ত নম্বর: {sub.teacherMarks !== undefined ? sub.teacherMarks : sub.aiEvaluation?.suggestedMarks || 0} / {hw.fullMarks || 10}
+                                {sub.teacherMarks !== undefined || (sub.aiEvaluation && !sub.aiEvaluation.requiresTeacherReview)
+                                  ? `প্রাপ্ত নম্বর: ${toBnNumber(sub.teacherMarks !== undefined ? sub.teacherMarks : sub.aiEvaluation?.suggestedMarks ?? 0)} / ${toBnNumber(hw.fullMarks || 10)}`
+                                  : sub.status === 'review_required'
+                                  ? 'শিক্ষকের রিভিউ অপেক্ষমাণ'
+                                  : 'এআই মূল্যায়ন চলছে...'}
                               </span>
                             </div>
 
@@ -2419,7 +2593,243 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
       )}
 
       {/* ===================================================================== */}
-      {/* FEATURE 4: NOTICE BOARD (নোটিশ বোর্ড)                                  */}
+      {/* FEATURE 4: PUBLISHED EXAM ROUTINE & PERSONAL SEAT PLAN                */}
+      {/* ===================================================================== */}
+      {activeSubTab === 'exam_routine' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="font-black text-slate-900 text-base flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-indigo-600" />
+                <span>
+                  {language === 'bn'
+                    ? `প্রকাশিত পরীক্ষার রুটিন ও ব্যক্তিগত আসন বিন্যাস (${student.className})`
+                    : `Published Exam Routine & Personal Seat Plan (${student.className})`}
+                </span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {language === 'bn'
+                  ? `${student.nameBn || student.nameEn} • আইডি: ${student.studentId} • শাখা: ${student.section} • রোল: ${student.roll}`
+                  : `${student.nameEn || student.nameBn} • ID: ${student.studentId} • Section: ${student.section} • Roll: ${student.roll}`}
+              </p>
+            </div>
+            {(studentPublishedExamRoutineGroups.length > 0 || studentPublishedSeatPlans.length > 0) && (
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="flex items-center space-x-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs shadow-xs transition-colors self-start sm:self-auto print:hidden"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>{language === 'bn' ? 'রুটিন ও আসন প্রিন্ট করুন' : 'Print Routine & Seat'}</span>
+              </button>
+            )}
+          </div>
+
+          {studentPublishedExamRoutineGroups.length === 0 && studentPublishedSeatPlans.length === 0 ? (
+            <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-xs text-center space-y-3">
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
+                <Lock className="w-7 h-7" />
+              </div>
+              <h3 className="text-base font-black text-slate-900">
+                {language === 'bn'
+                  ? 'পরীক্ষার রুটিন ও আসন এখনো প্রকাশিত হয়নি (Not Published Yet)'
+                  : 'Exam Routine & Seat Plan Not Published Yet'}
+              </h3>
+              <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+                {language === 'bn'
+                  ? 'সুপার অ্যাডমিন কর্তৃক পরীক্ষার রুটিন বা আসন বিন্যাস আনুষ্ঠানিকভাবে অনুমোদন ও প্রকাশ (Publish) না করা পর্যন্ত এখানে প্রদর্শিত হবে না। প্রকাশ হলে এখানে আপনার শ্রেণির রুটিন ও শুধুমাত্র আপনার নিজের আসন বিন্যাস দেখতে পারবেন।'
+                  : 'Once the Super Admin approves and publishes the exam routine or seat plan, your class schedule and your personal seat allocation will appear here.'}
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Left: Published Exam Routine(s) for Student's Class */}
+              <div className="lg:col-span-7 space-y-4">
+                {studentPublishedExamRoutineGroups.length === 0 ? (
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs text-center space-y-2">
+                    <Calendar className="w-8 h-8 text-slate-300 mx-auto" />
+                    <h4 className="text-sm font-black text-slate-800">
+                      {language === 'bn' ? 'পরীক্ষার রুটিন এখনো প্রকাশিত হয়নি' : 'Exam Routine Not Published Yet'}
+                    </h4>
+                    <p className="text-xs text-slate-500">
+                      {language === 'bn'
+                        ? 'রুটিন প্রকাশিত হলে তারিখ, সময় ও বিষয়সহ এখানে তালিকা দেখতে পাবেন।'
+                        : 'Subject dates and timings will appear here once published.'}
+                    </p>
+                  </div>
+                ) : (
+                  studentPublishedExamRoutineGroups.map((group) => (
+                    <div
+                      key={group.examId}
+                      className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden"
+                    >
+                      <div className="p-4 bg-slate-50 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <h4 className="font-black text-slate-900 text-sm flex items-center gap-2">
+                            <Calendar className="w-4 h-4 text-indigo-600" />
+                            <span>
+                              {group.examTitle} ({student.className})
+                            </span>
+                          </h4>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            {group.session
+                              ? `${language === 'bn' ? 'শিক্ষাবর্ষ' : 'Session'}: ${group.session} • `
+                              : ''}
+                            {toBnNumber(group.items.length)} {language === 'bn' ? 'টি বিষয়' : 'subjects'}
+                          </p>
+                        </div>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                          {language === 'bn' ? 'অনুমোদিত ও প্রকাশিত' : 'Approved & Published'}
+                        </span>
+                      </div>
+
+                      <div className="divide-y divide-slate-100">
+                        {group.items.map((er) => (
+                          <div
+                            key={er.id}
+                            className="px-4 py-3 flex items-center justify-between gap-3 text-xs hover:bg-slate-50/70 transition-colors"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="font-bold text-slate-900">
+                                  {er.subjectNameBn || er.subjectNameEn}
+                                </span>
+                                {er.subjectCode && (
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-bold">
+                                    {er.subjectCode}
+                                  </span>
+                                )}
+                                {er.group && er.group !== 'General' && (
+                                  <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-bold">
+                                    {formatGroupName(er.group, language)}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-500 mt-0.5">
+                                {language === 'bn' ? 'কক্ষ:' : 'Room:'} {er.roomNo || (language === 'bn' ? 'নির্ধারিত আসন কক্ষ' : 'Assigned Hall')}
+                              </div>
+                            </div>
+                            <div className="text-right font-mono text-[11px] shrink-0">
+                              <div className="font-bold text-indigo-700">
+                                {er.examDate}
+                                {er.dayOfWeek ? ` (${er.dayOfWeek})` : ''}
+                              </div>
+                              <div className="text-slate-500">
+                                {er.startTime} - {er.endTime}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Right: Strictly Personal Seat Plan Card(s) (ONLY Current Student) */}
+              <div className="lg:col-span-5 space-y-4">
+                {studentPublishedSeatPlans.length === 0 ? (
+                  <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 text-center space-y-2.5">
+                    <div className="w-11 h-11 mx-auto rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
+                      <Building className="w-5 h-5" />
+                    </div>
+                    <h4 className="text-sm font-black text-slate-900">
+                      {language === 'bn' ? 'আপনার আসন বিন্যাস এখনো প্রকাশিত হয়নি' : 'Your Seat Plan Not Published Yet'}
+                    </h4>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      {language === 'bn'
+                        ? 'সুপার অ্যাডমিন আসন বিন্যাস প্রকাশ করলে শুধুমাত্র আপনার নির্ধারিত কক্ষ, বেঞ্চ এবং আসন অবস্থান এখানে দেখতে পাবেন।'
+                        : 'Once published, only your personal room, bench, and seat assignment will appear here.'}
+                    </p>
+                  </div>
+                ) : (
+                  studentPublishedSeatPlans.map((seatInfo) => (
+                    <div
+                      key={`${seatInfo.examId}_${seatInfo.assignment.id}`}
+                      className="bg-gradient-to-br from-indigo-900 to-blue-900 text-white rounded-2xl border border-indigo-700 p-5 shadow-sm flex flex-col justify-between space-y-4"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wide inline-flex items-center gap-1">
+                            <ShieldCheck className="w-3.5 h-3.5 text-amber-300" />
+                            <span>
+                              {language === 'bn' ? 'শুধুমাত্র আপনার আসন বিন্যাস' : 'Your Personal Seat Plan'}
+                            </span>
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/25 text-emerald-200 border border-emerald-400/30">
+                            {language === 'bn' ? 'প্রকাশিত' : 'Published'}
+                          </span>
+                        </div>
+
+                        <h4 className="text-base font-black text-white">
+                          {seatInfo.examTitle}
+                        </h4>
+
+                        <div className="p-2.5 rounded-xl bg-white/10 border border-white/15 text-xs space-y-1">
+                          <div className="font-bold text-white">
+                            {student.nameBn || student.nameEn}
+                          </div>
+                          <div className="text-[11px] text-indigo-100 flex flex-wrap gap-x-3 gap-y-0.5">
+                            <span>আইডি: {student.studentId}</span>
+                            <span>শ্রেণি: {student.className} ({student.section})</span>
+                            <span>রোল: {student.roll}</span>
+                          </div>
+                        </div>
+
+                        <div className="text-xs text-indigo-100 space-y-1 pt-1">
+                          <p>
+                            {language === 'bn' ? 'কক্ষ নম্বর:' : 'Room No:'}{' '}
+                            <strong className="text-white">
+                              {seatInfo.room?.roomNo || seatInfo.assignment.roomNo}
+                            </strong>
+                            {seatInfo.room?.building ? ` (${seatInfo.room.building})` : ''}
+                          </p>
+                          {seatInfo.room?.invigilatorName && (
+                            <p className="text-[11px] text-indigo-200">
+                              {language === 'bn' ? 'কক্ষ পরিদর্শক:' : 'Invigilator:'}{' '}
+                              <span className="text-white font-semibold">{seatInfo.room.invigilatorName}</span>
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pt-3 border-t border-white/15 grid grid-cols-3 gap-2 text-center text-xs">
+                        <div className="p-2.5 rounded-xl bg-white/10">
+                          <span className="text-[10px] text-indigo-200 block">
+                            {language === 'bn' ? 'কলাম / সারি' : 'Column'}
+                          </span>
+                          <strong className="font-black text-sm text-white">
+                            {toBnNumber(seatInfo.assignment.columnIndex)}
+                          </strong>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-white/10">
+                          <span className="text-[10px] text-indigo-200 block">
+                            {language === 'bn' ? 'বেঞ্চ নম্বর' : 'Bench No'}
+                          </span>
+                          <strong className="font-black text-sm text-white">
+                            {toBnNumber(seatInfo.assignment.benchNumber)}
+                          </strong>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-white/10">
+                          <span className="text-[10px] text-indigo-200 block">
+                            {language === 'bn' ? 'আসন অবস্থান' : 'Seat'}
+                          </span>
+                          <strong className="font-black text-sm text-amber-300">
+                            {seatInfo.assignment.seatLabel || toBnNumber(seatInfo.assignment.seatPosition)}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* FEATURE 5: NOTICE BOARD (নোটিশ বোর্ড)                                  */}
       {/* ===================================================================== */}
       {activeSubTab === 'notices' && (
         <div className="space-y-6">
@@ -2461,79 +2871,10 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
       )}
 
       {/* ===================================================================== */}
-      {/* FEATURE 5: EXAM MARKSHEET & CLASS MERIT LIST (মার্কশিট ও মেধা তালিকা)  */}
+      {/* FEATURE 6: EXAM MARKSHEET & CLASS MERIT LIST (মার্কশিট ও মেধা তালিকা)  */}
       {/* ===================================================================== */}
       {activeSubTab === 'exams' && (
         <div className="space-y-6">
-          {/* Published Exam Schedule & Seat Allocation Card (Strictly Published by SuperAdmin) */}
-          {(studentPublishedExamRoutines.length > 0 || studentPublishedSeatPlanInfo) && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              {studentPublishedExamRoutines.length > 0 && (
-                <div className={`${studentPublishedSeatPlanInfo ? 'lg:col-span-7' : 'lg:col-span-12'} bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden`}>
-                  <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-                    <h4 className="font-black text-slate-900 text-sm flex items-center gap-2">
-                      <Calendar className="w-4 h-4 text-indigo-600" />
-                      <span>প্রকাশিত পরীক্ষার রুটিন ({student.className})</span>
-                    </h4>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                      অনুমোদিত ও প্রকাশিত
-                    </span>
-                  </div>
-                  <div className="divide-y divide-slate-100">
-                    {studentPublishedExamRoutines.map((er) => (
-                      <div key={er.id} className="px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
-                        <div>
-                          <div className="font-bold text-slate-900">{er.subjectNameBn || er.subjectNameEn}</div>
-                          <div className="text-[11px] text-slate-500">কক্ষ: {er.roomNo || 'নির্ধারিত হল'}</div>
-                        </div>
-                        <div className="text-right font-mono text-[11px]">
-                          <div className="font-bold text-indigo-700">{er.examDate}</div>
-                          <div className="text-slate-500">{er.startTime} - {er.endTime}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {studentPublishedSeatPlanInfo && (
-                <div className={`${studentPublishedExamRoutines.length > 0 ? 'lg:col-span-5' : 'lg:col-span-12'} bg-gradient-to-br from-indigo-900 to-blue-900 text-white rounded-2xl border border-indigo-700 p-5 flex flex-col justify-between`}>
-                  <div>
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wide">
-                        প্রকাশিত পরীক্ষার আসন বিন্যাস
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/25 text-emerald-200 border border-emerald-400/30">
-                        প্রকাশিত
-                      </span>
-                    </div>
-                    <h4 className="text-base font-black text-white">
-                      {studentPublishedSeatPlanInfo.examObj?.nameBn || studentPublishedSeatPlanInfo.examObj?.nameEn || 'পরীক্ষা'}
-                    </h4>
-                    <p className="text-xs text-indigo-200 mt-1">
-                      কক্ষ নম্বর: <strong className="text-white">{studentPublishedSeatPlanInfo.room?.roomNo || studentPublishedSeatPlanInfo.assignment.roomNo}</strong>
-                      {studentPublishedSeatPlanInfo.room?.building ? ` (${studentPublishedSeatPlanInfo.room.building})` : ''}
-                    </p>
-                  </div>
-                  <div className="mt-4 pt-3 border-t border-white/15 grid grid-cols-3 gap-2 text-center text-xs">
-                    <div className="p-2 rounded-lg bg-white/10">
-                      <span className="text-[10px] text-indigo-200 block">কলাম / সারি</span>
-                      <strong className="font-black text-white">{toBnNumber(studentPublishedSeatPlanInfo.assignment.columnIndex)}</strong>
-                    </div>
-                    <div className="p-2 rounded-lg bg-white/10">
-                      <span className="text-[10px] text-indigo-200 block">বেঞ্চ নম্বর</span>
-                      <strong className="font-black text-white">{toBnNumber(studentPublishedSeatPlanInfo.assignment.benchNumber)}</strong>
-                    </div>
-                    <div className="p-2 rounded-lg bg-white/10">
-                      <span className="text-[10px] text-indigo-200 block">আসন অবস্থান</span>
-                      <strong className="font-black text-amber-300">{studentPublishedSeatPlanInfo.assignment.seatLabel || toBnNumber(studentPublishedSeatPlanInfo.assignment.seatPosition)}</strong>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
           {publishedExams.length === 0 || !currentExam ? (
           <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-xs text-center space-y-3">
             <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
@@ -2597,73 +2938,91 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <table className="w-full min-w-[520px] text-left text-xs">
                   <thead className="bg-slate-100 text-slate-700 uppercase font-bold text-[10px] border-b border-slate-200">
                     <tr>
                       <th className="py-2.5 px-3">বিষয় (Subject)</th>
-                      <th className="py-2.5 px-3">লিখিত</th>
-                      <th className="py-2.5 px-3">এমসিকিউ</th>
-                      <th className="py-2.5 px-3">মোট</th>
-                      <th className="py-2.5 px-3">গ্রেড</th>
-                      <th className="py-2.5 px-3">জিপিএ (GPA)</th>
+                      <th className="py-2.5 px-2.5 text-center whitespace-nowrap">লিখিত</th>
+                      <th className="py-2.5 px-2.5 text-center whitespace-nowrap">নৈর্ব্যক্তিক (MCQ)</th>
+                      <th className="py-2.5 px-2.5 text-center whitespace-nowrap">ব্যবহারিক</th>
+                      <th className="py-2.5 px-2.5 text-center whitespace-nowrap">মোট</th>
+                      <th className="py-2.5 px-2.5 text-center whitespace-nowrap">গ্রেড</th>
+                      <th className="py-2.5 px-3 text-center whitespace-nowrap">জিপিএ (GPA)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
                     {studentMarks.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-400">
+                        <td colSpan={7} className="py-8 text-center text-slate-400">
                           এই পরীক্ষার জন্য এখনও মার্কস এন্ট্রি করা হয়নি।
                         </td>
                       </tr>
                     ) : (
-                      studentMarks.map((m) => (
-                        <tr key={m.id} className="hover:bg-slate-50">
-                          <td className="py-2.5 px-3 font-bold text-slate-900">{m.subjectName}</td>
-                          <td className="py-2.5 px-3 text-slate-700">{toBnNumber(m.written)}</td>
-                          <td className="py-2.5 px-3 text-slate-700">{toBnNumber(m.mcq || 0)}</td>
-                          <td className="py-2.5 px-3 font-bold text-slate-900">{toBnNumber(m.total)}</td>
-                          <td className="py-2.5 px-3">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-black ${
-                                m.grade === 'A+' || m.grade === 'A'
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : m.grade === 'F'
-                                  ? 'bg-rose-100 text-rose-800'
-                                  : 'bg-blue-100 text-blue-800'
-                              }`}
-                            >
-                              {m.grade}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-3 font-mono font-bold text-indigo-700">{m.gpa.toFixed(2)}</td>
-                        </tr>
-                      ))
+                      studentMarks.map((m) => {
+                        const matchedSub = findSubjectForMark(allSubjects, m, student.className);
+                        const breakdown = getMarksheetRowBreakdown(m, matchedSub);
+                        return (
+                          <tr key={m.id} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-3 font-bold text-slate-900">
+                              {matchedSub?.nameBn || m.subjectName}
+                            </td>
+                            <td className="py-2.5 px-2.5 text-center text-slate-700">
+                              {breakdown.hasWritten ? toBnNumber(breakdown.written) : '—'}
+                            </td>
+                            <td className="py-2.5 px-2.5 text-center text-slate-700">
+                              {breakdown.hasMcq ? toBnNumber(breakdown.mcq) : '—'}
+                            </td>
+                            <td className="py-2.5 px-2.5 text-center text-slate-700">
+                              {breakdown.hasPractical ? toBnNumber(breakdown.practical) : '—'}
+                            </td>
+                            <td className="py-2.5 px-2.5 text-center font-bold text-slate-900">
+                              {toBnNumber(breakdown.total)}
+                            </td>
+                            <td className="py-2.5 px-2.5 text-center">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-black ${
+                                  m.grade === 'A+' || m.grade === 'A'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : m.grade === 'F'
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : 'bg-blue-100 text-blue-800'
+                                }`}
+                              >
+                                {m.grade}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono font-bold text-indigo-700">
+                              {m.gpa.toFixed(2)}
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                   {studentMarks.length > 0 && (() => {
                     const hasFail = studentMarks.some((m) => m.grade === 'F');
                     const gpaRes = calculateTotalGPA(studentMarks.map((m) => m.gpa), hasFail);
-                    const totalScore = studentMarks.reduce((sum, m) => sum + m.total, 0);
+                    const totalScore = studentMarks.reduce((sum, m) => sum + getMarksheetRowBreakdown(m, findSubjectForMark(allSubjects, m, student.className)).total, 0);
                     const isPassed = !hasFail && gpaRes.status === 'PASSED';
 
                     return (
                       <tfoot className="bg-slate-50 font-black text-slate-900 border-t-2 border-slate-200 text-xs">
                         <tr>
                           <td className="py-3 px-3">সর্বমোট / সামগ্রিক ফলাফল:</td>
-                          <td colSpan={2} className="py-3 px-3 text-slate-600">
-                            {studentMarks.length} টি বিষয়
+                          <td colSpan={3} className="py-3 px-3 text-center text-slate-600">
+                            {toBnNumber(studentMarks.length)} টি বিষয়
                           </td>
-                          <td className="py-3 px-3 text-emerald-700 font-black text-sm">
+                          <td className="py-3 px-2.5 text-center text-emerald-700 font-black text-sm">
                             {toBnNumber(totalScore)}
                           </td>
-                          <td className="py-3 px-3">
+                          <td className="py-3 px-2.5 text-center">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-black ${
                               isPassed ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
                             }`}>
                               {isPassed ? `${gpaRes.overallGrade} (উত্তীর্ণ)` : `${gpaRes.overallGrade} (অনুত্তীর্ণ)`}
                             </span>
                           </td>
-                          <td className={`py-3 px-3 font-mono font-black text-sm ${isPassed ? 'text-indigo-700' : 'text-rose-600'}`}>
+                          <td className={`py-3 px-3 text-center font-mono font-black text-sm ${isPassed ? 'text-indigo-700' : 'text-rose-600'}`}>
                             {gpaRes.totalGPA.toFixed(2)}
                           </td>
                         </tr>
@@ -2713,11 +3072,17 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
                   </div>
                 ) : (
                   studentMarks.map((m) => {
-                    const pct = Math.min(100, Math.round(m.total));
+                    const matchedSub = findSubjectForMark(allSubjects, m, student.className);
+                    const breakdown = getMarksheetRowBreakdown(m, matchedSub);
+                    const pct = breakdown.fullMarks > 0
+                      ? Math.min(100, Math.round((breakdown.total / breakdown.fullMarks) * 100))
+                      : 0;
                     return (
                       <div key={m.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1.5">
                         <div className="flex items-center justify-between">
-                          <strong className="text-xs font-black text-slate-900">{m.subjectName}</strong>
+                          <strong className="text-xs font-black text-slate-900">
+                            {matchedSub?.nameBn || m.subjectName}
+                          </strong>
                           <div className="flex items-center space-x-1.5">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-black ${
                               m.grade === 'A+' || m.grade === 'A'
@@ -2729,7 +3094,7 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
                               {m.grade} (GPA {m.gpa.toFixed(2)})
                             </span>
                             <span className="text-xs font-black text-slate-900">
-                              {toBnNumber(m.total)} <span className="text-[10px] text-slate-400 font-normal">/ ১০০</span>
+                              {toBnNumber(breakdown.total)} <span className="text-[10px] text-slate-400 font-normal">/ {toBnNumber(breakdown.fullMarks)}</span>
                             </span>
                           </div>
                         </div>
@@ -2750,8 +3115,12 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
                           />
                         </div>
 
-                        <div className="flex items-center justify-between text-[10px] text-slate-500">
-                          <span>লিখিত: {toBnNumber(m.written)} • MCQ: {toBnNumber(m.mcq || 0)}</span>
+                        <div className="flex items-center justify-between gap-2 text-[10px] text-slate-500 flex-wrap">
+                          <span>
+                            {breakdown.hasWritten ? `লিখিত: ${toBnNumber(breakdown.written)}` : ''}
+                            {breakdown.hasMcq ? `${breakdown.hasWritten ? ' • ' : ''}নৈর্ব্যক্তিক: ${toBnNumber(breakdown.mcq)}` : ''}
+                            {breakdown.hasPractical ? `${(breakdown.hasWritten || breakdown.hasMcq) ? ' • ' : ''}ব্যবহারিক: ${toBnNumber(breakdown.practical)}` : ''}
+                          </span>
                           <span className="font-bold text-slate-700">অর্জিত: {toBnNumber(pct)}%</span>
                         </div>
                       </div>
@@ -3347,14 +3716,18 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
                   onClick={() => setSubmittingHw(null)}
                   className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 font-semibold"
                 >
-                  বাতিল
+                  {submissionMessage ? 'বন্ধ করুন' : 'বাতিল'}
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-xs transition-colors"
+                  disabled={isSubmitting || isEvaluatingAi}
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-xl font-bold shadow-xs transition-colors"
                 >
-                  {isSubmitting ? 'জমা হচ্ছে...' : 'জমা সম্পন্ন করুন'}
+                  {isSubmitting
+                    ? 'জমা হচ্ছে...'
+                    : isEvaluatingAi
+                    ? 'এআই মূল্যায়ন চলছে...'
+                    : 'জমা সম্পন্ন করুন'}
                 </button>
               </div>
             </form>

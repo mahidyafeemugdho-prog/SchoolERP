@@ -347,6 +347,7 @@ export class FirebaseAuthProvider implements AuthProviderInterface {
   async deleteUser(uid: string): Promise<void> {
     const auth = this.requireAdminAuth();
     try {
+      await auth.revokeRefreshTokens(uid).catch(() => {});
       await auth.deleteUser(uid);
     } catch (err: any) {
       if (err?.code !== 'auth/user-not-found') {
@@ -558,35 +559,66 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
       throw new SaaSServiceError(`School "${schoolId}" not found.`, 404, 'SCHOOL_NOT_FOUND');
     }
 
-    const [usersSnap, slicesSnap, saasUsersSnap, paymentsSnap, historySnap] = await Promise.all([
-      schoolRef.collection('users').get(),
-      schoolRef.collection('slices').get(),
+    const [
+      saasUsersSnap,
+      paymentsSnap,
+      historySnap,
+      legacySyncBySchoolSnap,
+      legacySyncByTenantSnap,
+    ] = await Promise.all([
       db.collection('saas_users').where('schoolId', '==', schoolId).get(),
       db.collection('payment_requests').where('schoolId', '==', schoolId).get(),
       db.collection('subscription_history').where('schoolId', '==', schoolId).get(),
+      db.collection('school_sync').where('schoolId', '==', schoolId).get().catch(() => null),
+      db.collection('school_sync').where('tenantId', '==', schoolId).get().catch(() => null),
     ]);
 
-    const refsToDelete: FirebaseFirestore.DocumentReference[] = [];
-    usersSnap.docs.forEach((d) => refsToDelete.push(d.ref));
-    slicesSnap.docs.forEach((d) => refsToDelete.push(d.ref));
-    saasUsersSnap.docs.forEach((d) => refsToDelete.push(d.ref));
+    const refsToDelete = new Map<string, FirebaseFirestore.DocumentReference>();
+    const addRef = (ref: FirebaseFirestore.DocumentReference) => {
+      refsToDelete.set(ref.path, ref);
+    };
+
+    saasUsersSnap.docs.forEach((d) => addRef(d.ref));
     paymentsSnap.docs.forEach((d) => {
       const pData = d.data() as Partial<SaaSPaymentRequest>;
       if (pData?.normalizedTransactionId) {
-        refsToDelete.push(db.collection('payment_trx_index').doc(pData.normalizedTransactionId));
+        addRef(db.collection('payment_trx_index').doc(pData.normalizedTransactionId));
       }
-      refsToDelete.push(d.ref);
+      addRef(d.ref);
     });
-    historySnap.docs.forEach((d) => refsToDelete.push(d.ref));
-    refsToDelete.push(schoolRef);
+    historySnap.docs.forEach((d) => addRef(d.ref));
+    legacySyncBySchoolSnap?.docs.forEach((d) => addRef(d.ref));
+    legacySyncByTenantSnap?.docs.forEach((d) => addRef(d.ref));
+    addRef(db.collection('school_sync').doc(schoolId));
 
-    // Commit deletes in batches of 400
-    for (let i = 0; i < refsToDelete.length; i += 400) {
+    // Delete all top-level SaaS / legacy references in batches of 400
+    const topLevelRefs = Array.from(refsToDelete.values());
+    for (let i = 0; i < topLevelRefs.length; i += 400) {
       const batch = db.batch();
-      for (const r of refsToDelete.slice(i, i + 400)) {
+      for (const r of topLevelRefs.slice(i, i + 400)) {
         batch.delete(r);
       }
       await batch.commit();
+    }
+
+    // Recursively delete schools/{schoolId} and EVERY nested subcollection (users, slices, chunks, domain collections)
+    if (typeof (db as any).recursiveDelete === 'function') {
+      await (db as any).recursiveDelete(schoolRef);
+    } else {
+      const subCols = await schoolRef.listCollections();
+      const subRefs: FirebaseFirestore.DocumentReference[] = [];
+      for (const col of subCols) {
+        const colSnap = await col.get();
+        colSnap.docs.forEach((d) => subRefs.push(d.ref));
+      }
+      subRefs.push(schoolRef);
+      for (let i = 0; i < subRefs.length; i += 400) {
+        const batch = db.batch();
+        for (const r of subRefs.slice(i, i + 400)) {
+          batch.delete(r);
+        }
+        await batch.commit();
+      }
     }
   }
 
@@ -660,8 +692,20 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
 
   async listSaaSUsersBySchool(schoolId: string): Promise<SaaSUserRecord[]> {
     const db = this.getDb();
-    const snap = await db.collection('schools').doc(schoolId).collection('users').get();
-    return snap.docs.map((d) => d.data() as SaaSUserRecord);
+    const [scopedSnap, globalSnap] = await Promise.all([
+      db.collection('schools').doc(schoolId).collection('users').get(),
+      db.collection('saas_users').where('schoolId', '==', schoolId).get(),
+    ]);
+    const byUid = new Map<string, SaaSUserRecord>();
+    globalSnap.docs.forEach((d) => {
+      const u = d.data() as SaaSUserRecord;
+      if (u?.uid) byUid.set(u.uid, u);
+    });
+    scopedSnap.docs.forEach((d) => {
+      const u = d.data() as SaaSUserRecord;
+      if (u?.uid) byUid.set(u.uid, u);
+    });
+    return Array.from(byUid.values());
   }
 
   async updateSaaSUserRecord(uid: string, updates: Partial<SaaSUserRecord>): Promise<SaaSUserRecord> {
@@ -676,6 +720,21 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
     batch.set(db.collection('schools').doc(existing.schoolId).collection('users').doc(uid), updated);
     await batch.commit();
     return updated;
+  }
+
+  async deleteSaaSUserRecord(uid: string, schoolIdHint?: string): Promise<void> {
+    const db = this.getDb();
+    const existing = await this.getSaaSUserByUid(uid);
+    const schoolId = existing?.schoolId || schoolIdHint;
+    if (!existing && !schoolId) {
+      throw new SaaSServiceError('User record not found.', 404, 'USER_NOT_FOUND');
+    }
+    const batch = db.batch();
+    batch.delete(db.collection('saas_users').doc(uid));
+    if (schoolId) {
+      batch.delete(db.collection('schools').doc(schoolId).collection('users').doc(uid));
+    }
+    await batch.commit();
   }
 
   async getTenantSlices(schoolId: string): Promise<Record<string, any>> {

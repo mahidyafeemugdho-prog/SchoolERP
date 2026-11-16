@@ -16,6 +16,7 @@ import { formatGroupName } from '../../utils/i18n';
 import { compareStudentsByRoll } from '../../utils/studentSort';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 import { buildPrincipalSignatureHtml } from '../../utils/signatureHelper';
+import { getMarksheetRowBreakdown } from '../../utils/marksheetBreakdown';
 import {
   Award,
   Search,
@@ -3729,20 +3730,22 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
             )}
 
             {/* Print Signature Footer for Merit List */}
-            <div className="hidden print:flex justify-between items-end pt-14 mt-6 text-xs font-bold text-slate-800">
+            <div className="hidden print:grid grid-cols-3 items-start gap-6 pt-8 mt-6 text-xs font-bold text-slate-800">
               <div className="text-center">
-                <div className="border-t-2 border-slate-800 pt-1 w-40">
+                <div className="h-10 mb-0.5" />
+                <div className="border-t-2 border-slate-800 pt-1 mx-auto w-40">
                   {language === 'bn' ? 'শ্রেণি শিক্ষকের স্বাক্ষর' : 'Class Teacher'}
                 </div>
               </div>
               <div className="text-center">
-                <div className="border-t-2 border-slate-800 pt-1 w-44">
+                <div className="h-10 mb-0.5" />
+                <div className="border-t-2 border-slate-800 pt-1 mx-auto w-44">
                   {language === 'bn' ? 'পরীক্ষা নিয়ন্ত্রকের স্বাক্ষর' : 'Controller of Examinations'}
                 </div>
               </div>
               <div className="text-center">
                 <PrincipalSignatureDisplay school={school} fallbackText="" heightClass="h-10" />
-                <div className="border-t-2 border-slate-800 pt-1 w-48">
+                <div className="border-t-2 border-slate-800 pt-1 mx-auto w-48">
                   {language === 'bn' ? 'অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল' : 'Principal Signature & Seal'}
                 </div>
               </div>
@@ -4005,11 +4008,17 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
 
                 const signaturesHtml = meritPrintIncludeSignatures
                   ? `<div class="footer">
-                      <div class="sig">শ্রেণি শিক্ষকের স্বাক্ষর<br/><span style="font-size:9px;font-weight:400;color:#64748b;">Class Teacher</span></div>
-                      <div class="sig">পরীক্ষা নিয়ন্ত্রকের স্বাক্ষর<br/><span style="font-size:9px;font-weight:400;color:#64748b;">Controller of Examinations</span></div>
-                      <div class="sig">
-                        ${buildPrincipalSignatureHtml(school)}
-                        অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল<br/><span style="font-size:9px;font-weight:400;color:#64748b;">Principal Signature & Seal</span>
+                      <div class="sig-col">
+                        <div class="sig-slot"></div>
+                        <div class="sig">শ্রেণি শিক্ষকের স্বাক্ষর<br/><span style="font-size:9px;font-weight:400;color:#64748b;">Class Teacher</span></div>
+                      </div>
+                      <div class="sig-col">
+                        <div class="sig-slot"></div>
+                        <div class="sig">পরীক্ষা নিয়ন্ত্রকের স্বাক্ষর<br/><span style="font-size:9px;font-weight:400;color:#64748b;">Controller of Examinations</span></div>
+                      </div>
+                      <div class="sig-col">
+                        <div class="sig-slot">${buildPrincipalSignatureHtml(school)}</div>
+                        <div class="sig">অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল<br/><span style="font-size:9px;font-weight:400;color:#64748b;">Principal Signature & Seal</span></div>
                       </div>
                     </div>`
                   : '';
@@ -4046,8 +4055,10 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
     table { width: 100%; border-collapse: collapse; font-size: 11px; }
     th, td { border: 1px solid #334155; padding: 6px 7px; vertical-align: middle; }
     th { background: #e2e8f0; font-weight: 800; text-align: center; font-size: 10px; text-transform: uppercase; }
-    .footer { margin-top: 42px; display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; font-size: 11px; }
-    .sig { border-top: 1.5px solid #0f172a; padding-top: 4px; min-width: 155px; text-align: center; font-weight: 700; }
+    .footer { margin-top: 24px; display: grid; grid-template-columns: repeat(3, 1fr); align-items: start; gap: 20px; font-size: 11px; }
+    .sig-col { text-align: center; }
+    .sig-slot { height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; margin-bottom: 4px; }
+    .sig { border-top: 1.5px solid #0f172a; padding-top: 4px; text-align: center; font-weight: 700; }
     @media print {
       .print-bar { display: none !important; }
       body { padding: 0; }
@@ -4563,15 +4574,17 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
 
                       {/* Official Signatures */}
                       {meritPrintIncludeSignatures && (
-                        <div className="flex justify-between items-end pt-12 mt-6 text-xs text-slate-800">
+                        <div className="grid grid-cols-3 items-start gap-6 pt-6 mt-6 text-xs text-slate-800">
                           <div className="text-center">
-                            <div className="border-t-2 border-slate-800 pt-1 w-40 font-bold">
+                            <div className="h-10 mb-0.5" />
+                            <div className="border-t-2 border-slate-800 pt-1 mx-auto w-40 font-bold">
                               শ্রেণি শিক্ষকের স্বাক্ষর
                             </div>
                             <span className="text-[10px] text-slate-500">Class Teacher</span>
                           </div>
                           <div className="text-center">
-                            <div className="border-t-2 border-slate-800 pt-1 w-44 font-bold">
+                            <div className="h-10 mb-0.5" />
+                            <div className="border-t-2 border-slate-800 pt-1 mx-auto w-44 font-bold">
                               পরীক্ষা নিয়ন্ত্রকের স্বাক্ষর
                             </div>
                             <span className="text-[10px] text-slate-500">Controller of Examinations</span>
@@ -4581,9 +4594,9 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                               school={school}
                               fallbackText=""
                               heightClass="h-10"
-                              textClassName="font-serif italic font-black text-sm text-slate-900 mb-0.5"
+                              textClassName="font-serif italic font-black text-sm text-slate-900"
                             />
-                            <div className="border-t-2 border-slate-800 pt-1 w-48 font-bold">
+                            <div className="border-t-2 border-slate-800 pt-1 mx-auto w-48 font-bold">
                               অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল
                             </div>
                             <span className="text-[10px] text-slate-500">Principal Signature & Seal</span>
@@ -4602,7 +4615,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
       {/* Official Academic Transcript / Marksheet Modal */}
       {showTranscriptModal && transcriptStudent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full p-4 md:p-5 my-4 max-h-[96vh] overflow-y-auto print:p-0 print:m-0 print:border-none print:shadow-none print:max-h-none print:w-full">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-3xl w-full p-4 md:p-5 my-4 max-h-[96vh] overflow-y-auto print:p-0 print:m-0 print:border-none print:shadow-none print:max-h-none print:max-w-none print:w-full">
             <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 print:hidden">
               <div className="flex items-center space-x-2">
                 <Award className="w-4 h-4 text-amber-500" />
@@ -4749,8 +4762,9 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
 
                 const rows = enteredSubjectEntries.length > 0
                   ? enteredSubjectEntries.map(({ sub, mark: m }) => {
-                      grandTotal += m.total;
-                      totalFullMarks += sub.fullMarks;
+                      const breakdown = getMarksheetRowBreakdown(m, sub);
+                      grandTotal += breakdown.total;
+                      totalFullMarks += breakdown.fullMarks;
                       gpas.push(m.gpa);
                       if (m.grade === 'F') hasFail = true;
 
@@ -4765,10 +4779,17 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                               </span>
                             )}
                           </td>
-                          <td className="py-1 px-1.5 border-r border-slate-300 text-center text-slate-700">{sub.fullMarks}</td>
-                          <td className="py-1 px-1.5 border-r border-slate-300 text-center">{m.written}</td>
-                          <td className="py-1 px-1.5 border-r border-slate-300 text-center">{m.mcq + m.practical}</td>
-                          <td className="py-1 px-1.5 border-r border-slate-300 text-center font-bold text-slate-900">{m.total}</td>
+                          <td className="py-1 px-1.5 border-r border-slate-300 text-center text-slate-700">{breakdown.fullMarks}</td>
+                          <td className="py-1 px-1.5 border-r border-slate-300 text-center">
+                            {breakdown.hasWritten ? breakdown.written : '—'}
+                          </td>
+                          <td className="py-1 px-1.5 border-r border-slate-300 text-center">
+                            {breakdown.hasMcq ? breakdown.mcq : '—'}
+                          </td>
+                          <td className="py-1 px-1.5 border-r border-slate-300 text-center">
+                            {breakdown.hasPractical ? breakdown.practical : '—'}
+                          </td>
+                          <td className="py-1 px-1.5 border-r border-slate-300 text-center font-bold text-slate-900">{breakdown.total}</td>
                           <td
                             className={`py-1 px-1.5 border-r border-slate-300 text-center font-black ${
                               m.grade === 'F' ? 'text-rose-600' : 'text-emerald-700'
@@ -4793,6 +4814,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                         <td className="py-1 px-1.5 border-r border-slate-300 text-center">—</td>
                         <td className="py-1 px-1.5 border-r border-slate-300 text-center">—</td>
                         <td className="py-1 px-1.5 border-r border-slate-300 text-center">—</td>
+                        <td className="py-1 px-1.5 border-r border-slate-300 text-center">—</td>
                         <td className="py-1 px-1.5 text-center">—</td>
                       </tr>
                     ));
@@ -4805,14 +4827,21 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                 return (
                   <>
                     <div className="my-2 overflow-x-auto">
-                      <table className="w-full text-left border-collapse border border-slate-400 text-[11px]">
+                      <table className="w-full min-w-[560px] text-left border-collapse border border-slate-400 text-[11px]">
                         <thead>
                           <tr className="bg-slate-100 border-b border-slate-400 font-bold text-slate-800 text-[10px] uppercase">
                             <th className="py-1 px-2 border-r border-slate-400">বিষয় (Subject)</th>
-                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-14">পূর্ণমান</th>
-                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-14">সৃজনশীল</th>
-                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-14">নৈর্ব্যক্তিক/ব্যা</th>
-                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-16">মোট প্রাপ্ত</th>
+                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-13 whitespace-nowrap">পূর্ণমান</th>
+                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-14 whitespace-nowrap">সৃজনশীল</th>
+                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-16 whitespace-nowrap">
+                              নৈর্ব্যক্তিক
+                              <span className="block text-[8px] font-semibold text-slate-500">(MCQ)</span>
+                            </th>
+                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-16 whitespace-nowrap">
+                              ব্যবহারিক
+                              <span className="block text-[8px] font-semibold text-slate-500">(Practical)</span>
+                            </th>
+                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-16 whitespace-nowrap">মোট প্রাপ্ত</th>
                             <th className="py-1 px-1.5 border-r border-slate-400 text-center w-14">লেটার গ্রেড</th>
                             <th className="py-1 px-1.5 text-center w-14">গ্রেড পয়েন্ট</th>
                           </tr>
@@ -4820,7 +4849,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                         <tbody className="divide-y divide-slate-300">
                           {rows}
                           <tr className="bg-slate-100 font-bold border-t-2 border-slate-800 text-[11px]">
-                            <td colSpan={4} className="py-1.5 px-2 border-r border-slate-400 text-right">
+                            <td colSpan={5} className="py-1.5 px-2 border-r border-slate-400 text-right">
                               সর্বমোট নম্বর ({totalFullMarks}) ও সার্বিক ফলাফল:
                             </td>
                             <td className="py-1.5 px-1.5 border-r border-slate-400 text-center text-xs font-black text-slate-900">
@@ -4883,14 +4912,16 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
               })()}
 
               {/* Remarks and Signatures */}
-              <div className="mt-6 pt-5 border-t border-slate-300 grid grid-cols-3 text-center text-[10px] text-slate-700">
+              <div className="mt-6 pt-4 border-t border-slate-300 grid grid-cols-3 items-start gap-2 text-center text-[10px] text-slate-700">
                 <div>
-                  <div className="border-t border-slate-500 pt-1 font-semibold mx-4">
+                  <div className="h-9 mb-0.5" />
+                  <div className="border-t border-slate-500 pt-1 font-semibold mx-2 sm:mx-4">
                     শ্রেণি শিক্ষকের স্বাক্ষর
                   </div>
                 </div>
                 <div>
-                  <div className="border-t border-slate-500 pt-1 font-semibold mx-4">
+                  <div className="h-9 mb-0.5" />
+                  <div className="border-t border-slate-500 pt-1 font-semibold mx-2 sm:mx-4">
                     পরীক্ষা নিয়ন্ত্রকের স্বাক্ষর
                   </div>
                 </div>
@@ -4902,7 +4933,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                     imgClassName="max-h-full max-w-[140px] object-contain mx-auto"
                     textClassName="font-serif italic font-bold text-xs text-slate-900"
                   />
-                  <div className="border-t border-slate-500 pt-1 font-bold text-slate-900 mx-4">
+                  <div className="border-t border-slate-500 pt-1 font-bold text-slate-900 mx-2 sm:mx-4">
                     প্রধান শিক্ষকের স্বাক্ষর ও সিল
                   </div>
                 </div>
@@ -5709,15 +5740,17 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
               </div>
 
               {/* Signatures */}
-              <div className="flex justify-between items-end pt-12 mt-6 text-xs text-slate-800">
+              <div className="grid grid-cols-3 items-start gap-4 pt-6 mt-6 text-xs text-slate-800">
                 <div className="text-center">
-                  <div className="border-t-2 border-slate-800 pt-1 w-44 font-bold">
+                  <div className="h-11 mb-0.5" />
+                  <div className="border-t-2 border-slate-800 pt-1 mx-auto w-40 sm:w-44 font-bold">
                     শ্রেণি শিক্ষকের স্বাক্ষর
                   </div>
                   <span className="text-[10px] text-slate-500">Class Teacher</span>
                 </div>
                 <div className="text-center">
-                  <div className="border-t-2 border-slate-800 pt-1 w-44 font-bold">
+                  <div className="h-11 mb-0.5" />
+                  <div className="border-t-2 border-slate-800 pt-1 mx-auto w-40 sm:w-44 font-bold">
                     পরীক্ষা নিয়ন্ত্রকের স্বাক্ষর
                   </div>
                   <span className="text-[10px] text-slate-500">Controller of Examinations</span>
@@ -5727,9 +5760,9 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                     school={school}
                     fallbackText="Principal"
                     heightClass="h-11"
-                    textClassName="font-serif italic font-black text-sm text-slate-900 mb-0.5"
+                    textClassName="font-serif italic font-black text-sm text-slate-900"
                   />
-                  <div className="border-t-2 border-slate-800 pt-1 w-48 font-bold">
+                  <div className="border-t-2 border-slate-800 pt-1 mx-auto w-44 sm:w-48 font-bold">
                     অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল
                   </div>
                   <span className="text-[10px] text-slate-500">Principal Signature & Seal</span>

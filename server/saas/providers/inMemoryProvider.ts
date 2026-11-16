@@ -166,6 +166,15 @@ export class InMemoryAuthProvider implements AuthProviderInterface {
       disabled: user.disabled,
     };
   }
+
+  async deleteUser(uid: string): Promise<void> {
+    this.users.delete(uid);
+    for (const [token, tokenUid] of this.tokens.entries()) {
+      if (tokenUid === uid) {
+        this.tokens.delete(token);
+      }
+    }
+  }
 }
 
 export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
@@ -314,6 +323,10 @@ export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
     const merged = structuredClone({ ...existing, ...updates });
     this.saasUsers.set(uid, merged);
     return structuredClone(merged);
+  }
+
+  async deleteSaaSUserRecord(uid: string): Promise<void> {
+    this.saasUsers.delete(uid);
   }
 
   async getTenantSlices(schoolId: string): Promise<Record<string, any>> {

@@ -40,6 +40,11 @@ import { useAuth } from '../../context/AuthContext';
 import { safeGetLocalStorage, compressImageToPassportSize } from '../../utils/storageHelper';
 import { CloudSyncService } from '../../services/cloudSync';
 import { LiveCameraModal } from '../common/LiveCameraModal';
+import {
+  extractFaceDescriptorFromImageData,
+  analyzeCenterFacePresence,
+  matchFaceDescriptor,
+} from '../../utils/faceRecognitionHelper';
 
 interface SmartQRScannerTabProps {
   onAttendanceUpdated: () => void;
@@ -84,10 +89,13 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
   const autoFaceBusyRef = useRef<boolean>(false);
   const lastQrDetectedAtRef = useRef<number>(0);
   const lastAutoFaceMatchRef = useRef<{ id: string; at: number } | null>(null);
+  const autoFaceStreakRef = useRef<{ id: string; count: number; at: number } | null>(null);
   const recentFaceMatchesRef = useRef<Map<string, number>>(new Map());
   const recentQrScansRef = useRef<Map<string, number>>(new Map());
   const lastCloudFallbackPullRef = useRef<number>(0);
   const isMountedRef = useRef<boolean>(true);
+  const isModalBlockingScanRef = useRef<boolean>(false);
+  const faceDetectorRef = useRef<any>(null);
   const cameraOpIdRef = useRef<number>(0);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
@@ -95,6 +103,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
   const frameCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lumCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const rgbCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const enrollAlignCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const handleSelectScannerType = (type: 'auto' | 'qr' | 'face') => {
     setScannerType(type);
@@ -654,28 +663,13 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
     }
   };
 
-  // Immediately open camera on mount (zero artificial delay) while updating camera list in parallel
+  // Start camera once on mount without racing concurrent Html5Qrcode.getCameras() calls
   useEffect(() => {
-    let isMounted = true;
     if (!autoStartAttemptedRef.current) {
       autoStartAttemptedRef.current = true;
       startCamera();
     }
-    Html5Qrcode.getCameras()
-      .then((devices: any) => {
-        if (!isMounted) return;
-        if (devices && devices.length > 0) {
-          setCameras(devices);
-          const backCam = devices.find((d: any) =>
-            /back|rear|environment/i.test(d.label || '')
-          );
-          setSelectedCameraId(backCam ? backCam.id : devices[0].id);
-        }
-      })
-      .catch(() => {});
-
     return () => {
-      isMounted = false;
       stopCamera();
     };
   }, []);
@@ -717,8 +711,9 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
     setCameraFacing(desiredFacing);
 
     const qrboxFunction = (viewfinderWidth: number, viewfinderHeight: number) => {
-      const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-      const edge = Math.max(Math.floor(minEdge * 0.86), 180);
+      const minEdge = Math.max(50, Math.min(viewfinderWidth, viewfinderHeight));
+      const desired = Math.floor(minEdge * 0.86);
+      const edge = minEdge <= 120 ? Math.max(48, minEdge - 4) : Math.max(120, Math.min(minEdge - 8, desired));
       return { width: edge, height: edge };
     };
 
@@ -740,6 +735,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
           disableFlip: false,
         },
         (decodedText: string) => {
+          if (isModalBlockingScanRef.current) return;
           if (scannerTypeRef.current === 'qr' || scannerTypeRef.current === 'auto') {
             lastQrDetectedAtRef.current = Date.now();
             handleScanSuccess(decodedText, undefined, 'qr_scanner');
@@ -932,63 +928,33 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       ctx.clearRect(0, 0, 16, 16);
       ctx.drawImage(source, sx, sy, sw, sh, 0, 0, 16, 16);
       const data = ctx.getImageData(0, 0, 16, 16).data;
-      const lums = new Float32Array(256);
-      let lumSum = 0;
-      for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-        const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-        lums[p] = lum;
-        lumSum += lum;
-      }
-      const lumMean = lumSum / 256;
-      let lumNormSq = 0;
-      for (let i = 0; i < 256; i++) {
-        const d = lums[i] - lumMean;
-        lums[i] = d;
-        lumNormSq += d * d;
-      }
-      const lumNorm = Math.sqrt(lumNormSq) || 1;
-      const lumWeight = 0.72;
-      const finalVec: number[] = new Array(cCtx ? 256 + 192 : 256);
-      for (let i = 0; i < 256; i++) {
-        finalVec[i] = (lums[i] / lumNorm) * lumWeight;
-      }
 
+      let cData: Uint8ClampedArray | null = null;
       if (cCtx) {
         cCtx.clearRect(0, 0, 8, 8);
         cCtx.drawImage(source, sx, sy, sw, sh, 0, 0, 8, 8);
-        const cData = cCtx.getImageData(0, 0, 8, 8).data;
-        const rgbRaw = new Float32Array(192);
-        let rgbSum = 0;
-        for (let i = 0, p = 0; i < cData.length; i += 4, p += 3) {
-          const r = cData[i];
-          const g = cData[i + 1];
-          const b = cData[i + 2];
-          rgbRaw[p] = r;
-          rgbRaw[p + 1] = g;
-          rgbRaw[p + 2] = b;
-          rgbSum += r + g + b;
-        }
-        const rgbMean = rgbSum / 192;
-        let rgbNormSq = 0;
-        for (let i = 0; i < 192; i++) {
-          const d = rgbRaw[i] - rgbMean;
-          rgbRaw[i] = d;
-          rgbNormSq += d * d;
-        }
-        const rgbNorm = Math.sqrt(rgbNormSq) || 1;
-        const rgbWeight = 0.28;
-        for (let i = 0; i < 192; i++) {
-          finalVec[256 + i] = (rgbRaw[i] / rgbNorm) * rgbWeight;
-        }
+        cData = cCtx.getImageData(0, 0, 8, 8).data;
       }
 
-      return finalVec;
+      return extractFaceDescriptorFromImageData(data, cData);
     } catch {
       return null;
     }
   };
 
-  // Compute compact facial biometric descriptor (16x16 center luminance + 8x8 RGB spatial profile)
+  const getNativeFaceDetector = () => {
+    if (faceDetectorRef.current) return faceDetectorRef.current;
+    try {
+      if (typeof window !== 'undefined' && 'FaceDetector' in window) {
+        faceDetectorRef.current = new (window as any).FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
+      }
+    } catch {
+      faceDetectorRef.current = null;
+    }
+    return faceDetectorRef.current;
+  };
+
+  // Compute illumination-invariant facial biometric descriptor (aligns with native FaceDetector when available)
   const computeFaceSignature = (
     src: string,
     cropOffset?: { dx: number; dy: number },
@@ -1002,11 +968,56 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
     return new Promise((resolve) => {
       try {
         const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
+        if (/^https?:\/\//i.test(src)) {
+          img.crossOrigin = 'anonymous';
+        }
+        img.onload = async () => {
           try {
-            const w = img.width || 240;
-            const h = img.height || 300;
+            const w = img.naturalWidth || img.width || 240;
+            const h = img.naturalHeight || img.height || 300;
+            const detector = !cropOffset ? getNativeFaceDetector() : null;
+
+            if (detector) {
+              try {
+                const detected = await detector.detect(img);
+                const box = Array.isArray(detected) && detected[0]?.boundingBox ? detected[0].boundingBox : null;
+                if (box && box.width > 16 && box.height > 16) {
+                  if (!enrollAlignCanvasRef.current) {
+                    enrollAlignCanvasRef.current = document.createElement('canvas');
+                  }
+                  const aCanvas = enrollAlignCanvasRef.current;
+                  aCanvas.width = 160;
+                  aCanvas.height = 200;
+                  const aCtx = aCanvas.getContext('2d', { willReadFrequently: true });
+                  if (aCtx) {
+                    const padX = box.width * 0.35;
+                    const padTop = box.height * 0.25;
+                    const padBottom = box.height * 0.45;
+                    const rx = Math.max(0, box.x - padX);
+                    const ry = Math.max(0, box.y - padTop);
+                    const rw = Math.min(w - rx, box.width + padX * 2);
+                    const rh = Math.min(h - ry, box.height + padTop + padBottom);
+                    aCtx.clearRect(0, 0, 160, 200);
+                    aCtx.drawImage(img, rx, ry, rw, rh, 0, 0, 160, 200);
+                    const vec = extractSignatureFromCanvasSource(
+                      aCanvas,
+                      Math.floor(160 * 0.20),
+                      Math.floor(200 * 0.12),
+                      Math.floor(160 * 0.60),
+                      Math.floor(200 * 0.68)
+                    );
+                    if (vec) {
+                      if (cacheKey) faceSigCacheRef.current.set(cacheKey, vec);
+                      resolve(vec);
+                      return;
+                    }
+                  }
+                }
+              } catch {
+                // Fall back cleanly to standard portrait crop
+              }
+            }
+
             const dx = cropOffset?.dx ?? 0;
             const dy = cropOffset?.dy ?? 0;
             const sx = Math.max(0, Math.min(w - 16, Math.floor(w * (0.2 + dx))));
@@ -1031,31 +1042,15 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
     });
   };
 
-  const cosineSimilarity = (a: number[], b: number[]): number => {
-    let dot = 0;
-    let normA = 0;
-    let normB = 0;
-    const len = Math.min(a.length, b.length);
-    for (let i = 0; i < len; i++) {
-      const ai = a[i];
-      const bi = b[i];
-      dot += ai * bi;
-      normA += ai * ai;
-      normB += bi * bi;
-    }
-    const denom = Math.sqrt(normA) * Math.sqrt(normB);
-    return denom > 0 ? dot / denom : 0;
-  };
-
   // Synchronous zero-allocation extraction directly from live <video> (< 1ms per frame!)
   const extractLiveVideoSignatures = (
     video: HTMLVideoElement,
     detectedBox?: { x: number; y: number; width: number; height: number } | null
-  ): { hasContrast: boolean; vectors: number[][] } => {
+  ): { hasContrast: boolean; hasFaceLikeRegion: boolean; vectors: number[][] } => {
     try {
       const vw = video.videoWidth;
       const vh = video.videoHeight;
-      if (!vw || !vh) return { hasContrast: false, vectors: [] };
+      if (!vw || !vh) return { hasContrast: false, hasFaceLikeRegion: false, vectors: [] };
 
       if (!frameCanvasRef.current) {
         frameCanvasRef.current = document.createElement('canvas');
@@ -1071,7 +1066,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
           fCanvas.height = fh;
         }
         const fCtx = fCanvas.getContext('2d', { willReadFrequently: true });
-        if (!fCtx) return { hasContrast: false, vectors: [] };
+        if (!fCtx) return { hasContrast: false, hasFaceLikeRegion: false, vectors: [] };
 
         // Expand face box slightly to match passport head-framing proportions
         const padX = detectedBox.width * 0.35;
@@ -1100,7 +1095,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
           const v = extractSignatureFromCanvasSource(fCanvas, bx, by, bw, bh);
           if (v) vectors.push(v);
         }
-        return { hasContrast: true, vectors };
+        return { hasContrast: true, hasFaceLikeRegion: true, vectors };
       }
 
       // Standard center 4:5 crop directly from live video frame
@@ -1120,7 +1115,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
         fCanvas.height = fh;
       }
       const fCtx = fCanvas.getContext('2d', { willReadFrequently: true });
-      if (!fCtx) return { hasContrast: false, vectors: [] };
+      if (!fCtx) return { hasContrast: false, hasFaceLikeRegion: false, vectors: [] };
 
       fCtx.save();
       if (cameraFacingRef.current === 'user') {
@@ -1130,7 +1125,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       fCtx.drawImage(video, sx, sy, cropW, cropH, 0, 0, fw, fh);
       fCtx.restore();
 
-      // Quick contrast gate from reused 16x16 canvas (< 0.15ms)
+      // Quick contrast + skin-chrominance gate from reused 16x16 canvas (< 0.2ms)
       const contrastVecCanvas = lumCanvasRef.current || document.createElement('canvas');
       if (!lumCanvasRef.current) {
         contrastVecCanvas.width = 16;
@@ -1138,41 +1133,36 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
         lumCanvasRef.current = contrastVecCanvas;
       }
       const cCtx = contrastVecCanvas.getContext('2d', { willReadFrequently: true });
+      let hasFaceLikeRegion = true;
       if (cCtx) {
         cCtx.clearRect(0, 0, 16, 16);
-        cCtx.drawImage(fCanvas, Math.floor(fw * 0.25), Math.floor(fh * 0.15), Math.floor(fw * 0.5), Math.floor(fh * 0.65), 0, 0, 16, 16);
+        cCtx.drawImage(fCanvas, Math.floor(fw * 0.22), Math.floor(fh * 0.14), Math.floor(fw * 0.56), Math.floor(fh * 0.64), 0, 0, 16, 16);
         const data = cCtx.getImageData(0, 0, 16, 16).data;
-        let sum = 0;
-        let sumSq = 0;
-        const n = data.length / 4;
-        for (let i = 0; i < data.length; i += 4) {
-          const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          sum += lum;
-          sumSq += lum * lum;
+        const analysis = analyzeCenterFacePresence(data);
+        if (!analysis.hasContrast) {
+          return { hasContrast: false, hasFaceLikeRegion: false, vectors: [] };
         }
-        const mean = sum / n;
-        const stdDev = Math.sqrt(Math.max(0, sumSq / n - mean * mean));
-        if (stdDev < 15 || mean < 20 || mean > 244) {
-          return { hasContrast: false, vectors: [] };
-        }
+        hasFaceLikeRegion = analysis.hasSkinPresence;
       }
 
-      // Multi-scale + subtle head-position offsets in < 0.6ms total
+      // Multi-scale + subtle head-position offsets in < 0.7ms total
       const crops: Array<[number, number, number, number]> = [
         [Math.floor(fw * 0.20), Math.floor(fh * 0.12), Math.floor(fw * 0.60), Math.floor(fh * 0.68)], // standard passport
         [Math.floor(fw * 0.26), Math.floor(fh * 0.16), Math.floor(fw * 0.48), Math.floor(fh * 0.56)], // slightly further back
         [Math.floor(fw * 0.14), Math.floor(fh * 0.09), Math.floor(fw * 0.72), Math.floor(fh * 0.78)], // close-up
         [Math.floor(fw * 0.16), Math.floor(fh * 0.12), Math.floor(fw * 0.60), Math.floor(fh * 0.68)], // slight left
         [Math.floor(fw * 0.24), Math.floor(fh * 0.12), Math.floor(fw * 0.60), Math.floor(fh * 0.68)], // slight right
+        [Math.floor(fw * 0.20), Math.floor(fh * 0.08), Math.floor(fw * 0.60), Math.floor(fh * 0.68)], // slight up
+        [Math.floor(fw * 0.20), Math.floor(fh * 0.16), Math.floor(fw * 0.60), Math.floor(fh * 0.68)], // slight down
       ];
       const vectors: number[][] = [];
       for (const [cx, cy, cw, ch] of crops) {
         const v = extractSignatureFromCanvasSource(fCanvas, cx, cy, cw, ch);
         if (v) vectors.push(v);
       }
-      return { hasContrast: true, vectors };
+      return { hasContrast: true, hasFaceLikeRegion, vectors };
     } catch {
-      return { hasContrast: false, vectors: [] };
+      return { hasContrast: false, hasFaceLikeRegion: false, vectors: [] };
     }
   };
 
@@ -1277,7 +1267,8 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       const video = document.querySelector('#qr-reader-container video') as HTMLVideoElement | null;
       if (video && video.videoWidth && video.videoHeight) {
         const extracted = extractLiveVideoSignatures(video, options?.detectedBox);
-        if (!extracted.hasContrast && isSilentAuto) {
+        if ((!extracted.hasContrast || !extracted.hasFaceLikeRegion) && isSilentAuto) {
+          autoFaceStreakRef.current = null;
           setFaceScanStatus(
             scannerTypeRef.current === 'auto'
               ? 'মুখমণ্ডল অথবা QR আইডি কার্ড ক্যামেরার সামনে ধরুন'
@@ -1300,52 +1291,19 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       ).filter((v): v is number[] => Array.isArray(v));
     }
 
-    let bestCandidate: { person: Student | Staff; similarity: number } | null = null;
-    let secondCandidate: { person: Student | Staff; similarity: number } | null = null;
-
-    if (liveVecs.length > 0) {
-      for (const c of prewarmed) {
-        let maxSim = -1;
-        for (let i = 0; i < liveVecs.length; i++) {
-          const sim = cosineSimilarity(liveVecs[i], c.vec);
-          if (sim > maxSim) maxSim = sim;
-        }
-        if (!bestCandidate || maxSim > bestCandidate.similarity) {
-          secondCandidate = bestCandidate;
-          bestCandidate = { person: c.person, similarity: maxSim };
-        } else if (!secondCandidate || maxSim > secondCandidate.similarity) {
-          secondCandidate = { person: c.person, similarity: maxSim };
-        }
-      }
-    }
-
     if (!isMountedRef.current || isScanLockedRef.current) {
       if (!isSilentAuto && isMountedRef.current) setIsFaceDetecting(false);
       return;
     }
 
-    // Slightly tighter match allowed when native FaceDetector confirmed an actual face bounding box
-    const matchThreshold = isSilentAuto
-      ? options?.detectedBox
-        ? prewarmed.length === 1
-          ? 0.76
-          : 0.78
-        : prewarmed.length === 1
-        ? 0.79
-        : 0.81
-      : prewarmed.length === 1
-      ? 0.45
-      : 0.66;
+    const matchResult = matchFaceDescriptor(liveVecs, prewarmed, {
+      isSilentAuto,
+      hasDetectedBox: Boolean(options?.detectedBox),
+    });
 
-    const isAmbiguousInAuto =
-      isSilentAuto &&
-      bestCandidate &&
-      secondCandidate &&
-      bestCandidate.similarity < 0.86 &&
-      bestCandidate.similarity - secondCandidate.similarity < 0.03;
-
-    if (!bestCandidate || bestCandidate.similarity < matchThreshold || isAmbiguousInAuto) {
+    if (!matchResult.matched || !matchResult.bestCandidate) {
       if (isSilentAuto) {
+        autoFaceStreakRef.current = null;
         setFaceScanStatus(
           scannerTypeRef.current === 'auto'
             ? 'মুখমণ্ডল অথবা QR আইডি কার্ড ক্যামেরার সামনে ধরুন'
@@ -1359,8 +1317,8 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       setQuickFaceModal({
         isOpen: true,
         snapshot: fallbackSnap,
-        hintText: bestCandidate
-          ? `ক্যামেরার ছবির সাথে নিশ্চিত মিল পাওয়া যায়নি (সর্বোচ্চ মিল ${Math.max(0, Math.round((bestCandidate.similarity + 1) * 50))}%)। ব্যক্তি নির্বাচন করে ছবি আপডেট ও হাজিরা দিন।`
+        hintText: matchResult.bestCandidate
+          ? `ক্যামেরার ছবির সাথে নিশ্চিত মিল পাওয়া যায়নি (সর্বোচ্চ মিল ${Math.max(0, Math.round(matchResult.displayConfidence))}%)। ব্যক্তি নির্বাচন করে ছবি আপডেট ও হাজিরা দিন।`
           : 'ক্যামেরা থেকে মুখমণ্ডল স্পষ্ট আসেনি অথবা এই ব্যক্তির ফেস ছবি যুক্ত নেই। তালিকা থেকে ব্যক্তি নির্বাচন করে ১-ট্যাপে এনরোল ও হাজিরা দিন।',
         targetType: 'student',
         search: '',
@@ -1368,10 +1326,25 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       return;
     }
 
-    const targetPerson = bestCandidate.person;
+    const targetPerson = matchResult.bestCandidate.person;
+    const nowMs = Date.now();
+
+    // Require 2 consecutive steady frames (< 1.5s apart) in silent auto-scan to prevent transient motion false hits
+    if (isSilentAuto) {
+      const prevStreak = autoFaceStreakRef.current;
+      if (prevStreak && prevStreak.id === targetPerson.id && nowMs - prevStreak.at < 1500) {
+        autoFaceStreakRef.current = { id: targetPerson.id, count: prevStreak.count + 1, at: nowMs };
+      } else {
+        autoFaceStreakRef.current = { id: targetPerson.id, count: 1, at: nowMs };
+        return;
+      }
+      if (autoFaceStreakRef.current.count < 2) {
+        return;
+      }
+      autoFaceStreakRef.current = null;
+    }
 
     // Per-person auto-face cooldown (5 seconds) prevents re-triggering the same face while allowing ANY OTHER person immediately!
-    const nowMs = Date.now();
     const lastForPerson = recentFaceMatchesRef.current.get(targetPerson.id) || 0;
     if (isSilentAuto && nowMs - lastForPerson < 5000) {
       return;
@@ -1384,14 +1357,20 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
 
     // Only encode live JPEG frame ONCE after a match succeeds (keeps idle loop 0-allocation)
     const matchedSnapshot = liveSnapshot || captureCurrentFrame();
-    const displayScore = Number(Math.min(99.4, Math.max(88.5, 70 + bestCandidate.similarity * 29)).toFixed(1));
-    setBiometricScore(displayScore);
+    setBiometricScore(matchResult.displayConfidence);
     setCapturedFaceSnapshot(matchedSnapshot || targetPerson.photoUrl || null);
     setIsFaceDetecting(false);
     setFaceScanStatus('✓ মুখমণ্ডল সফলভাবে শনাক্ত হয়েছে');
 
     await handleScanSuccess(targetPerson.id, undefined, 'face_scan');
   };
+
+  // Track whether any configuration/enrollment modal is open so camera callbacks pause cleanly
+  useEffect(() => {
+    isModalBlockingScanRef.current = Boolean(
+      showEnrollModal || showEnrollCamera || showRulesModal || quickFaceModal.isOpen
+    );
+  }, [showEnrollModal, showEnrollCamera, showRulesModal, quickFaceModal.isOpen]);
 
   // Parallel High-Speed Native BarcodeDetector Watcher (Full-frame hardware QR decoding in ~3ms every 90ms)
   useEffect(() => {
@@ -1400,6 +1379,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       !scanning ||
       showEnrollModal ||
       showEnrollCamera ||
+      showRulesModal ||
       quickFaceModal.isOpen
     ) {
       return;
@@ -1420,7 +1400,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
     let cancelled = false;
     let busy = false;
     const qrInterval = setInterval(async () => {
-      if (cancelled || busy || isScanLockedRef.current) return;
+      if (cancelled || busy || isScanLockedRef.current || isModalBlockingScanRef.current) return;
       const video = document.querySelector('#qr-reader-container video') as HTMLVideoElement | null;
       if (!video || !video.videoWidth || !video.videoHeight) return;
       busy = true;
@@ -1443,7 +1423,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       cancelled = true;
       clearInterval(qrInterval);
     };
-  }, [scannerType, scanning, showEnrollModal, showEnrollCamera, quickFaceModal.isOpen]);
+  }, [scannerType, scanning, showEnrollModal, showEnrollCamera, showRulesModal, quickFaceModal.isOpen]);
 
   // Hands-free Auto Face Detection & Recognition Loop (200ms instant response — stays active even while confirmation toast displays!)
   useEffect(() => {
@@ -1453,26 +1433,22 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       !autoFaceScan ||
       showEnrollModal ||
       showEnrollCamera ||
+      showRulesModal ||
       quickFaceModal.isOpen
     ) {
+      autoFaceStreakRef.current = null;
       return;
     }
 
     let cancelled = false;
-    let nativeDetector: any = null;
-    try {
-      if (typeof window !== 'undefined' && 'FaceDetector' in window) {
-        nativeDetector = new (window as any).FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
-      }
-    } catch {
-      nativeDetector = null;
-    }
+    const nativeDetector = getNativeFaceDetector();
 
     const intervalId = setInterval(async () => {
       if (
         cancelled ||
         autoFaceBusyRef.current ||
         isScanLockedRef.current ||
+        isModalBlockingScanRef.current ||
         isFaceDetecting ||
         Date.now() - lastQrDetectedAtRef.current < 450
       ) {
@@ -1491,6 +1467,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
             ? faces.find((f: any) => !f?.boundingBox || f.boundingBox.width >= minFaceWidth)
             : null;
           if (!validFace) {
+            autoFaceStreakRef.current = null;
             setFaceScanStatus(
               scannerTypeRef.current === 'auto'
                 ? 'মুখমণ্ডল অথবা QR আইডি কার্ড ক্যামেরার সামনে ধরুন'
@@ -1530,6 +1507,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
     autoFaceScan,
     showEnrollModal,
     showEnrollCamera,
+    showRulesModal,
     quickFaceModal.isOpen,
     isFaceDetecting,
   ]);
@@ -1992,7 +1970,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
           {/* Mount node for Html5Qrcode */}
           <div
             id="qr-reader-container"
-            className={`w-full h-full absolute inset-0 [&_video]:w-full [&_video]:h-full [&_video]:object-cover ${
+            className={`w-full h-full absolute inset-0 [&_video]:w-full [&_video]:h-full [&_video]:object-cover [&_#qr-shaded-region]:!hidden ${
               cameraFacing === 'user' ? '[&_video]:scale-x-[-1]' : ''
             }`}
           />

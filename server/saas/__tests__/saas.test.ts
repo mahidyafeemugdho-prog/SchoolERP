@@ -838,4 +838,246 @@ describe('SmartSchoolBD Multi-Tenant SaaS Platform API & Security Tests', () => 
       'bKash',
     ]);
   });
+
+  it('21. Verified student can submit & update AI-evaluated homework via POST /tenant/homework-submissions with strict tenant isolation', async () => {
+    await createTestSchool(); // SCH001
+    await createTestSchool({
+      schoolName: 'Rajshahi High School',
+      schoolCode: 'RHS02',
+      adminEmail: 'admin@rhs.edu.bd',
+    }); // SCH002
+
+    const schoolAdminToken = ctx.auth.issueTestTokenForEmail('admin@dmhs.edu.bd');
+
+    // Provision a student account in SCH001
+    const stuRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${schoolAdminToken}`)
+      .send({
+        email: 'hiya@dmhs.edu.bd',
+        password: 'Password@123',
+        displayName: 'Hiya Akhter',
+        schoolRole: 'student',
+        linkedStudentId: 'std_hiya_1',
+      });
+    expect(stuRes.status).toBe(201);
+    const studentToken = ctx.auth.issueTestTokenForEmail('hiya@dmhs.edu.bd');
+
+    // Initial submission by student
+    const submitRes = await request(ctx.app)
+      .post('/api/saas/tenant/homework-submissions')
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({
+        homeworkId: 'hw_math_1',
+        studentId: 'std_hiya_1',
+        studentCode: 'SCH001-S-2026-1002',
+        studentName: 'Hiya Akhter',
+        studentRoll: '02',
+        className: 'Class 10',
+        section: 'A',
+        textAnswer: '1, 2, 3, 4, 5, 6, 77, 88, 99, 10',
+        status: 'submitted',
+      });
+    expect(submitRes.status).toBe(201);
+    expect(submitRes.body.submission.status).toBe('submitted');
+    expect(submitRes.body.submission.teacherMarks).toBeUndefined();
+
+    // Update same submission with accurate AI evaluation (7/10)
+    const evalRes = await request(ctx.app)
+      .post('/api/saas/tenant/homework-submissions')
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({
+        id: submitRes.body.submission.id,
+        homeworkId: 'hw_math_1',
+        studentId: 'std_hiya_1',
+        studentCode: 'SCH001-S-2026-1002',
+        studentName: 'Hiya Akhter',
+        studentRoll: '02',
+        className: 'Class 10',
+        section: 'A',
+        textAnswer: '1, 2, 3, 4, 5, 6, 77, 88, 99, 10',
+        status: 'approved',
+        teacherMarks: 7,
+        aiEvaluation: {
+          status: 'evaluated',
+          suggestedMarks: 7,
+          fullMarks: 10,
+          confidence: 0.96,
+          correctAnswers: 7,
+          partialAnswers: 0,
+          incorrectAnswers: 3,
+          feedback: '৭, ৮, ৯-এর পরিবর্তে ৭৭, ৮৮, ৯৯ লেখা হয়েছে।',
+          requiresTeacherReview: false,
+          evaluatedAt: '2026-05-01T10:05:00.000Z',
+        },
+      });
+    expect(evalRes.status).toBe(201);
+    expect(evalRes.body.submissions).toHaveLength(1);
+    expect(evalRes.body.submission.teacherMarks).toBe(7);
+
+    // Reject cross-tenant submission into SCH002
+    const crossRes = await request(ctx.app)
+      .post('/api/saas/tenant/homework-submissions')
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({
+        schoolId: 'SCH002',
+        homeworkId: 'hw_math_1',
+        studentId: 'std_hiya_1',
+        studentName: 'Hiya Akhter',
+        className: 'Class 10',
+        textAnswer: 'Cross tenant attack',
+      });
+    expect(crossRes.status).toBe(403);
+    expect(crossRes.body.code).toBe('CROSS_TENANT_FORBIDDEN');
+
+    // Admin in SCH001 reads homework submissions and sees Hiya's 7/10 score
+    const adminRead = await request(ctx.app)
+      .get('/api/saas/tenant/homework-submissions')
+      .set('Authorization', `Bearer ${schoolAdminToken}`);
+    expect(adminRead.status).toBe(200);
+    expect(adminRead.body.submissions).toHaveLength(1);
+    expect(adminRead.body.submissions[0].teacherMarks).toBe(7);
+  });
+
+  it('23. Super Admin & Master Admin can permanently delete user logins so deleted users cannot log in or use existing tokens, with RBAC & tenant guards', async () => {
+    await createTestSchool(); // SCH001
+    await createTestSchool({
+      schoolName: 'Sylhet Public School',
+      schoolCode: 'SPS02',
+      adminEmail: 'admin@sps.edu.bd',
+    }); // SCH002
+
+    const superAdminToken = ctx.auth.issueTestTokenForEmail('admin@dmhs.edu.bd');
+    const schoolBAdminToken = ctx.auth.issueTestTokenForEmail('admin@sps.edu.bd');
+
+    // Provision admin, teacher, student, and guardian in SCH001
+    const regularAdminRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .send({
+        email: 'head@dmhs.edu.bd',
+        password: 'Password@123',
+        displayName: 'Head Teacher Admin',
+        schoolRole: 'admin',
+      });
+    expect(regularAdminRes.status).toBe(201);
+    const regularAdminToken = ctx.auth.issueTestTokenForEmail('head@dmhs.edu.bd');
+
+    const teacherRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .send({
+        email: 'jahid@dmhs.edu.bd',
+        password: 'Password@123',
+        displayName: 'Jahid Teacher',
+        schoolRole: 'teacher',
+        linkedStaffId: 'st_jahid',
+      });
+    expect(teacherRes.status).toBe(201);
+    const teacherUid = teacherRes.body.user.uid;
+    const teacherToken = ctx.auth.issueTestTokenForEmail('jahid@dmhs.edu.bd');
+
+    const studentRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .send({
+        email: 'hiya@dmhs.edu.bd',
+        password: 'Password@123',
+        displayName: 'Hiya Akhter',
+        schoolRole: 'student',
+        linkedStudentId: 'stu_hiya',
+      });
+    expect(studentRes.status).toBe(201);
+    const studentUid = studentRes.body.user.uid;
+    const studentToken = ctx.auth.issueTestTokenForEmail('hiya@dmhs.edu.bd');
+
+    const guardianRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .send({
+        email: 'habib@dmhs.edu.bd',
+        password: 'Password@123',
+        displayName: 'Habib Guardian',
+        schoolRole: 'guardian',
+        linkedStudentId: 'stu_hiya',
+      });
+    expect(guardianRes.status).toBe(201);
+    const guardianUid = guardianRes.body.user.uid;
+
+    // Non-admin (teacher) CANNOT delete any user
+    const teacherDeleteAttempt = await request(ctx.app)
+      .delete(`/api/saas/users/${studentUid}`)
+      .set('Authorization', `Bearer ${teacherToken}`);
+    expect(teacherDeleteAttempt.status).toBe(403);
+
+    // Self-deletion MUST fail
+    const superAdminRecord = await ctx.db.getSaaSUserByEmail('admin@dmhs.edu.bd');
+    const selfDeleteAttempt = await request(ctx.app)
+      .delete(`/api/saas/users/${superAdminRecord!.uid}`)
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(selfDeleteAttempt.status).toBe(400);
+    expect(selfDeleteAttempt.body.code).toBe('CANNOT_DELETE_SELF');
+
+    // Regular 'admin' CANNOT delete 'super_admin'
+    const adminDeletesSuperAttempt = await request(ctx.app)
+      .delete(`/api/saas/users/${superAdminRecord!.uid}`)
+      .set('Authorization', `Bearer ${regularAdminToken}`);
+    expect(adminDeletesSuperAttempt.status).toBe(403);
+
+    // Cross-tenant School B admin CANNOT delete SCH001 users
+    const crossTenantDelete = await request(ctx.app)
+      .delete(`/api/saas/users/${teacherUid}`)
+      .set('Authorization', `Bearer ${schoolBAdminToken}`);
+    expect(crossTenantDelete.status).toBe(403);
+    expect(crossTenantDelete.body.code).toBe('CROSS_TENANT_FORBIDDEN');
+
+    // Super Admin deletes student, teacher, and guardian accounts
+    const delStudent = await request(ctx.app)
+      .delete(`/api/saas/users/${studentUid}`)
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(delStudent.status).toBe(200);
+    expect(delStudent.body.deletedUid).toBe(studentUid);
+
+    const delTeacher = await request(ctx.app)
+      .delete(`/api/saas/users/${teacherUid}`)
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(delTeacher.status).toBe(200);
+
+    const delGuardian = await request(ctx.app)
+      .delete(`/api/saas/users/${guardianUid}`)
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(delGuardian.status).toBe(200);
+
+    // Deleted users' existing tokens immediately fail & Auth/DB records are completely removed
+    const deletedStudentMe = await request(ctx.app)
+      .get('/api/saas/me')
+      .set('Authorization', `Bearer ${studentToken}`);
+    expect(deletedStudentMe.status).toBe(401);
+
+    const deletedTeacherMe = await request(ctx.app)
+      .get('/api/saas/me')
+      .set('Authorization', `Bearer ${teacherToken}`);
+    expect(deletedTeacherMe.status).toBe(401);
+
+    expect(await ctx.auth.getUserByEmail('hiya@dmhs.edu.bd')).toBeNull();
+    expect(await ctx.auth.getUserByEmail('jahid@dmhs.edu.bd')).toBeNull();
+    expect(await ctx.db.getSaaSUserByUid(studentUid)).toBeNull();
+    expect(await ctx.db.getSaaSUserByUid(guardianUid)).toBeNull();
+
+    // User list no longer contains the deleted accounts
+    const listAfter = await request(ctx.app)
+      .get('/api/saas/users')
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(listAfter.status).toBe(200);
+    const remainingEmails = listAfter.body.users.map((u: any) => u.email);
+    expect(remainingEmails).not.toContain('hiya@dmhs.edu.bd');
+    expect(remainingEmails).not.toContain('jahid@dmhs.edu.bd');
+    expect(remainingEmails).not.toContain('habib@dmhs.edu.bd');
+
+    // Master Admin cannot be deleted
+    const masterSelfDelete = await request(ctx.app)
+      .delete('/api/saas/users/master_uid_1')
+      .set('Authorization', `Bearer ${ctx.masterToken}`);
+    expect(masterSelfDelete.status).toBe(400);
+  });
 });

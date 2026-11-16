@@ -42,12 +42,12 @@ export const PrincipalSignatureDisplay: React.FC<PrincipalSignatureDisplayProps>
   }
 
   if (!fallbackText && !principalName) {
-    return <div className={heightClass} />;
+    return <div className={`${heightClass} mb-0.5`} />;
   }
 
   return (
     <div
-      className={`${heightClass} flex items-end justify-center ${textClassName}`}
+      className={`${heightClass} flex items-end justify-center mb-0.5 ${textClassName}`}
       style={textStyle}
     >
       {principalName || fallbackText}

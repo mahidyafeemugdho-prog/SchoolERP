@@ -464,7 +464,7 @@ export const SettingsView: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs mb-4">
           <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
             <span className="text-slate-400 block text-[10px] uppercase font-bold">Multimodal AI Model</span>
-            <div className="font-black text-indigo-900 text-sm mt-1">gemini-3.8-flash</div>
+            <div className="font-black text-indigo-900 text-sm mt-1">gemini-4-hydrogen</div>
             <p className="text-[10px] text-slate-500 mt-0.5">হস্তলিখিত খাতা ও গাণিতিক নির্ভুলতা যাচাই</p>
           </div>
           <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">

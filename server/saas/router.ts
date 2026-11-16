@@ -311,6 +311,7 @@ export function createSaasRouter(deps: SaasRouterDeps) {
       res.json({
         success: true,
         deletedSchoolId: result.deletedSchoolId,
+        deletedUsersCount: result.deletedUsersCount,
       });
     } catch (err) {
       handleRouteError(res, err);
@@ -609,6 +610,22 @@ export function createSaasRouter(deps: SaasRouterDeps) {
     }
   );
 
+  router.delete(
+    '/users/:uid',
+    mw.requireAuth,
+    mw.requireActiveTenantSubscription,
+    mw.requireRole(['super_admin', 'admin']),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const uid = String(req.params.uid);
+        const result = await tenantService.deleteTenantUser(uid, req.principal!);
+        res.json({ success: true, ...result });
+      } catch (err) {
+        handleRouteError(res, err);
+      }
+    }
+  );
+
   // =========================================================================
   // TENANT-ISOLATED ERP DATA API (VPS Parity + Server-Side Enforcement)
   // =========================================================================
@@ -876,6 +893,225 @@ export function createSaasRouter(deps: SaasRouterDeps) {
           success: true,
           schoolId: targetSchoolId,
           request: newRequest,
+        });
+      } catch (err) {
+        handleRouteError(res, err);
+      }
+    }
+  );
+
+  // =========================================================================
+  // HOMEWORK SUBMISSIONS & AI EVALUATIONS (Student / Guardian / Teacher Sync)
+  // Allows verified students/guardians/staff to persist homework submissions
+  // and AI evaluation marks into schools/{schoolId}/slices/homework_submissions
+  // via Admin SDK, bypassing client Firestore staff-only slice write rules.
+  // =========================================================================
+
+  router.get(
+    '/tenant/homework-submissions',
+    mw.requireAuth,
+    mw.requireActiveTenantSubscription,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const principal = req.principal!;
+        const requestedSchoolId = typeof req.query.schoolId === 'string' ? req.query.schoolId : undefined;
+        if (requestedSchoolId && !principal.isMasterAdmin && requestedSchoolId !== principal.schoolId) {
+          return res.status(403).json({
+            success: false,
+            code: 'CROSS_TENANT_FORBIDDEN',
+            error: 'Cross-school data access is strictly prohibited.',
+          });
+        }
+        const targetSchoolId = principal.isMasterAdmin
+          ? requestedSchoolId || principal.schoolId
+          : principal.schoolId;
+
+        if (!targetSchoolId) {
+          return res.status(403).json({ success: false, code: 'NO_TENANT_CONTEXT', error: 'No tenant context.' });
+        }
+
+        const slices = await deps.db.getTenantSlices(targetSchoolId);
+        const dedicated: any[] = Array.isArray(slices.homework_submissions?.school_erp_homework_submissions)
+          ? slices.homework_submissions.school_erp_homework_submissions
+          : [];
+        const legacy: any[] = Array.isArray(slices.finance?.school_erp_homework_submissions)
+          ? slices.finance.school_erp_homework_submissions
+          : [];
+
+        const merged = new Map<string, any>();
+        for (const item of [...legacy, ...dedicated]) {
+          if (!item || !item.id) continue;
+          const key = item.homeworkId && item.studentId ? `${item.homeworkId}::${item.studentId}` : String(item.id);
+          merged.set(key, item);
+        }
+
+        return res.json({
+          success: true,
+          schoolId: targetSchoolId,
+          submissions: Array.from(merged.values()),
+        });
+      } catch (err) {
+        handleRouteError(res, err);
+      }
+    }
+  );
+
+  router.post(
+    '/tenant/homework-submissions',
+    mw.requireAuth,
+    mw.requireActiveTenantSubscription,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const principal = req.principal!;
+        if (!principal.schoolId && !principal.isMasterAdmin) {
+          return res.status(403).json({ success: false, code: 'NO_TENANT_CONTEXT', error: 'No tenant context.' });
+        }
+        if (!principal.isMasterAdmin && req.body?.schoolId && req.body.schoolId !== principal.schoolId) {
+          return res.status(403).json({
+            success: false,
+            code: 'CROSS_TENANT_FORBIDDEN',
+            error: 'Cannot submit homework to another school tenant.',
+          });
+        }
+
+        const targetSchoolId = principal.isMasterAdmin
+          ? String(req.body?.schoolId || principal.schoolId || '')
+          : principal.schoolId!;
+
+        if (!targetSchoolId) {
+          return res.status(400).json({ success: false, code: 'MISSING_SCHOOL_ID', error: 'schoolId is required.' });
+        }
+
+        const body = req.body || {};
+        const homeworkId = String(body.homeworkId || '').trim();
+        const studentId = String(body.studentId || '').trim();
+        const studentName = String(body.studentName || '').trim();
+        const className = String(body.className || '').trim();
+
+        if (!homeworkId || !studentId || !studentName || !className) {
+          return res.status(400).json({
+            success: false,
+            code: 'MISSING_FIELDS',
+            error: 'homeworkId, studentId, studentName, and className are required.',
+          });
+        }
+
+        const hasText = typeof body.textAnswer === 'string' && body.textAnswer.trim().length > 0;
+        const hasImages = Array.isArray(body.imageUrls) && body.imageUrls.length > 0;
+        if (!hasText && !hasImages) {
+          return res.status(400).json({
+            success: false,
+            code: 'EMPTY_SUBMISSION',
+            error: 'Either textAnswer or at least one image is required.',
+          });
+        }
+
+        const nowIso = nowProvider().toISOString();
+        const slices = await deps.db.getTenantSlices(targetSchoolId);
+        const dedicatedList: any[] = Array.isArray(slices.homework_submissions?.school_erp_homework_submissions)
+          ? slices.homework_submissions.school_erp_homework_submissions
+          : [];
+        const legacyList: any[] = Array.isArray(slices.finance?.school_erp_homework_submissions)
+          ? slices.finance.school_erp_homework_submissions
+          : [];
+
+        const mergedMap = new Map<string, any>();
+        for (const item of [...legacyList, ...dedicatedList]) {
+          if (item && item.id) {
+            const key =
+              item.homeworkId && item.studentId
+                ? `${item.homeworkId}::${item.studentId}`
+                : String(item.id);
+            mergedMap.set(key, item);
+          }
+        }
+
+        const dedupKey = `${homeworkId}::${studentId}`;
+        const existing = mergedMap.get(dedupKey) || Array.from(mergedMap.values()).find((s) => s.id === body.id);
+
+        const submissionId =
+          existing?.id ||
+          (typeof body.id === 'string' && body.id.trim() ? body.id.trim() : `sub_${Date.now()}_${studentId}`);
+
+        const nextVersion = existing
+          ? Math.max(Number(existing.version || 1), Number(body.version || 1)) +
+            (body.aiEvaluation && !existing.aiEvaluation ? 0 : 1)
+          : Number(body.version || 1);
+
+        const allowedStatuses = new Set([
+          'submitted',
+          'ai_evaluated',
+          'approved',
+          'rejected',
+          'resubmission_requested',
+          'review_required',
+          'pending',
+        ]);
+        const status =
+          typeof body.status === 'string' && allowedStatuses.has(body.status) ? body.status : 'submitted';
+
+        const savedSubmission: Record<string, any> = {
+          id: submissionId,
+          homeworkId,
+          studentId,
+          ...(typeof body.studentCode === 'string' && body.studentCode.trim()
+            ? { studentCode: body.studentCode.trim() }
+            : {}),
+          studentName,
+          studentRoll: String(body.studentRoll || '').trim(),
+          className,
+          section: String(body.section || '').trim(),
+          submissionDate:
+            typeof body.submissionDate === 'string' && body.submissionDate.trim()
+              ? body.submissionDate.trim()
+              : nowIso.replace('T', ' ').slice(0, 16),
+          submissionType:
+            typeof body.submissionType === 'string' && body.submissionType.trim()
+              ? body.submissionType.trim()
+              : hasImages
+              ? 'handwritten_image'
+              : 'text',
+          imageUrls: Array.isArray(body.imageUrls)
+            ? body.imageUrls.filter((u: unknown) => typeof u === 'string' && u.length > 0).slice(0, 8)
+            : [],
+          textAnswer: typeof body.textAnswer === 'string' ? body.textAnswer : '',
+          ...(typeof body.attachmentName === 'string' && body.attachmentName.trim()
+            ? { attachmentName: body.attachmentName.trim() }
+            : {}),
+          status,
+          version: nextVersion,
+          ...(body.aiEvaluation && typeof body.aiEvaluation === 'object' ? { aiEvaluation: body.aiEvaluation } : {}),
+          ...(body.teacherMarks !== undefined && body.teacherMarks !== null
+            ? { teacherMarks: Number(body.teacherMarks) }
+            : {}),
+          ...(typeof body.teacherFeedback === 'string' ? { teacherFeedback: body.teacherFeedback } : {}),
+          ...(typeof body.reviewedBy === 'string' ? { reviewedBy: body.reviewedBy } : {}),
+          ...(typeof body.reviewedAt === 'string' ? { reviewedAt: body.reviewedAt } : {}),
+          submittedByUid: principal.uid,
+          submittedByRole: principal.schoolRole || 'student',
+          updatedAt: nowIso,
+        };
+
+        mergedMap.set(dedupKey, savedSubmission);
+        const updatedList = Array.from(mergedMap.values()).sort((a, b) =>
+          String(b.submissionDate || '').localeCompare(String(a.submissionDate || ''))
+        );
+
+        await deps.db.saveTenantSlice(targetSchoolId, 'homework_submissions', {
+          school_erp_homework_submissions: updatedList,
+          __chunked: false,
+          chunkCount: 0,
+          tenantId: targetSchoolId,
+          domain: 'server',
+          deviceId: 'server_homework_submission',
+          updatedAt: nowIso,
+        });
+
+        return res.status(201).json({
+          success: true,
+          schoolId: targetSchoolId,
+          submission: savedSubmission,
+          submissions: updatedList,
         });
       } catch (err) {
         handleRouteError(res, err);

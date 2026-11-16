@@ -96,6 +96,7 @@ import {
   isMatchingScopedId,
 } from '../utils/schoolIdFormatter';
 import { compareStudentsByClassAndRoll } from '../utils/studentSort';
+import { mergeHomeworkSubmissions } from '../utils/homeworkPortal';
 
 const STORAGE_KEYS = {
   SCHOOL: 'school_erp_profile',
@@ -468,12 +469,15 @@ export const StorageService = {
     const current = this.getStaff();
     const updated = current.map((s) => (s.id === member.id ? member : s));
     setStored(STORAGE_KEYS.STAFF, updated);
-    CloudSyncService.pushSliceToCloud('staff');
+    CloudSyncService.pushSliceToCloud('staff', true);
     try {
       setDoc(doc(db, 'staff', member.id), cleanForFirestore(member)).catch((err: any) =>
         handleFirestoreError(err, OperationType.WRITE, `staff/${member.id}`)
       );
     } catch {}
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('school_cloud_data_synced', { detail: { syncTime: new Date().toISOString() } }));
+    }
   },
   deleteStaff(id: string): void {
     const current = this.getStaff();
@@ -2321,50 +2325,44 @@ export const StorageService = {
 
   // Homework Submissions & AI Evaluations
   getHomeworkSubmissions(): HomeworkSubmission[] {
-    const list = getStored<HomeworkSubmission[]>(STORAGE_KEYS.HOMEWORK_SUBMISSIONS, initialHomeworkSubmissions || []);
-    let hasChanges = false;
-    const allHomework = this.getHomework();
-    const enriched = list.map((sub) => {
-      // If submission does not have AI marks or is waiting for approval, immediately auto-evaluate and auto-approve!
-      if (!sub.aiEvaluation || sub.status === 'submitted' || sub.teacherMarks === undefined) {
-        hasChanges = true;
-        const parentHw = allHomework.find((h) => h.id === sub.homeworkId);
-        const fullMarks = parentHw?.fullMarks || 10;
-        const assignedMarks = sub.aiEvaluation?.suggestedMarks ?? (fullMarks >= 10 ? fullMarks - 1 : fullMarks);
-        const feedback = sub.aiEvaluation?.feedback || 'খাতায় সমাধান চমৎকার ও স্পষ্টভাবে সম্পন্ন হয়েছে। গাণিতিক গণনা ও সার্বিক উপস্থাপনা সঠিক।';
-        return {
-          ...sub,
-          status: 'approved' as const,
-          teacherMarks: assignedMarks,
-          teacherFeedback: feedback,
-          reviewedBy: 'Gemini AI Evaluator (স্বয়ংক্রিয়)',
-          reviewedAt: sub.reviewedAt || new Date().toISOString(),
-          aiEvaluation: sub.aiEvaluation || {
-            status: 'evaluated' as const,
-            suggestedMarks: assignedMarks,
-            fullMarks,
-            confidence: 0.95,
-            correctAnswers: assignedMarks,
-            partialAnswers: 0,
-            incorrectAnswers: 0,
-            mathematicalAccuracy: 'গাণিতিক সূত্রাবলী ও সমীকরণের ধাপসমূহ যাচাইকৃত ও নির্ভুল।',
-            spellingQuality: 'হস্তাক্ষর ও ভাষা উপস্থাপন সুন্দর ও স্পষ্ট।',
-            feedback,
-            requiresTeacherReview: false,
-            evaluatedAt: new Date().toISOString(),
-          },
-        };
+    const raw = safeGetLocalStorage(STORAGE_KEYS.HOMEWORK_SUBMISSIONS);
+    if (raw === null) {
+      const list = initialHomeworkSubmissions || [];
+      if (list.length > 0) {
+        safeSetLocalStorage(STORAGE_KEYS.HOMEWORK_SUBMISSIONS, JSON.stringify(list));
       }
-      return sub;
-    });
-
-    if (hasChanges) {
-      safeSetLocalStorage(STORAGE_KEYS.HOMEWORK_SUBMISSIONS, JSON.stringify(enriched));
+      return list;
     }
-    return enriched;
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
   },
-  saveHomeworkSubmissions(submissions: HomeworkSubmission[]): void {
-    setStored(STORAGE_KEYS.HOMEWORK_SUBMISSIONS, submissions);
+  saveHomeworkSubmissions(submissions: HomeworkSubmission[], syncToCloud: boolean = true): void {
+    safeSetLocalStorage(STORAGE_KEYS.HOMEWORK_SUBMISSIONS, JSON.stringify(submissions));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('homework_submissions_updated', { detail: submissions }));
+      window.dispatchEvent(
+        new CustomEvent('school_cloud_data_synced', { detail: { syncTime: new Date().toISOString() } })
+      );
+    }
+    if (syncToCloud) {
+      CloudSyncService.pushSliceToCloud('homework_submissions', true);
+    }
+  },
+  upsertHomeworkSubmissionLocal(submission: HomeworkSubmission): HomeworkSubmission[] {
+    const all = this.getHomeworkSubmissions();
+    const updated = mergeHomeworkSubmissions([submission], all);
+    this.saveHomeworkSubmissions(updated, false);
+    return updated;
+  },
+  replaceHomeworkSubmissionsLocal(submissions: HomeworkSubmission[]): HomeworkSubmission[] {
+    const all = this.getHomeworkSubmissions();
+    const merged = mergeHomeworkSubmissions(submissions, all);
+    this.saveHomeworkSubmissions(merged, false);
+    return merged;
   },
   getSubmissionsForHomework(homeworkId: string): HomeworkSubmission[] {
     const all = this.getHomeworkSubmissions();
@@ -2372,63 +2370,52 @@ export const StorageService = {
   },
   getSubmissionsForStudent(studentId: string): HomeworkSubmission[] {
     const all = this.getHomeworkSubmissions();
-    return all.filter((s) => s.studentId === studentId);
+    return all.filter((s) => s.studentId === studentId || s.studentCode === studentId);
   },
-  saveOrUpdateSubmission(submission: HomeworkSubmission): void {
+  saveOrUpdateSubmission(
+    submission: HomeworkSubmission,
+    options?: { skipCloudPush?: boolean }
+  ): HomeworkSubmission {
     const all = this.getHomeworkSubmissions();
-    const allHomework = this.getHomework();
-    const parentHw = allHomework.find((h) => h.id === submission.homeworkId);
-    const fullMarks = parentHw?.fullMarks || 10;
-    const assignedMarks = submission.aiEvaluation?.suggestedMarks ?? (fullMarks >= 10 ? fullMarks - 1 : fullMarks);
-    const feedback = submission.aiEvaluation?.feedback || 'খাতায় সমাধান চমৎকার ও স্পষ্টভাবে সম্পন্ন হয়েছে। গাণিতিক গণনা ও সার্বিক উপস্থাপনা সঠিক।';
+    const existingIndex = all.findIndex(
+      (s) =>
+        s.id === submission.id ||
+        (s.homeworkId === submission.homeworkId &&
+          (s.studentId === submission.studentId ||
+            (submission.studentCode && s.studentCode === submission.studentCode)))
+    );
 
-    // Auto-approve and auto-assign marks immediately on submit without teacher approval needed
-    const finalizedSubmission: HomeworkSubmission = {
+    const normalizedSubmission: HomeworkSubmission = {
       ...submission,
-      status: 'approved',
-      teacherMarks: submission.teacherMarks !== undefined ? submission.teacherMarks : assignedMarks,
-      teacherFeedback: submission.teacherFeedback || feedback,
-      reviewedBy: submission.reviewedBy || 'Gemini AI Evaluator (স্বয়ংক্রিয়)',
-      reviewedAt: submission.reviewedAt || new Date().toISOString(),
-      aiEvaluation: submission.aiEvaluation || {
-        status: 'evaluated',
-        suggestedMarks: assignedMarks,
-        fullMarks,
-        confidence: 0.95,
-        correctAnswers: assignedMarks,
-        partialAnswers: 0,
-        incorrectAnswers: 0,
-        mathematicalAccuracy: 'গাণিতিক সূত্রাবলী ও সমীকরণের ধাপসমূহ যাচাইকৃত ও নির্ভুল।',
-        spellingQuality: 'হস্তাক্ষর ও ভাষা উপস্থাপন সুন্দর ও স্পষ্ট।',
-        feedback,
-        requiresTeacherReview: false,
-        evaluatedAt: new Date().toISOString(),
-      },
+      status: submission.status || 'submitted',
     };
 
-    const existingIndex = all.findIndex(
-      (s) => s.homeworkId === finalizedSubmission.homeworkId && s.studentId === finalizedSubmission.studentId
-    );
+    let savedRecord: HomeworkSubmission;
     let updated: HomeworkSubmission[];
     if (existingIndex >= 0) {
       const existing = all[existingIndex];
-      const newVersion = (existing.version || 1) + 1;
-      const merged: HomeworkSubmission = {
-        ...finalizedSubmission,
+      const hasNewEval = Boolean(normalizedSubmission.aiEvaluation && !existing.aiEvaluation);
+      const nextVersion = hasNewEval
+        ? Math.max(existing.version || 1, normalizedSubmission.version || 1)
+        : Math.max(existing.version || 1, normalizedSubmission.version || 1) + 1;
+      savedRecord = {
+        ...existing,
+        ...normalizedSubmission,
         id: existing.id,
-        version: newVersion,
+        version: nextVersion,
       };
       updated = [...all];
-      updated[existingIndex] = merged;
+      updated[existingIndex] = savedRecord;
     } else {
-      updated = [finalizedSubmission, ...all];
+      savedRecord = {
+        ...normalizedSubmission,
+        version: normalizedSubmission.version || 1,
+      };
+      updated = [savedRecord, ...all];
     }
-    this.saveHomeworkSubmissions(updated);
-    try {
-      setDoc(doc(db, 'homework_submissions', finalizedSubmission.id), finalizedSubmission).catch((err: any) =>
-        handleFirestoreError(err, OperationType.WRITE, `homework_submissions/${finalizedSubmission.id}`)
-      );
-    } catch {}
+
+    this.saveHomeworkSubmissions(updated, !options?.skipCloudPush);
+    return savedRecord;
   },
   approveSubmission(submissionId: string, teacherMarks: number, teacherFeedback?: string, reviewerName: string = 'Teacher'): HomeworkSubmission | null {
     const all = this.getHomeworkSubmissions();
@@ -2801,7 +2788,7 @@ export const StorageService = {
 
     const cleanCandidate = unstarred || toEnDigits(trimmed);
 
-    // Check against existing staff IDs (supports SCHxxx-EMP-101 and legacy EMP-101)
+    // Tier 1: Exact ID / Scoped Employee ID (Staff)
     const allStaff = this.getStaff();
     const matchedStaff = allStaff.find(
       (st) =>
@@ -2817,40 +2804,71 @@ export const StorageService = {
       };
     }
 
-    // Check against students (by ID, Admission No, Roll, or Phone)
+    // Tier 2: Exact ID / Scoped Student ID / Admission No (Students)
     const allStudents = this.getStudents();
-    const candidateDigits = cleanCandidate.replace(/\D/g, '');
-    const matchedStudent = allStudents.find(
+    const matchedStudentById = allStudents.find(
       (s) =>
         s.id.toLowerCase() === cleanCandidate.toLowerCase() ||
         isMatchingScopedId(s.studentId, cleanCandidate) ||
-        (s.admissionNo && isMatchingScopedId(s.admissionNo, cleanCandidate)) ||
-        toEnDigits(String(s.roll || '')) === cleanCandidate ||
-        String(Number(toEnDigits(String(s.roll || '')))) === cleanCandidate ||
-        toEnDigits(String(s.roll || '')).padStart(2, '0') === cleanCandidate.padStart(2, '0') ||
-        (candidateDigits.length >= 6 && s.guardianPhone && toEnDigits(s.guardianPhone).replace(/\D/g, '').endsWith(candidateDigits)) ||
-        (candidateDigits.length >= 6 && s.fatherPhone && toEnDigits(s.fatherPhone).replace(/\D/g, '').endsWith(candidateDigits))
+        (s.admissionNo && isMatchingScopedId(s.admissionNo, cleanCandidate))
     );
-    if (matchedStudent) {
+    if (matchedStudentById) {
       return {
         targetType: 'student',
-        id: matchedStudent.id,
-        code: this.formatScopedStudentId(matchedStudent.studentId),
-        name: matchedStudent.nameEn,
+        id: matchedStudentById.id,
+        code: this.formatScopedStudentId(matchedStudentById.studentId),
+        name: matchedStudentById.nameEn,
       };
     }
 
-    // Check staff by phone
-    const matchedStaffByPhone = candidateDigits.length >= 6
-      ? allStaff.find((st) => st.phone && toEnDigits(st.phone).replace(/\D/g, '').endsWith(candidateDigits))
-      : undefined;
-    if (matchedStaffByPhone) {
+    // Tier 3: Non-empty strictly-numeric Roll match (prevents "" -> 0 false match)
+    const isNumericCandidate = /^\d+$/.test(cleanCandidate);
+    const matchedStudentByRoll = allStudents.find((s) => {
+      const sRoll = toEnDigits(String(s.roll || '')).trim();
+      if (!sRoll) return false;
+      if (sRoll.toLowerCase() === cleanCandidate.toLowerCase()) return true;
+      if (isNumericCandidate && /^\d+$/.test(sRoll)) {
+        return Number(sRoll) === Number(cleanCandidate);
+      }
+      return false;
+    });
+    if (matchedStudentByRoll) {
       return {
-        targetType: 'staff',
-        id: matchedStaffByPhone.id,
-        code: this.formatScopedEmployeeId(matchedStaffByPhone.employeeId),
-        name: matchedStaffByPhone.nameEn,
+        targetType: 'student',
+        id: matchedStudentByRoll.id,
+        code: this.formatScopedStudentId(matchedStudentByRoll.studentId),
+        name: matchedStudentByRoll.nameEn,
       };
+    }
+
+    // Tier 4: Phone number suffix match (>= 6 digits)
+    const candidateDigits = cleanCandidate.replace(/\D/g, '');
+    if (candidateDigits.length >= 6) {
+      const matchedStudentByPhone = allStudents.find(
+        (s) =>
+          (s.guardianPhone && toEnDigits(s.guardianPhone).replace(/\D/g, '').endsWith(candidateDigits)) ||
+          (s.fatherPhone && toEnDigits(s.fatherPhone).replace(/\D/g, '').endsWith(candidateDigits))
+      );
+      if (matchedStudentByPhone) {
+        return {
+          targetType: 'student',
+          id: matchedStudentByPhone.id,
+          code: this.formatScopedStudentId(matchedStudentByPhone.studentId),
+          name: matchedStudentByPhone.nameEn,
+        };
+      }
+
+      const matchedStaffByPhone = allStaff.find(
+        (st) => st.phone && toEnDigits(st.phone).replace(/\D/g, '').endsWith(candidateDigits)
+      );
+      if (matchedStaffByPhone) {
+        return {
+          targetType: 'staff',
+          id: matchedStaffByPhone.id,
+          code: this.formatScopedEmployeeId(matchedStaffByPhone.employeeId),
+          name: matchedStaffByPhone.nameEn,
+        };
+      }
     }
 
     if (/^(?:[A-Z0-9]+-)?EMP-/i.test(cleanCandidate) || cleanCandidate.toLowerCase().startsWith('st_')) {
@@ -3029,9 +3047,15 @@ export const StorageService = {
         };
       }
 
-      // 2. If existingRecord with inTime exists, but outTime is not yet recorded:
-      if (existingRecord) {
+      // 2. If existingRecord has a recorded Check-In (inTime/inTimestamp), handle Check-Out or duplicate block;
+      //    if existingRecord was manual roll-call WITHOUT check-in time and scanMode !== 'out', proceed to Check-In below!
+      const staffHasPriorCheckIn = Boolean(
+        existingRecord &&
+          ((existingRecord.inTime && existingRecord.inTime !== '—') || existingRecord.inTimestamp)
+      );
+      if (existingRecord && (staffHasPriorCheckIn || scanMode === 'out')) {
         const inMinutes = parseTimeToMins(existingRecord.inTime);
+        const hasValidInTime = Boolean(existingRecord.inTimestamp || inMinutes >= 0);
         const elapsedSinceIn = existingRecord.inTimestamp
           ? Math.floor((nowTimestamp - existingRecord.inTimestamp) / 60000)
           : (inMinutes >= 0 ? Math.max(0, currentMinutes - inMinutes) : 999);
@@ -3069,14 +3093,18 @@ export const StorageService = {
         }
 
         // Subcase 2C: Out-Gate mode OR Auto Mode after cooldown has elapsed -> CHECK-OUT!
-        const stayMinutes = Math.max(1, elapsedSinceIn);
-        const stayDuration = formatDuration(stayMinutes);
-        existingRecord.outTime = timeFormatted;
-        existingRecord.outTimestamp = nowTimestamp;
-        existingRecord.stayDuration = stayDuration;
-        existingRecord.stayMinutes = stayMinutes;
-        existingRecord.checkOutRecordedBy = operatorName;
-        existingRecord.remarks = (existingRecord.remarks ? `${existingRecord.remarks} | ` : '') + `ছুটি/প্রস্থান: ${timeFormatted} (অবস্থান: ${stayDuration})`;
+        const stayMinutes = hasValidInTime ? Math.max(1, elapsedSinceIn) : undefined;
+        const stayDuration = stayMinutes !== undefined ? formatDuration(stayMinutes) : undefined;
+        const updatedRecord: AttendanceRecord = {
+          ...existingRecord,
+          outTime: timeFormatted,
+          outTimestamp: nowTimestamp,
+          ...(stayDuration ? { stayDuration, stayMinutes } : {}),
+          checkOutRecordedBy: operatorName,
+          remarks:
+            (existingRecord.remarks ? `${existingRecord.remarks} | ` : '') +
+            (stayDuration ? `ছুটি/প্রস্থান: ${timeFormatted} (অবস্থান: ${stayDuration})` : `ছুটি/প্রস্থান: ${timeFormatted}`),
+        };
         this.addAttendanceAuditLog(
           {
             id: `audit_stf_out_${Date.now()}`,
@@ -3088,23 +3116,23 @@ export const StorageService = {
             scanType: 'out',
             timestamp: `${dateFormatted} ${timeFormatted}`,
             operatorName,
-            details: `শিক্ষক/স্টাফ প্রস্থান ও ছুটি সফল। আগমন: ${existingRecord.inTime || '—'}, প্রস্থান: ${timeFormatted}, অবস্থান: ${stayDuration}`,
+            details: `শিক্ষক/স্টাফ প্রস্থান ও ছুটি সফল। আগমন: ${existingRecord.inTime || '—'}, প্রস্থান: ${timeFormatted}${stayDuration ? `, অবস্থান: ${stayDuration}` : ''}`,
           },
           false
         );
-        this.saveAttendanceBatch([existingRecord]);
+        this.saveAttendanceBatch([updatedRecord]);
 
         return {
           success: true,
           scanType: 'out',
           staff: staffMember,
           targetType: 'staff',
-          status: existingRecord.status,
-          inTime: existingRecord.inTime,
+          status: updatedRecord.status,
+          inTime: updatedRecord.inTime,
           outTime: timeFormatted,
           scanTime: timeFormatted,
-          record: existingRecord,
-          message: `ছুটি সফল! শিক্ষক/কর্মী: ${staffName} (${staffMember.designation}) - প্রস্থান: ${timeFormatted} (মোট অবস্থান: ${stayDuration})`,
+          record: updatedRecord,
+          message: `ছুটি সফল! শিক্ষক/কর্মী: ${staffName} (${staffMember.designation}) - প্রস্থান: ${timeFormatted}${stayDuration ? ` (মোট অবস্থান: ${stayDuration})` : ''}`,
         };
       }
 
@@ -3386,9 +3414,15 @@ export const StorageService = {
       };
     }
 
-    // 2. If existingRecord with inTime exists, but outTime is not yet recorded:
-    if (existingRecord) {
+    // 2. If existingRecord has a recorded Check-In (inTime/inTimestamp), handle Check-Out or duplicate block;
+    //    if existingRecord was manual roll-call WITHOUT check-in time and scanMode !== 'out', proceed to Check-In below!
+    const studentHasPriorCheckIn = Boolean(
+      existingRecord &&
+        ((existingRecord.inTime && existingRecord.inTime !== '—') || existingRecord.inTimestamp)
+    );
+    if (existingRecord && (studentHasPriorCheckIn || scanMode === 'out')) {
       const inMinutes = parseTimeToMins(existingRecord.inTime);
+      const hasValidInTime = Boolean(existingRecord.inTimestamp || inMinutes >= 0);
       const elapsedSinceIn = existingRecord.inTimestamp
         ? Math.floor((nowTimestamp - existingRecord.inTimestamp) / 60000)
         : (inMinutes >= 0 ? Math.max(0, currentMinutes - inMinutes) : 999);
@@ -3426,8 +3460,8 @@ export const StorageService = {
       }
 
       // Subcase 2C: Out-Gate mode OR Auto Mode after cooldown has elapsed -> CHECK-OUT (স্কুল ছুটি / আর্লি লিভ)!
-      const stayMinutes = Math.max(1, elapsedSinceIn);
-      const stayDuration = formatDuration(stayMinutes);
+      const stayMinutes = hasValidInTime ? Math.max(1, elapsedSinceIn) : undefined;
+      const stayDuration = stayMinutes !== undefined ? formatDuration(stayMinutes) : undefined;
 
       // Determine expected dismissal time for this student's class & shift
       const classSchedule = rules.classSchedules?.[student.className];
@@ -3437,18 +3471,22 @@ export const StorageService = {
         '13:30';
       const targetDismissalMinutes = parseTimeToMins(targetDismissalStr);
       // If student is leaving > 20 minutes before class dismissal OR stayed < 120 minutes (e.g. 30 minutes sick leave)
-      const isEarlyLeave = (targetDismissalMinutes > 0 && currentMinutes < targetDismissalMinutes - 20) || stayMinutes < 120;
+      const isEarlyLeave =
+        (targetDismissalMinutes > 0 && currentMinutes < targetDismissalMinutes - 20) ||
+        (stayMinutes !== undefined && stayMinutes < 120);
 
-      existingRecord.outTime = timeFormatted;
-      existingRecord.outTimestamp = nowTimestamp;
-      existingRecord.stayDuration = stayDuration;
-      existingRecord.stayMinutes = stayMinutes;
-      existingRecord.checkOutRecordedBy = operatorName;
-      existingRecord.remarks =
-        (existingRecord.remarks ? `${existingRecord.remarks} | ` : '') +
-        (isEarlyLeave
-          ? `⚠️ আর্লি লিভ (অসুস্থতা/বিশেষ প্রস্থান): ${timeFormatted} (অবস্থান: ${stayDuration}, নির্ধারিত ছুটি: ${targetDismissalStr})`
-          : `ছুটি/প্রস্থান: ${timeFormatted} (অবস্থান: ${stayDuration})`);
+      const updatedRecord: AttendanceRecord = {
+        ...existingRecord,
+        outTime: timeFormatted,
+        outTimestamp: nowTimestamp,
+        ...(stayDuration ? { stayDuration, stayMinutes } : {}),
+        checkOutRecordedBy: operatorName,
+        remarks:
+          (existingRecord.remarks ? `${existingRecord.remarks} | ` : '') +
+          (isEarlyLeave
+            ? `⚠️ আর্লি লিভ (অসুস্থতা/বিশেষ প্রস্থান): ${timeFormatted} (${stayDuration ? `অবস্থান: ${stayDuration}, ` : ''}নির্ধারিত ছুটি: ${targetDismissalStr})`
+            : `ছুটি/প্রস্থান: ${timeFormatted}${stayDuration ? ` (অবস্থান: ${stayDuration})` : ''}`),
+      };
 
       this.addAttendanceAuditLog(
         {
@@ -3462,26 +3500,26 @@ export const StorageService = {
           timestamp: `${dateFormatted} ${timeFormatted}`,
           operatorName,
           details: isEarlyLeave
-            ? `⚠️ শিক্ষার্থী আর্লি লিভ (অসুস্থতা/বিশেষ প্রস্থান)। আগমন: ${existingRecord.inTime || '—'}, প্রস্থান: ${timeFormatted}, মোট অবস্থান: ${stayDuration} (নির্ধারিত ক্লাস ছুটি: ${targetDismissalStr})`
-            : `শিক্ষার্থী স্কুল ছুটি ও প্রস্থান সফল। আগমন: ${existingRecord.inTime || '—'}, প্রস্থান: ${timeFormatted}, ক্যাম্পাসে অবস্থান: ${stayDuration}`,
+            ? `⚠️ শিক্ষার্থী আর্লি লিভ (অসুস্থতা/বিশেষ প্রস্থান)। আগমন: ${existingRecord.inTime || '—'}, প্রস্থান: ${timeFormatted}${stayDuration ? `, মোট অবস্থান: ${stayDuration}` : ''} (নির্ধারিত ক্লাস ছুটি: ${targetDismissalStr})`
+            : `শিক্ষার্থী স্কুল ছুটি ও প্রস্থান সফল। আগমন: ${existingRecord.inTime || '—'}, প্রস্থান: ${timeFormatted}${stayDuration ? `, ক্যাম্পাসে অবস্থান: ${stayDuration}` : ''}`,
         },
         false
       );
-      this.saveAttendanceBatch([existingRecord]);
+      this.saveAttendanceBatch([updatedRecord]);
 
       return {
         success: true,
         scanType: 'out',
         student,
         targetType: 'student',
-        status: existingRecord.status,
-        inTime: existingRecord.inTime,
+        status: updatedRecord.status,
+        inTime: updatedRecord.inTime,
         outTime: timeFormatted,
         scanTime: timeFormatted,
-        record: existingRecord,
+        record: updatedRecord,
         message: isEarlyLeave
-          ? `⚠️ আর্লি লিভ প্রস্থান সম্পন্ন: ${studentName} (শ্রেণি: ${student.className}, রোল: ${student.roll}) - অসুস্থতা/বিশেষ প্রস্থান। মোট অবস্থান: ${stayDuration} (শ্রেণির ছুটির সময়: ${targetDismissalStr})`
-          : `ছুটি সফল! শিক্ষার্থী: ${studentName} (শ্রেণি: ${student.className}, রোল: ${student.roll}) - প্রস্থান সময়: ${timeFormatted} (মোট অবস্থান: ${stayDuration})`,
+          ? `⚠️ আর্লি লিভ প্রস্থান সম্পন্ন: ${studentName} (শ্রেণি: ${student.className}, রোল: ${student.roll}) - অসুস্থতা/বিশেষ প্রস্থান।${stayDuration ? ` মোট অবস্থান: ${stayDuration}` : ''} (শ্রেণির ছুটির সময়: ${targetDismissalStr})`
+          : `ছুটি সফল! শিক্ষার্থী: ${studentName} (শ্রেণি: ${student.className}, রোল: ${student.roll}) - প্রস্থান সময়: ${timeFormatted}${stayDuration ? ` (মোট অবস্থান: ${stayDuration})` : ''}`,
       };
     }
 

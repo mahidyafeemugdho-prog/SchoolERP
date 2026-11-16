@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import JSZip from 'jszip';
 import { createSaasRouter } from './server/saas/router';
 import {
@@ -247,7 +247,7 @@ app.get('/api/ai/status', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     aiEnabled: hasKey,
-    model: 'gemini-3.8-flash',
+    model: 'gemini-4-hydrogen',
     message: hasKey
       ? 'Gemini AI Multimodal Engine is active and ready.'
       : 'GEMINI_API_KEY is not configured in environment. Please add it to .env or environment secrets.',
@@ -274,47 +274,49 @@ app.post('/api/ai/evaluate-homework', async (req: Request, res: Response) => {
       images = [],
     } = req.body;
 
+    const numericFullMarks = Math.max(1, Number(fullMarks) || 10);
+
     const ai = getGeminiClient();
     if (!ai) {
-      const fallbackEvaluation = {
-        status: 'evaluated' as const,
-        suggestedMarks: Math.round(Number(fullMarks) * 0.9) || 9,
-        fullMarks: Number(fullMarks) || 10,
-        confidence: 0.95,
-        correctAnswers: Math.round(Number(fullMarks) * 0.5) || 5,
+      const unconfiguredEvaluation = {
+        status: 'review_required' as const,
+        suggestedMarks: 0,
+        fullMarks: numericFullMarks,
+        confidence: 0,
+        correctAnswers: 0,
         partialAnswers: 0,
         incorrectAnswers: 0,
         missingAnswers: 0,
-        mathematicalAccuracy: 'গাণিতিক সূত্রাবলী ও সমীকরণের ধাপসমূহ যাচাইকৃত ও সঠিক।',
-        spellingQuality: 'হস্তাক্ষর ও ভাষা উপস্থাপন স্পষ্ট ও মানসম্মত।',
-        feedback: 'খাতায় সমাধান চমৎকার ও স্পষ্টভাবে সম্পন্ন হয়েছে। সবগুলো ধাপ সঠিক।',
-        requiresTeacherReview: false,
-        reviewReason: null,
-        alternativeAnswerAccepted: true,
+        mathematicalAccuracy: 'এআই API Key কনফিগার করা নেই; স্বয়ংক্রিয় যাচাই সম্ভব হয়নি।',
+        spellingQuality: 'শিক্ষকের সরাসরি মূল্যায়ন প্রয়োজন।',
+        feedback: 'সার্ভারে এআই API Key কনফিগার না থাকায় স্বয়ংক্রিয় মূল্যায়ন করা যায়নি। আপনার খাতা জমা হয়েছে; শিক্ষকের রিভিউয়ের পর নম্বর প্রকাশ করা হবে।',
+        requiresTeacherReview: true,
+        reviewReason: 'GEMINI_API_KEY is not configured on the server.',
+        alternativeAnswerAccepted: false,
         evaluatedAt: new Date().toISOString(),
       };
       return res.json({
         success: true,
-        evaluation: fallbackEvaluation,
+        evaluation: unconfiguredEvaluation,
       });
     }
 
     const contents: any[] = [];
 
-    // System prompt and grading instruction
+    // System prompt and strict item-by-item grading instruction
     const promptText = `
-You are an expert Bangladeshi school curriculum evaluator and senior teacher reviewing a student's homework submission.
+You are an expert Bangladeshi school curriculum evaluator and strict, fair examiner reviewing a student's homework submission.
 School Subject: "${subjectName || 'General'}"
 Class: "${className || 'Class 10'}", Section: "${section || 'A'}"
 Student Name: "${studentName || 'Student'}"
 Homework Title: "${homeworkTitle}"
 Homework Instructions: "${description || 'None'}"
 Teacher's Special Guidelines: "${optionalInstructions || 'None'}"
-Full Marks: ${fullMarks}
+Full Marks: ${numericFullMarks}
 
 TEACHER'S REFERENCE ANSWER / SOLUTION:
 """
-${referenceAnswer || 'No specific reference answer provided. Evaluate based on standard textbook syllabus and curriculum knowledge.'}
+${referenceAnswer || 'No specific reference answer provided. Evaluate strictly against the Homework Instructions and standard NCTB textbook curriculum.'}
 """
 
 STUDENT'S SUBMITTED TEXT (if any):
@@ -322,38 +324,27 @@ STUDENT'S SUBMITTED TEXT (if any):
 ${textAnswer || 'See attached handwritten images/pages.'}
 """
 
-CRITICAL EVALUATION RULES:
-1. MULTIMODAL HANDWRITING READING: Read the attached student handwritten page image(s) accurately.
-2. SUBSTANCE OVER EXACT WORDING: NEVER mark an answer incorrect merely because the wording does not verbatim match the reference answer. Accept valid alternative explanations, synonyms, different linguistic phrasing (Bangla or English), and mathematically equivalent solution steps/formulas.
-3. UNCLEAR HANDWRITING: If the handwriting is illegible, excessively blurry, or cannot be verified with confidence, DO NOT fabricate marks. Instead set "requiresTeacherReview": true, set "status": "review_required", lower the confidence (e.g. 0.5 - 0.7), and explain the exact issue in "reviewReason".
-4. ACCURACY ASSESSMENT:
-   - Check step-by-step mathematical calculations or scientific principles.
-   - Check conceptual correctness and spelling/answer presentation.
-   - Count correctAnswers, partialAnswers, incorrectAnswers, and missingAnswers.
-5. MARKS CALCULATION:
-   - Calculate suggestedMarks fairly out of ${fullMarks} based on the student's actual work.
-   - suggestedMarks MUST NOT exceed ${fullMarks} and must be between 0 and ${fullMarks}.
-6. CONSTRUCTIVE FEEDBACK:
-   - Provide constructive, polite, motivating feedback in Bengali (with English key terms where helpful) explaining what was done well and what needs practice.
-
-OUTPUT FORMAT:
-Return ONLY valid, parseable JSON conforming to this schema (do NOT wrap in markdown code blocks if possible, or use standard JSON):
-{
-  "status": "evaluated" | "review_required" | "failed",
-  "suggestedMarks": number,
-  "fullMarks": ${fullMarks},
-  "confidence": number,
-  "correctAnswers": number,
-  "partialAnswers": number,
-  "incorrectAnswers": number,
-  "missingAnswers": number,
-  "mathematicalAccuracy": "string description",
-  "spellingQuality": "string description",
-  "feedback": "বিস্তারিত গঠনমূলক মূল্যায়ন ও দিকনির্দেশনা (Detailed feedback in Bengali)",
-  "requiresTeacherReview": boolean,
-  "reviewReason": "string explanation if review is required or null",
-  "alternativeAnswerAccepted": boolean
-}
+CRITICAL EVALUATION & GRADING RULES (FOLLOW STRICTLY):
+1. ITEM-BY-ITEM VERIFICATION:
+   - Carefully inspect BOTH the student's text answer AND every attached handwritten page image(s).
+   - Break the assignment down into every individual item, number, word, calculation step, or sub-question expected from the Homework Instructions and Reference Answer.
+   - Example: If the homework asks to write numbers "1-10" (10 items total) and Full Marks is 10, each number carries 1 mark. Verify EVERY SINGLE number from 1 to 10 individually.
+   - If 7 items are correct and 3 items are wrong or missing (for example, writing 77, 88, 99 instead of 7, 8, 9), then correctAnswers = 7, incorrectAnswers = 3 (or missingAnswers), and suggestedMarks MUST be 7 out of 10!
+2. STRICT PROPORTIONAL DEDUCTION (NO INFLATED SCORES):
+   - Deduct marks proportionally for EVERY wrong value, calculation error, grammatical/factual error, or omitted item.
+   - NEVER award 9/10 or full/near-full marks when multiple items or steps are incorrect or missing.
+   - If the student submits nothing meaningful or off-topic text/image, award 0 marks.
+   - suggestedMarks MUST be mathematically consistent with correctAnswers, partialAnswers, incorrectAnswers, missingAnswers, and ${numericFullMarks}.
+   - suggestedMarks MUST be between 0 and ${numericFullMarks}.
+3. SUBSTANCE OVER EXACT WORDING:
+   - For descriptive/conceptual questions, accept valid alternative explanations, synonyms, or mathematically equivalent valid steps in Bangla or English.
+4. UNCLEAR HANDWRITING:
+   - If handwritten images are genuinely illegible or too blurry to read, set "requiresTeacherReview": true, "status": "review_required", confidence <= 0.6, and explain the exact issue in "reviewReason". Otherwise set "status": "evaluated" and "requiresTeacherReview": false.
+5. SPECIFIC ITEMIZED FEEDBACK IN BENGALI:
+   - In "feedback", clearly write in Bengali:
+     (a) মোট কয়টি সঠিক ও কয়টি ভুল/বাকি হয়েছে,
+     (b) সুনির্দিষ্টভাবে কোন কোন নম্বর/ধাপ/উত্তর ভুল বা বাদ পড়েছে (list the exact wrong/missing items so the student sees why marks were deducted),
+     (c) সংক্ষিপ্ত সংশোধন নির্দেশনা।
 `;
 
     contents.push({ text: promptText });
@@ -420,20 +411,78 @@ Return ONLY valid, parseable JSON conforming to this schema (do NOT wrap in mark
       }
     }
 
-    // Helper with timeout to prevent hanging requests
-    const callAIWithTimeout = async () => {
+    // Helper with timeout and transient high-demand model fallback
+    const evaluationSchema = {
+      type: Type.OBJECT,
+      properties: {
+        status: { type: Type.STRING, enum: ['evaluated', 'review_required', 'failed'] },
+        suggestedMarks: { type: Type.NUMBER },
+        fullMarks: { type: Type.NUMBER },
+        confidence: { type: Type.NUMBER },
+        correctAnswers: { type: Type.INTEGER },
+        partialAnswers: { type: Type.INTEGER },
+        incorrectAnswers: { type: Type.INTEGER },
+        missingAnswers: { type: Type.INTEGER },
+        mathematicalAccuracy: { type: Type.STRING },
+        spellingQuality: { type: Type.STRING },
+        feedback: { type: Type.STRING },
+        requiresTeacherReview: { type: Type.BOOLEAN },
+        reviewReason: { type: Type.STRING },
+        alternativeAnswerAccepted: { type: Type.BOOLEAN },
+      },
+      required: [
+        'status',
+        'suggestedMarks',
+        'fullMarks',
+        'confidence',
+        'correctAnswers',
+        'partialAnswers',
+        'incorrectAnswers',
+        'missingAnswers',
+        'mathematicalAccuracy',
+        'spellingQuality',
+        'feedback',
+        'requiresTeacherReview',
+        'alternativeAnswerAccepted',
+      ],
+    };
+
+    const callModelWithTimeout = async (modelName: string, timeoutMs: number) => {
       const apiCall = ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: modelName,
         contents,
         config: {
           responseMimeType: 'application/json',
-          temperature: 0.2,
+          responseSchema: evaluationSchema,
         },
       });
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('AI_TIMEOUT')), 10000)
+        setTimeout(() => reject(new Error('AI_TIMEOUT')), timeoutMs)
       );
       return (await Promise.race([apiCall, timeoutPromise])) as any;
+    };
+
+    const callAIWithTimeout = async () => {
+      const candidateModels = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
+      let lastErr: any;
+      for (const modelName of candidateModels) {
+        try {
+          return await callModelWithTimeout(modelName, 18000);
+        } catch (err: any) {
+          lastErr = err;
+          const msg = String(err?.message || err || '');
+          const isTransient =
+            msg.includes('503') ||
+            msg.includes('429') ||
+            msg.includes('UNAVAILABLE') ||
+            msg.includes('AI_TIMEOUT');
+          if (!isTransient) {
+            throw err;
+          }
+          console.warn(`[AI Evaluate] Model ${modelName} unavailable (${msg.slice(0, 120)}), trying next model...`);
+        }
+      }
+      throw lastErr;
     };
 
     let parsedResult: any;
@@ -447,52 +496,33 @@ Return ONLY valid, parseable JSON conforming to this schema (do NOT wrap in mark
         const cleaned = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
         parsedResult = JSON.parse(cleaned);
       }
-    } catch (llmErr) {
-      console.warn('Direct Gemini call timed out or failed, generating intelligent syllabus-grounded evaluation:', llmErr);
-      // Construct high-accuracy grounded fallback evaluation adhering strictly to syllabus
-      const textLen = (textAnswer || '').length;
-      const hasImages = Array.isArray(images) && images.length > 0;
-      const refWords = (referenceAnswer || '').toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
-      const studentWords = (textAnswer || '').toLowerCase();
-      let matchedTerms = 0;
-      refWords.forEach((rw: string) => {
-        if (studentWords.includes(rw)) matchedTerms++;
-      });
-
-      const matchRatio = refWords.length > 0 ? matchedTerms / refWords.length : 0.8;
-      let calculatedSuggestedMarks = Math.round(Number(fullMarks) * (0.6 + matchRatio * 0.35));
-      if (hasImages && calculatedSuggestedMarks < Math.round(Number(fullMarks) * 0.8)) {
-        calculatedSuggestedMarks = Math.round(Number(fullMarks) * 0.85);
-      }
-      calculatedSuggestedMarks = Math.max(1, Math.min(Number(fullMarks), calculatedSuggestedMarks));
-
+    } catch (llmErr: any) {
+      console.warn('Gemini homework evaluation failed or timed out:', llmErr?.message || llmErr);
       parsedResult = {
-        status: 'evaluated',
-        suggestedMarks: calculatedSuggestedMarks,
-        fullMarks: Number(fullMarks),
-        confidence: 0.95,
-        correctAnswers: Math.max(1, Math.round(calculatedSuggestedMarks * 0.4)),
-        partialAnswers: calculatedSuggestedMarks < Number(fullMarks) ? 1 : 0,
+        status: 'review_required',
+        suggestedMarks: 0,
+        fullMarks: numericFullMarks,
+        confidence: 0,
+        correctAnswers: 0,
+        partialAnswers: 0,
         incorrectAnswers: 0,
         missingAnswers: 0,
-        mathematicalAccuracy: 'গাণিতিক সূত্রাবলী ও সমীকরণের ধাপসমূহ যাচাইকৃত ও প্রাসঙ্গিক।',
-        spellingQuality: 'হস্তাক্ষর ও ভাষা উপস্থাপন মানসম্মত।',
-        feedback:
-          calculatedSuggestedMarks >= Number(fullMarks) * 0.8
-            ? 'খুব সুন্দর ও নির্ভুল সমাধান হয়েছে! ধাপগুলো সুস্পষ্ট ও পরিচ্ছন্ন।'
-            : 'ভালো চেষ্টা হয়েছে, তবে শেষ অংশের সমাধানে আরও স্পষ্ট ব্যাখ্যা ও অনুশীলন প্রয়োজন।',
-        requiresTeacherReview: false,
-        reviewReason: null,
-        alternativeAnswerAccepted: true,
+        mathematicalAccuracy: 'এআই মূল্যায়ন সার্ভার থেকে সময়মতো উত্তর পাওয়া যায়নি।',
+        spellingQuality: 'শিক্ষকের সরাসরি যাচাই প্রয়োজন।',
+        feedback: 'এই মুহূর্তে স্বয়ংক্রিয় এআই মূল্যায়ন সম্পন্ন করা যায়নি। আপনার উত্তর জমা হয়েছে এবং শিক্ষকের যাচাইয়ের জন্য অপেক্ষমাণ রয়েছে।',
+        requiresTeacherReview: true,
+        reviewReason: llmErr?.message || 'AI evaluation failed or timed out on server.',
+        alternativeAnswerAccepted: false,
       };
     }
 
-    // Ensure fullMarks matches
-    parsedResult.fullMarks = Number(fullMarks);
-    parsedResult.suggestedMarks = Math.min(
-      Number(fullMarks),
-      Math.max(0, Math.round(Number(parsedResult.suggestedMarks || 0)))
-    );
+    // Ensure fullMarks matches and marks are accurately clamped without inflating
+    parsedResult.fullMarks = numericFullMarks;
+    const rawSuggested = Number(parsedResult.suggestedMarks);
+    const boundedSuggested = Number.isFinite(rawSuggested)
+      ? Math.min(numericFullMarks, Math.max(0, Math.round(rawSuggested * 2) / 2))
+      : 0;
+    parsedResult.suggestedMarks = boundedSuggested;
     parsedResult.evaluatedAt = new Date().toISOString();
 
     return res.json({
@@ -567,15 +597,14 @@ OUTPUT FORMAT: Return ONLY valid JSON:
     let parsed: any;
     try {
       const apiCall = ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-4-hydrogen',
         contents: promptText,
         config: {
           responseMimeType: 'application/json',
-          temperature: 0.3,
         },
       });
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('AI_TIMEOUT')), 10000)
+        setTimeout(() => reject(new Error('AI_TIMEOUT')), 20000)
       );
       const response = (await Promise.race([apiCall, timeoutPromise])) as any;
       const responseText = response.text || '{}';
@@ -825,15 +854,12 @@ Capabilities:
       });
 
       const apiCall = ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-4-hydrogen',
         contents: chatContents,
-        config: {
-          temperature: 0.4,
-        },
       });
 
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('AI_TIMEOUT')), 9000)
+        setTimeout(() => reject(new Error('AI_TIMEOUT')), 20000)
       );
 
       const response = (await Promise.race([apiCall, timeoutPromise])) as any;

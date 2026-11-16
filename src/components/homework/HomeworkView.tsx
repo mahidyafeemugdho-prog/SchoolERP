@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { AIService } from '../../services/aiService';
+import { SaaSApi, isSaaSBackendUnavailableError } from '../../services/saasApi';
 import {
   Homework,
   HomeworkSubmission,
@@ -12,6 +13,7 @@ import {
 } from '../../types';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { compareStudentsByRoll } from '../../utils/studentSort';
+import { getLocalCalendarDateString } from '../../utils/homeworkPortal';
 import {
   FileCheck,
   Search,
@@ -52,7 +54,7 @@ interface HomeworkViewProps {
 }
 
 export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpNonce }) => {
-  const { activeRole, currentUser } = useAuth();
+  const { activeRole, currentUser, saasSession } = useAuth();
   const { language, toBnNumber } = useLanguage();
 
   const resolveAuthorizedHomeworkTab = (requested?: HomeworkSubTab): HomeworkSubTab => {
@@ -82,8 +84,28 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
       setStudents(StorageService.getStudents());
     };
     window.addEventListener('school_cloud_data_synced', handleSync);
-    return () => window.removeEventListener('school_cloud_data_synced', handleSync);
+    window.addEventListener('homework_submissions_updated', handleSync);
+    return () => {
+      window.removeEventListener('school_cloud_data_synced', handleSync);
+      window.removeEventListener('homework_submissions_updated', handleSync);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!saasSession?.school?.schoolId) return;
+    let cancelled = false;
+    SaaSApi.listHomeworkSubmissions()
+      .then((res) => {
+        if (!cancelled && res?.success && Array.isArray(res.submissions)) {
+          StorageService.replaceHomeworkSubmissionsLocal(res.submissions);
+          setSubmissions(StorageService.getHomeworkSubmissions());
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [saasSession?.school?.schoolId]);
   const [selectedClass, setSelectedClass] = useState<string>('Class 10');
   const [selectedSection, setSelectedSection] = useState<string>('A');
   const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<string>('all');
@@ -433,7 +455,7 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
     e.preventDefault();
     if (!submittingHomework) return;
 
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getLocalCalendarDateString();
     if (!canReview && submittingHomework.dueDate && todayStr > submittingHomework.dueDate) {
       alert(
         language === 'bn'
@@ -473,6 +495,7 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
       id: `sub_${Date.now()}_${studentToSubmit.id}`,
       homeworkId: submittingHomework.id,
       studentId: studentToSubmit.id,
+      studentCode: studentToSubmit.studentId,
       studentName: studentToSubmit.nameEn || studentToSubmit.nameBn,
       studentRoll: studentToSubmit.roll,
       className: submittingHomework.className,
@@ -493,18 +516,32 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
       version: 1,
     };
 
-    // Save submission in StorageService
-    StorageService.saveOrUpdateSubmission(newSub);
+    // Save submission locally and persist to SaaS backend
+    StorageService.upsertHomeworkSubmissionLocal(newSub);
+    if (saasSession?.school?.schoolId) {
+      try {
+        const synced = await SaaSApi.submitHomeworkSubmission(newSub);
+        if (synced?.submissions) {
+          StorageService.replaceHomeworkSubmissionsLocal(synced.submissions);
+        }
+      } catch (err) {
+        if (!isSaaSBackendUnavailableError(err)) {
+          console.warn('Server homework submission sync warning:', err);
+        }
+      }
+    } else {
+      StorageService.saveOrUpdateSubmission(newSub);
+    }
     refreshData();
     setIsSubmitting(false);
     setSubmissionSuccessMsg(
       language === 'bn'
-        ? 'হোমওয়ার্ক সফলভাবে জমা দেওয়া হয়েছে এবং এআই তাৎক্ষণিকভাবে নম্বর ও মূল্যায়ন প্রদান করেছে!'
-        : 'Homework submitted successfully and AI graded with marks!'
+        ? 'হোমওয়ার্ক সফলভাবে জমা দেওয়া হয়েছে! এআই মূল্যায়ন সম্পন্ন করছে...'
+        : 'Homework submitted successfully! AI evaluation in progress...'
     );
 
-    // Auto-trigger AI evaluation unconditionally on every submission - no teacher approval needed!
-    handleTriggerAIEvaluation(newSub, submittingHomework);
+    // Auto-trigger AI evaluation unconditionally on every submission
+    await handleTriggerAIEvaluation(newSub, submittingHomework);
   };
 
   // Trigger Gemini AI Homework Evaluation
@@ -533,37 +570,65 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
 
     setEvaluatingSubId(null);
 
-    const fullMarks = parentHw?.fullMarks || 10;
-    const evaluation = (res.success && res.evaluation) ? res.evaluation : {
-      status: 'evaluated' as const,
-      suggestedMarks: Math.round(fullMarks * 0.9),
-      fullMarks,
-      confidence: 0.95,
-      correctAnswers: Math.round(fullMarks * 0.5),
-      partialAnswers: 0,
-      incorrectAnswers: 0,
-      mathematicalAccuracy: 'গাণিতিক সূত্রাবলী ও সমীকরণের ধাপসমূহ যাচাইকৃত ও নির্ভুল।',
-      spellingQuality: 'হস্তাক্ষর ও ভাষা উপস্থাপন সুন্দর ও স্পষ্ট।',
-      feedback: 'খাতায় সমাধান চমৎকার ও স্পষ্টভাবে সম্পন্ন হয়েছে। সবগুলো ধাপ সঠিক।',
-      requiresTeacherReview: false,
-      evaluatedAt: new Date().toISOString(),
-    };
+    if (!res.success || !res.evaluation) {
+      setEvaluatingError(res.message || 'AI evaluation failed. Please review manually.');
+      const reviewSub: HomeworkSubmission = {
+        ...sub,
+        status: 'review_required',
+        teacherFeedback: res.message || 'এআই মূল্যায়ন সম্পন্ন হয়নি; শিক্ষকের যাচাই প্রয়োজন।',
+      };
+      if (saasSession?.school?.schoolId) {
+        try {
+          await SaaSApi.submitHomeworkSubmission(reviewSub);
+        } catch {}
+      }
+      StorageService.saveOrUpdateSubmission(reviewSub, {
+        skipCloudPush: Boolean(saasSession?.school?.schoolId && !canReview),
+      });
+      refreshData();
+      return;
+    }
 
-    const assignedMarks = evaluation.suggestedMarks !== undefined ? evaluation.suggestedMarks : Math.round(fullMarks * 0.9);
-    const updatedSub: HomeworkSubmission = {
-      ...sub,
-      status: 'approved',
-      teacherMarks: assignedMarks,
-      teacherFeedback: evaluation.feedback,
-      reviewedBy: 'Gemini AI Evaluator (স্বয়ংক্রিয়)',
-      reviewedAt: new Date().toISOString(),
-      aiEvaluation: {
-        ...evaluation,
-        suggestedMarks: assignedMarks,
-        requiresTeacherReview: false,
-      },
-    };
-    StorageService.saveOrUpdateSubmission(updatedSub);
+    const evaluation = res.evaluation;
+    const needsReview = Boolean(evaluation.requiresTeacherReview || evaluation.status === 'review_required');
+    const updatedSub: HomeworkSubmission = needsReview
+      ? {
+          ...sub,
+          status: 'review_required',
+          teacherFeedback: evaluation.feedback,
+          aiEvaluation: evaluation,
+        }
+      : {
+          ...sub,
+          status: 'approved',
+          teacherMarks: evaluation.suggestedMarks,
+          teacherFeedback: evaluation.feedback,
+          reviewedBy: 'Gemini AI Evaluator (স্বয়ংক্রিয়)',
+          reviewedAt: new Date().toISOString(),
+          aiEvaluation: {
+            ...evaluation,
+            requiresTeacherReview: false,
+          },
+        };
+
+    if (saasSession?.school?.schoolId) {
+      try {
+        const synced = await SaaSApi.submitHomeworkSubmission(updatedSub);
+        if (synced?.submissions) {
+          StorageService.replaceHomeworkSubmissionsLocal(synced.submissions);
+        }
+      } catch {}
+    }
+    StorageService.saveOrUpdateSubmission(updatedSub, {
+      skipCloudPush: Boolean(saasSession?.school?.schoolId && !canReview),
+    });
+    if (!needsReview) {
+      setSubmissionSuccessMsg(
+        language === 'bn'
+          ? `হোমওয়ার্ক জমা ও এআই মূল্যায়ন সম্পন্ন! প্রাপ্ত নম্বর: ${toBnNumber(evaluation.suggestedMarks)} / ${toBnNumber(parentHw.fullMarks || 10)}`
+          : `Homework submitted and AI graded! Score: ${evaluation.suggestedMarks} / ${parentHw.fullMarks || 10}`
+      );
+    }
     refreshData();
   };
 

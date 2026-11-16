@@ -1246,24 +1246,26 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
               </div>
 
               {/* Institutional Signatures */}
-              <div className="flex justify-between items-end pt-12 mt-6 text-xs text-slate-800">
+              <div className="grid grid-cols-3 items-start gap-4 pt-8 mt-6 text-xs text-slate-800">
                 <div className="text-center">
-                  <div className="border-t-2 border-slate-800 pt-1 w-44 font-bold">
+                  <div className="h-9 mb-0.5" />
+                  <div className="border-t-2 border-slate-800 pt-1 mx-auto w-44 font-bold">
                     শ্রেণি শিক্ষকের স্বাক্ষর
                   </div>
                   <span className="text-[10px] text-slate-500">Class Teacher</span>
                 </div>
                 <div className="text-center">
-                  <div className="border-t-2 border-slate-800 pt-1 w-44 font-bold">
+                  <div className="h-9 mb-0.5" />
+                  <div className="border-t-2 border-slate-800 pt-1 mx-auto w-44 font-bold">
                     রুটিন কমিটির আহ্বায়ক
                   </div>
                   <span className="text-[10px] text-slate-500">Routine In-charge</span>
                 </div>
                 <div className="text-center">
-                  <div className="font-serif italic font-black text-sm text-slate-900 mb-0.5">
+                  <div className="h-9 mb-0.5 flex items-end justify-center font-serif italic font-black text-sm text-slate-900">
                     {school.principalNameEn || school.principalNameBn || 'Principal'}
                   </div>
-                  <div className="border-t-2 border-slate-800 pt-1 w-48 font-bold">
+                  <div className="border-t-2 border-slate-800 pt-1 mx-auto w-48 font-bold">
                     অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল
                   </div>
                   <span className="text-[10px] text-slate-500">Principal Signature & Seal</span>

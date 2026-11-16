@@ -502,6 +502,12 @@ export const SaaSApi = {
       body: JSON.stringify(payload),
     }),
 
+  deleteUser: (uid: string) =>
+    saasFetch<{ success: boolean; deletedUid: string; schoolId: string; email: string }>(
+      `/users/${encodeURIComponent(uid)}`,
+      { method: 'DELETE' }
+    ),
+
   // Master Admin Endpoints
   masterListSchools: (filters?: { search?: string; status?: string }) => {
     const params = new URLSearchParams();
@@ -569,7 +575,7 @@ export const SaaSApi = {
     ),
 
   masterDeleteSchool: (schoolId: string) =>
-    saasFetch<{ success: boolean; deletedSchoolId: string }>(
+    saasFetch<{ success: boolean; deletedSchoolId: string; deletedUsersCount?: number }>(
       `/master/schools/${encodeURIComponent(schoolId)}`,
       { method: 'DELETE' }
     ),
@@ -643,4 +649,17 @@ export const SaaSApi = {
 
   listOnlineFeePayments: () =>
     saasFetch<{ success: boolean; schoolId: string; requests: any[] }>('/tenant/online-payments'),
+
+  // Student / Guardian Homework Submissions (persisted via Admin SDK across devices)
+  submitHomeworkSubmission: (payload: Record<string, any>) =>
+    saasFetch<{ success: boolean; schoolId: string; submission: any; submissions: any[] }>(
+      '/tenant/homework-submissions',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  listHomeworkSubmissions: () =>
+    saasFetch<{ success: boolean; schoolId: string; submissions: any[] }>('/tenant/homework-submissions'),
 };

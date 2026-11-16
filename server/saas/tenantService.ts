@@ -391,7 +391,10 @@ export function createTenantService(deps: TenantServiceDeps) {
       return updated;
     },
 
-    async deleteSchool(schoolId: string, actor: AuthPrincipal): Promise<{ deletedSchoolId: string }> {
+    async deleteSchool(
+      schoolId: string,
+      actor: AuthPrincipal
+    ): Promise<{ deletedSchoolId: string; deletedUsersCount: number }> {
       if (!actor.isMasterAdmin) {
         throw new SaaSServiceError('Only Master Admin can delete schools.', 403, 'MASTER_ADMIN_REQUIRED');
       }
@@ -402,23 +405,38 @@ export function createTenantService(deps: TenantServiceDeps) {
       }
 
       const schoolUsers = await deps.db.listSaaSUsersBySchool(schoolId);
+      const userTargets = new Map<string, { uid: string; email: string }>();
       for (const u of schoolUsers) {
+        if (u.uid) {
+          userTargets.set(u.uid, { uid: u.uid, email: u.email || '' });
+        }
+      }
+      if (school.adminUid && !userTargets.has(school.adminUid)) {
+        userTargets.set(school.adminUid, {
+          uid: school.adminUid,
+          email: school.adminEmail || '',
+        });
+      }
+
+      let deletedUsersCount = 0;
+      for (const target of userTargets.values()) {
         try {
-          const isProtectedMaster = await deps.db.isMasterAdminUidOrEmail(u.uid, u.email);
+          const isProtectedMaster = await deps.db.isMasterAdminUidOrEmail(target.uid, target.email);
           if (!isProtectedMaster) {
             if (deps.auth.deleteUser) {
-              await deps.auth.deleteUser(u.uid);
+              await deps.auth.deleteUser(target.uid);
             } else {
-              await deps.auth.updateUserStatus(u.uid, true);
+              await deps.auth.updateUserStatus(target.uid, true);
             }
+            deletedUsersCount += 1;
           }
         } catch (err) {
-          console.warn(`[SaaS] Failed removing auth user ${u.uid} while deleting school ${schoolId}:`, err);
+          console.warn(`[SaaS] Failed removing auth user ${target.uid} while deleting school ${schoolId}:`, err);
         }
       }
 
       await deps.db.deleteSchool(schoolId);
-      return { deletedSchoolId: schoolId };
+      return { deletedSchoolId: schoolId, deletedUsersCount };
     },
 
     /**
@@ -831,6 +849,63 @@ export function createTenantService(deps: TenantServiceDeps) {
       }
 
       return updatedUser;
+    },
+
+    async deleteTenantUser(
+      targetUid: string,
+      actor: AuthPrincipal
+    ): Promise<{ deletedUid: string; schoolId: string; email: string }> {
+      if (!actor.isMasterAdmin && actor.schoolRole !== 'super_admin' && actor.schoolRole !== 'admin') {
+        throw new SaaSServiceError('Only School Admins or Master Admin can delete user logins.', 403, 'FORBIDDEN');
+      }
+
+      if (actor.uid === targetUid) {
+        throw new SaaSServiceError('You cannot delete your own active login account.', 400, 'CANNOT_DELETE_SELF');
+      }
+
+      let user = await deps.db.getSaaSUserByUid(targetUid);
+      if (!user && !actor.isMasterAdmin && actor.schoolId) {
+        const schoolUsers = await deps.db.listSaaSUsersBySchool(actor.schoolId);
+        user = schoolUsers.find((u) => u.uid === targetUid) || null;
+      }
+
+      if (!user) {
+        throw new SaaSServiceError('User not found.', 404, 'USER_NOT_FOUND');
+      }
+
+      if (!actor.isMasterAdmin && user.schoolId !== actor.schoolId) {
+        throw new SaaSServiceError('Cross-tenant user deletion is strictly prohibited.', 403, 'CROSS_TENANT_FORBIDDEN');
+      }
+
+      if (user.schoolRole === 'master_admin' || (await deps.db.isMasterAdminUidOrEmail(user.uid, user.email))) {
+        throw new SaaSServiceError('Master Admin account cannot be deleted.', 403, 'CANNOT_DELETE_MASTER_ADMIN');
+      }
+
+      if (!actor.isMasterAdmin && actor.schoolRole === 'admin' && user.schoolRole === 'super_admin') {
+        throw new SaaSServiceError('Only Super Admin or Master Admin can delete a Super Admin account.', 403, 'FORBIDDEN');
+      }
+
+      if (deps.auth.deleteUser) {
+        await deps.auth.deleteUser(targetUid);
+      } else {
+        await deps.auth.updateUserStatus(targetUid, true);
+      }
+
+      await deps.db.deleteSaaSUserRecord(targetUid, user.schoolId);
+
+      const school = await deps.db.getSchoolById(user.schoolId);
+      if (school && school.adminUid === targetUid) {
+        await deps.db.updateSchool(user.schoolId, {
+          adminUid: '',
+          updatedAt: getNow().toISOString(),
+        });
+      }
+
+      return {
+        deletedUid: targetUid,
+        schoolId: user.schoolId,
+        email: user.email,
+      };
     },
   };
 }

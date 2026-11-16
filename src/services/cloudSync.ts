@@ -101,13 +101,13 @@ export const DATA_SLICES = {
     'school_erp_custom_class_fee_columns',
     'school_erp_hidden_class_fee_columns',
     'school_erp_homework',
-    'school_erp_homework_submissions',
     'school_erp_books',
     'school_erp_book_issues',
     'school_erp_routes',
     'school_erp_inventory',
     'school_erp_notices',
   ],
+  homework_submissions: ['school_erp_homework_submissions'],
   online_payments: ['school_erp_online_payment_requests'],
 };
 
@@ -390,6 +390,7 @@ export const CloudSyncService = {
       let profileUpdated = false;
       let credsUpdated = false;
       let saturdayUpdated = false;
+      let homeworkSubmissionsUpdated = false;
       let onlinePaymentsUpdated = false;
       let newlyArrivedPendingPayments: any[] = [];
       let strippedAnyDemo = false;
@@ -440,6 +441,14 @@ export const CloudSyncService = {
           ) {
             continue;
           }
+          // Do not overwrite dedicated homework_submissions slice with legacy finance copy once synced
+          if (
+            key === 'school_erp_homework_submissions' &&
+            data.slice === 'finance' &&
+            safeGetLocalStorage('school_erp_sync_homework_submissions')
+          ) {
+            continue;
+          }
 
           let finalValue = value;
           if (Array.isArray(value) && PURGEABLE_DATA_KEYS.includes(key)) {
@@ -469,6 +478,9 @@ export const CloudSyncService = {
               );
               onlinePaymentsUpdated = true;
             }
+            if (key === 'school_erp_homework_submissions') {
+              homeworkSubmissionsUpdated = true;
+            }
             safeSetLocalStorage(key, stringified);
             changed = true;
             if (key === 'school_erp_profile') profileUpdated = true;
@@ -495,6 +507,13 @@ export const CloudSyncService = {
 
       if (changed && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('school_cloud_data_synced', { detail: { syncTime } }));
+        if (homeworkSubmissionsUpdated) {
+          try {
+            const rawSubs = safeGetLocalStorage('school_erp_homework_submissions');
+            const parsedSubs = rawSubs ? JSON.parse(rawSubs) : [];
+            window.dispatchEvent(new CustomEvent('homework_submissions_updated', { detail: parsedSubs }));
+          } catch {}
+        }
         if (onlinePaymentsUpdated) {
           try {
             const rawOnline = safeGetLocalStorage('school_erp_online_payment_requests');

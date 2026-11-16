@@ -381,6 +381,7 @@ export interface DatabaseProviderInterface {
   getSaaSUserByEmail(email: string): Promise<SaaSUserRecord | null>;
   listSaaSUsersBySchool(schoolId: string): Promise<SaaSUserRecord[]>;
   updateSaaSUserRecord(uid: string, updates: Partial<SaaSUserRecord>): Promise<SaaSUserRecord>;
+  deleteSaaSUserRecord(uid: string, schoolIdHint?: string): Promise<void>;
 
   getTenantSlices(schoolId: string): Promise<Record<string, any>>;
   saveTenantSlice(schoolId: string, sliceName: string, data: Record<string, any>): Promise<void>;

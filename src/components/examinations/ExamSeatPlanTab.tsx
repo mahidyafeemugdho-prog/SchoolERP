@@ -1332,14 +1332,16 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
                   </div>
 
                   {/* Signature Footer */}
-                  <div className="flex justify-between items-end pt-10 mt-6 text-[11px] font-bold text-slate-800 border-t border-slate-200">
+                  <div className="grid grid-cols-3 items-start gap-4 pt-6 mt-6 text-[11px] font-bold text-slate-800 border-t border-slate-200">
                     <div className="text-center">
-                      <div className="border-t border-slate-800 pt-1 w-40">
+                      <div className="h-9 mb-0.5" />
+                      <div className="border-t border-slate-800 pt-1 mx-auto w-40">
                         {language === 'bn' ? 'কক্ষ পরিদর্শকের স্বাক্ষর' : 'Invigilator Signature'}
                       </div>
                     </div>
                     <div className="text-center">
-                      <div className="border-t border-slate-800 pt-1 w-44">
+                      <div className="h-9 mb-0.5" />
+                      <div className="border-t border-slate-800 pt-1 mx-auto w-44">
                         {language === 'bn'
                           ? 'পরীক্ষা নিয়ন্ত্রকের স্বাক্ষর'
                           : 'Controller of Examinations'}
@@ -1347,7 +1349,7 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
                     </div>
                     <div className="text-center">
                       <PrincipalSignatureDisplay school={school} fallbackText="" heightClass="h-9" />
-                      <div className="border-t border-slate-800 pt-1 w-44">
+                      <div className="border-t border-slate-800 pt-1 mx-auto w-44">
                         {language === 'bn' ? 'অধ্যক্ষ / প্রধান শিক্ষক' : 'Principal / Head Teacher'}
                       </div>
                     </div>
@@ -1535,15 +1537,16 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
                 </table>
               </div>
 
-              <div className="flex justify-between items-end pt-14 mt-6 text-xs font-bold text-slate-800">
+              <div className="grid grid-cols-2 items-start gap-8 pt-8 mt-6 text-xs font-bold text-slate-800">
                 <div className="text-center">
-                  <div className="border-t-2 border-slate-800 pt-1 w-48">
+                  <div className="h-10 mb-0.5" />
+                  <div className="border-t-2 border-slate-800 pt-1 mx-auto w-48">
                     {language === 'bn' ? 'পরীক্ষা নিয়ন্ত্রকের স্বাক্ষর' : 'Controller of Examinations'}
                   </div>
                 </div>
                 <div className="text-center">
                   <PrincipalSignatureDisplay school={school} fallbackText="" heightClass="h-10" />
-                  <div className="border-t-2 border-slate-800 pt-1 w-52">
+                  <div className="border-t-2 border-slate-800 pt-1 mx-auto w-52">
                     {language === 'bn'
                       ? 'অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল'
                       : 'Principal Signature & Seal'}

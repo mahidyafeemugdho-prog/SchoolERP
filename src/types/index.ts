@@ -574,6 +574,7 @@ export interface HomeworkSubmission {
   id: string;
   homeworkId: string;
   studentId: string;
+  studentCode?: string;
   studentName: string;
   studentRoll: string;
   className: ClassLevel;

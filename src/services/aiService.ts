@@ -20,7 +20,7 @@ export const AIService = {
     return {
       status: 'offline',
       aiEnabled: false,
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
       message: 'Server AI service unavailable or offline.',
     };
   },
