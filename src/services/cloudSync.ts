@@ -168,6 +168,9 @@ let lastPullSucceeded = false;
 let activePullPromise: Promise<boolean> | null = null;
 let lastFocusPullTime = 0;
 let activeCleanup: (() => void) | null = null;
+const ALL_SLICES = Object.keys(DATA_SLICES) as SliceType[];
+const pulledSlices = new Set<SliceType>();
+let pendingDemoCleanupPush = false;
 
 function sanitizeSliceForCloudStorage(sliceData: Record<string, any>): Record<string, any> {
   const sanitized = { ...sliceData };
@@ -306,7 +309,15 @@ export const CloudSyncService = {
    * Automatically clears previous school's cached data from localStorage when switching tenants
    * to prevent cross-school data leakage on shared browsers.
    */
-  async setActiveSaaSTenant(schoolId: string | null, accessAllowed: boolean): Promise<void> {
+  async setActiveSaaSTenant(
+    schoolId: string | null,
+    accessAllowed: boolean,
+    options?: {
+      prioritySlices?: SliceType[];
+      backgroundRemainingPull?: boolean;
+      priorityTimeoutMs?: number;
+    }
+  ): Promise<void> {
     if (syncTimeout) {
       clearTimeout(syncTimeout);
       syncTimeout = null;
@@ -336,14 +347,43 @@ export const CloudSyncService = {
 
     hasCompletedInitialPull = false;
     lastPullSucceeded = false;
+    pulledSlices.clear();
+    pendingDemoCleanupPush = false;
     notifyStatus({
       tenantId: normalizedNew || getDomainTenantId(),
       error: null,
     });
 
     if (saasAccessAllowed) {
-      await this.pullFromCloud();
-      this.reinitialize({ skipInitialPull: true });
+      const priority = options?.prioritySlices;
+      if (priority && priority.length > 0) {
+        const priorityUnique = Array.from(new Set(priority));
+        const remaining = ALL_SLICES.filter((s) => !priorityUnique.includes(s));
+        const timeoutMs = options?.priorityTimeoutMs ?? 4000;
+        const priorityPull = this.pullFromCloud(priorityUnique);
+
+        await Promise.race([
+          priorityPull.catch(() => false),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+        ]);
+
+        if (activeSaaSSchoolId !== normalizedNew || !saasAccessAllowed) {
+          return;
+        }
+
+        this.reinitialize({ skipInitialPull: true });
+
+        if (options?.backgroundRemainingPull !== false && remaining.length > 0) {
+          void (async () => {
+            await priorityPull.catch(() => false);
+            if (activeSaaSSchoolId !== normalizedNew || !saasAccessAllowed) return;
+            await this.pullFromCloud(remaining).catch(() => false);
+          })();
+        }
+      } else {
+        await this.pullFromCloud();
+        this.reinitialize({ skipInitialPull: true });
+      }
     }
   },
 
@@ -356,6 +396,8 @@ export const CloudSyncService = {
     saasAccessAllowed = false;
     hasCompletedInitialPull = false;
     lastPullSucceeded = false;
+    pulledSlices.clear();
+    pendingDemoCleanupPush = false;
     safeRemoveLocalStorage(SAAS_ACTIVE_SCHOOL_KEY);
     clearLocalTenantCache();
     if (activeCleanup) {
@@ -574,14 +616,14 @@ export const CloudSyncService = {
     if (!auth.currentUser || !activeSaaSSchoolId || !saasAccessAllowed) {
       return false;
     }
-    if (activePullPromise) {
+    if (activePullPromise && !pulledSlices.has(sliceName)) {
       await activePullPromise.catch(() => false);
     }
-    if (!hasCompletedInitialPull || !lastPullSucceeded) {
+    if ((!hasCompletedInitialPull || !lastPullSucceeded) && !pulledSlices.has(sliceName)) {
       if (!force) {
         return false;
       }
-      const pulled = await this.pullFromCloud();
+      const pulled = await this.pullFromCloud([sliceName]);
       if (!pulled) {
         return false;
       }
@@ -687,18 +729,24 @@ export const CloudSyncService = {
     }
   },
 
-  async pullFromCloud(): Promise<boolean> {
+  async pullFromCloud(targetSlices?: SliceType[]): Promise<boolean> {
     if (!auth.currentUser || !activeSaaSSchoolId || !saasAccessAllowed) {
       return false;
     }
-    if (activePullPromise) return activePullPromise;
+    if (activePullPromise && !targetSlices) return activePullPromise;
+    if (activePullPromise && targetSlices) {
+      await activePullPromise.catch(() => false);
+    }
 
-    activePullPromise = (async () => {
+    let runPull!: Promise<boolean>;
+    runPull = (async () => {
       const schoolId = activeSaaSSchoolId!;
       notifyStatus({ isSyncing: true, error: null, tenantId: schoolId });
       try {
         let hasAnyCloudData = false;
-        const sliceNames = Object.keys(DATA_SLICES) as SliceType[];
+        const sliceNames = (
+          targetSlices && targetSlices.length > 0 ? targetSlices : ALL_SLICES
+        ) as SliceType[];
 
         const snaps = await Promise.all(
           sliceNames.map(async (sliceName) => {
@@ -708,20 +756,32 @@ export const CloudSyncService = {
           })
         );
 
-        let strippedDemoFromCloud = false;
-        for (const { sliceName, snap } of snaps) {
-          if (snap.exists()) {
-            hasAnyCloudData = true;
+        // Resolve any chunked slices in parallel instead of sequentially
+        const resolvedEntries = await Promise.all(
+          snaps.map(async ({ sliceName, snap }) => {
+            if (!snap.exists()) {
+              return { sliceName, exists: false as const, rawCloudData: null, resolvedData: null };
+            }
             const rawCloudData = snap.data();
             const resolvedData = await resolveSliceDocData(schoolId, sliceName, rawCloudData);
-            this.applySnapshotToLocal(resolvedData, rawCloudData.updatedAt, () => {
-              strippedDemoFromCloud = true;
+            return { sliceName, exists: true as const, rawCloudData, resolvedData };
+          })
+        );
+
+        for (const entry of resolvedEntries) {
+          pulledSlices.add(entry.sliceName);
+          if (entry.exists && entry.resolvedData) {
+            hasAnyCloudData = true;
+            this.applySnapshotToLocal(entry.resolvedData, entry.rawCloudData.updatedAt, () => {
+              pendingDemoCleanupPush = true;
             });
-            safeSetLocalStorage(`school_erp_sync_${sliceName}`, rawCloudData.updatedAt || '');
+            safeSetLocalStorage(`school_erp_sync_${entry.sliceName}`, entry.rawCloudData.updatedAt || '');
           }
         }
 
-        if (!hasAnyCloudData) {
+        const allSlicesCovered = ALL_SLICES.every((s) => pulledSlices.has(s));
+
+        if (!hasAnyCloudData && allSlicesCovered) {
           purgeAllDemoDataFromLocalStorage();
           hasCompletedInitialPull = true;
           lastPullSucceeded = true;
@@ -729,17 +789,22 @@ export const CloudSyncService = {
           return true;
         }
 
-        const localPurgeRes = purgeAllDemoDataFromLocalStorage();
-        hasCompletedInitialPull = true;
-        lastPullSucceeded = true;
+        if (allSlicesCovered) {
+          const localPurgeRes = purgeAllDemoDataFromLocalStorage();
+          hasCompletedInitialPull = true;
+          lastPullSucceeded = true;
 
-        if (strippedDemoFromCloud || localPurgeRes.changed) {
-          await this.pushLocalToCloud(true);
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new CustomEvent('school_cloud_data_synced', { detail: { syncTime: new Date().toISOString() } })
-            );
+          if (pendingDemoCleanupPush || localPurgeRes.changed) {
+            pendingDemoCleanupPush = false;
+            void this.pushLocalToCloud(true).catch(() => {});
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(
+                new CustomEvent('school_cloud_data_synced', { detail: { syncTime: new Date().toISOString() } })
+              );
+            }
           }
+        } else {
+          notifyStatus({ isSyncing: false, hasCloudData: hasAnyCloudData || currentStatus.hasCloudData, tenantId: schoolId, error: null });
         }
 
         return true;
@@ -752,11 +817,14 @@ export const CloudSyncService = {
         });
         return false;
       } finally {
-        activePullPromise = null;
+        if (activePullPromise === runPull) {
+          activePullPromise = null;
+        }
       }
     })();
 
-    return activePullPromise;
+    activePullPromise = runPull;
+    return runPull;
   },
 
   async syncBidirectional(): Promise<boolean> {

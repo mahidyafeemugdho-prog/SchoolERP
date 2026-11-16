@@ -83,7 +83,14 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const loadFromFirestoreFallback = async () => {
-    const order: Record<string, number> = { monthly: 1, quarterly: 2, half_yearly: 3, yearly: 4 };
+    const order: Record<string, number> = {
+      free: 1,
+      monthly: 2,
+      quarterly: 3,
+      half_yearly: 4,
+      yearly: 5,
+      lifetime: 6,
+    };
     let loadedPlans: SaaSPlanConfig[] = DEFAULT_FALLBACK_PLANS;
 
     if (auth.currentUser) {
@@ -94,8 +101,13 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
         return null;
       });
       if (plansSnap && !plansSnap.empty) {
-        loadedPlans = plansSnap.docs
-          .map((d) => d.data() as SaaSPlanConfig)
+        const fsPlans = plansSnap.docs.map((d) => d.data() as SaaSPlanConfig);
+        const existingIds = new Set(fsPlans.map((p) => p.id));
+        const merged = [
+          ...fsPlans,
+          ...DEFAULT_FALLBACK_PLANS.filter((p) => !existingIds.has(p.id)),
+        ];
+        loadedPlans = merged
           .filter((p) => p.isActive !== false)
           .sort((a, b) => (order[a.id] || 99) - (order[b.id] || 99));
       }
@@ -283,6 +295,7 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
     }
   };
 
+  const selectedPlan = plans.find((p) => p.id === selectedPlanId);
   const sub = previewMode && previewSubscription ? previewSubscription : saasSession?.subscription;
   const school = previewMode && previewSchool ? previewSchool : saasSession?.school;
 
@@ -535,6 +548,8 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {plans.map((p) => {
                 const selected = selectedPlanId === p.id;
+                const isLifetime = p.id === 'lifetime' || p.durationDays >= 36500;
+                const isFree = p.priceBdt === 0;
                 return (
                   <button
                     key={p.id}
@@ -546,16 +561,24 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
                         : 'border-slate-200 hover:border-slate-300 bg-white'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-1">
                       <span className="text-xs font-bold text-slate-900">
                         {language === 'bn' ? p.nameBn : p.name}
                       </span>
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
-                        {p.durationDays}d
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 shrink-0">
+                        {isLifetime
+                          ? language === 'bn'
+                            ? 'আজীবন'
+                            : 'Lifetime'
+                          : `${p.durationDays}d`}
                       </span>
                     </div>
                     <div className="text-sm font-black text-blue-700 mt-1">
-                      {formatTaka(p.priceBdt)}
+                      {isFree
+                        ? language === 'bn'
+                          ? `${formatTaka(0)} (ফ্রি)`
+                          : `${formatTaka(0)} (Free)`
+                        : formatTaka(p.priceBdt)}
                     </div>
                   </button>
                 );
@@ -605,7 +628,11 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
                 >
                   {plans.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name} ({p.durationDays} Days) — ৳{p.priceBdt}
+                      {p.name} (
+                      {p.id === 'lifetime' || p.durationDays >= 36500
+                        ? 'Lifetime'
+                        : `${p.durationDays} Days`}
+                      ) — ৳{p.priceBdt}
                     </option>
                   ))}
                 </select>
@@ -617,7 +644,7 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
                 </label>
                 <input
                   type="number"
-                  min={1}
+                  min={selectedPlan?.priceBdt === 0 ? 0 : 1}
                   required
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}

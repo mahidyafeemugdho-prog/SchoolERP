@@ -191,7 +191,7 @@ export class FirebaseAuthProvider implements AuthProviderInterface {
 
     if (app) {
       try {
-        const decoded = await getAuth(app).verifyIdToken(idToken, true);
+        const decoded = await getAuth(app).verifyIdToken(idToken, false);
         const email = (decoded.email || '').toLowerCase();
         const schoolRole = (decoded.schoolRole as SaaSRole) || null;
         const isMaster =
@@ -386,6 +386,9 @@ export class FirebaseAuthProvider implements AuthProviderInterface {
 
 export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
   public readonly providerName = 'firebase-firestore';
+  private plansCache: { data: SubscriptionPlanConfig[]; expiresAt: number } | null = null;
+  private channelsCache: { data: PlatformPaymentChannels; expiresAt: number } | null = null;
+  private static readonly CONFIG_CACHE_TTL_MS = 30_000;
 
   private getDb(): Firestore {
     const { app, config } = getAdminApp();
@@ -423,6 +426,10 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
   }
 
   async getPlans(): Promise<SubscriptionPlanConfig[]> {
+    const nowMs = Date.now();
+    if (this.plansCache && this.plansCache.expiresAt > nowMs) {
+      return this.plansCache.data;
+    }
     const db = this.getDb();
     const snap = await db.collection('subscription_plans').get();
     if (snap.empty) {
@@ -432,11 +439,31 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
         batch.set(db.collection('subscription_plans').doc(plan.id), plan);
       }
       await batch.commit();
+      this.plansCache = { data: DEFAULT_SUBSCRIPTION_PLANS, expiresAt: nowMs + FirebaseDatabaseProvider.CONFIG_CACHE_TTL_MS };
       return DEFAULT_SUBSCRIPTION_PLANS;
     }
     const plans = snap.docs.map((d) => d.data() as SubscriptionPlanConfig);
-    const order: Record<string, number> = { monthly: 1, quarterly: 2, half_yearly: 3, yearly: 4 };
-    return plans.sort((a, b) => (order[a.id] || 99) - (order[b.id] || 99));
+    const existingIds = new Set(plans.map((p) => p.id));
+    const missingPlans = DEFAULT_SUBSCRIPTION_PLANS.filter((p) => !existingIds.has(p.id));
+    if (missingPlans.length > 0) {
+      const batch = db.batch();
+      for (const plan of missingPlans) {
+        batch.set(db.collection('subscription_plans').doc(plan.id), plan);
+        plans.push(plan);
+      }
+      await batch.commit();
+    }
+    const order: Record<string, number> = {
+      free: 1,
+      monthly: 2,
+      quarterly: 3,
+      half_yearly: 4,
+      yearly: 5,
+      lifetime: 6,
+    };
+    const sorted = plans.sort((a, b) => (order[a.id] || 99) - (order[b.id] || 99));
+    this.plansCache = { data: sorted, expiresAt: nowMs + FirebaseDatabaseProvider.CONFIG_CACHE_TTL_MS };
+    return sorted;
   }
 
   async getPlanById(planId: SubscriptionPlanId): Promise<SubscriptionPlanConfig | null> {
@@ -448,20 +475,26 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
     const db = this.getDb();
     const clean = stripUndefined(plan);
     await db.collection('subscription_plans').doc(plan.id).set(clean, { merge: true });
+    this.plansCache = null;
     return clean;
   }
 
   async getPaymentChannels(): Promise<PlatformPaymentChannels> {
+    const nowMs = Date.now();
+    if (this.channelsCache && this.channelsCache.expiresAt > nowMs) {
+      return this.channelsCache.data;
+    }
     const db = this.getDb();
     const defaults = getDefaultPlatformPaymentChannels();
     const snap = await db.collection('saas_platform_config').doc('payment_channels').get();
-    if (!snap.exists) {
-      return defaults;
-    }
-    return {
-      ...defaults,
-      ...(snap.data() as Partial<PlatformPaymentChannels>),
-    };
+    const result = !snap.exists
+      ? defaults
+      : {
+          ...defaults,
+          ...(snap.data() as Partial<PlatformPaymentChannels>),
+        };
+    this.channelsCache = { data: result, expiresAt: nowMs + FirebaseDatabaseProvider.CONFIG_CACHE_TTL_MS };
+    return result;
   }
 
   async savePaymentChannels(channels: PlatformPaymentChannels): Promise<PlatformPaymentChannels> {
@@ -481,6 +514,7 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
       .collection('saas_platform_config')
       .doc('payment_channels')
       .set(cleanPayload, { merge: true });
+    this.channelsCache = { data: cleanPayload, expiresAt: Date.now() + FirebaseDatabaseProvider.CONFIG_CACHE_TTL_MS };
     return cleanPayload;
   }
 

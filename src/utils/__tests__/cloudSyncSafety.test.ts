@@ -146,4 +146,32 @@ describe('CloudSyncService safety against empty-cache overwrites', () => {
     expect(mockState.firestoreDocs.get('schools/SCH001/slices/students').school_erp_students).toHaveLength(2);
     expect(mockState.firestoreDocs.get('schools/SCH001/slices/online_payments')).toBeUndefined();
   });
+
+  it('hydrates prioritySlices immediately and pulls remaining slices in background', async () => {
+    mockState.firestoreDocs.set('schools/SCH001/slices/profile', {
+      school_erp_profile: { id: 'SCH001', nameEn: 'Dhakas School' },
+      updatedAt: '2026-11-16T10:00:00.000Z',
+    });
+    mockState.firestoreDocs.set('schools/SCH001/slices/staff', {
+      school_erp_staff: [{ id: 'st_100', nameEn: 'Amzad Hossain' }],
+      updatedAt: '2026-11-16T10:00:00.000Z',
+    });
+    mockState.firestoreDocs.set('schools/SCH001/slices/students', {
+      school_erp_students: [{ id: 'std_1', nameEn: 'Mahid Yafee', roll: '01' }],
+      updatedAt: '2026-11-16T10:00:00.000Z',
+    });
+
+    await CloudSyncService.setActiveSaaSTenant('SCH001', true, {
+      prioritySlices: ['profile', 'staff'],
+      backgroundRemainingPull: true,
+    });
+
+    // Priority slices are already in localStorage right when setActiveSaaSTenant resolves
+    expect(JSON.parse(mockLocalMap['school_erp_profile'] || '{}').nameEn).toBe('Dhakas School');
+    expect(JSON.parse(mockLocalMap['school_erp_staff'] || '[]')).toHaveLength(1);
+
+    // Background pull completes remaining slices
+    await new Promise((r) => setTimeout(r, 30));
+    expect(JSON.parse(mockLocalMap['school_erp_students'] || '[]')).toHaveLength(1);
+  });
 });

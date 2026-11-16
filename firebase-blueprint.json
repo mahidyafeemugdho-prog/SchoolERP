@@ -24,7 +24,7 @@
       "description": "Platform SaaS subscription plan catalog",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "enum": ["monthly", "quarterly", "half_yearly", "yearly"] },
+        "id": { "type": "string", "enum": ["free", "monthly", "quarterly", "half_yearly", "yearly", "lifetime"] },
         "name": { "type": "string" },
         "durationDays": { "type": "number" },
         "priceBdt": { "type": "number" },

@@ -42,6 +42,8 @@ import {
   Save,
   BellRing,
   ShieldCheck,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import { AccountCredentialsModal } from '../auth/AccountCredentialsModal';
 
@@ -124,6 +126,10 @@ export const MasterAdminSaaSPanel: React.FC = () => {
   const [rejectionReason, setRejectionReason] = useState('');
   const [busyActionId, setBusyActionId] = useState<string | null>(null);
 
+  // Permanent school deletion modal
+  const [deletingSchool, setDeletingSchool] = useState<SaaSSchoolRecord | null>(null);
+  const [deleteConfirmChecked, setDeleteConfirmChecked] = useState(false);
+
   // Plans editing state
   const [editingPlan, setEditingPlan] = useState<SaaSPlanConfig | null>(null);
   const [credsModalSchoolId, setCredsModalSchoolId] = useState<string | null>(null);
@@ -173,20 +179,34 @@ export const MasterAdminSaaSPanel: React.FC = () => {
           .sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''))
       : [];
 
-    const order: Record<string, number> = { monthly: 1, quarterly: 2, half_yearly: 3, yearly: 4 };
+    const order: Record<string, number> = {
+      free: 1,
+      monthly: 2,
+      quarterly: 3,
+      half_yearly: 4,
+      yearly: 5,
+      lifetime: 6,
+    };
     const loadedPlans: SaaSPlanConfig[] =
       plansSnap && !plansSnap.empty
-        ? plansSnap.docs
-            .map((d) => d.data() as SaaSPlanConfig)
-            .sort((a, b) => (order[a.id] || 99) - (order[b.id] || 99))
+        ? (() => {
+            const fsPlans = plansSnap.docs.map((d) => d.data() as SaaSPlanConfig);
+            const existingIds = new Set(fsPlans.map((p) => p.id));
+            return [
+              ...fsPlans,
+              ...DEFAULT_FALLBACK_PLANS.filter((p) => !existingIds.has(p.id)),
+            ].sort((a, b) => (order[a.id] || 99) - (order[b.id] || 99));
+          })()
         : DEFAULT_FALLBACK_PLANS;
 
     const approvedPayments = loadedPayments.filter((p) => p.status === 'approved');
     const planDistribution: Record<string, number> = {
+      free: 0,
       monthly: 0,
       quarterly: 0,
       half_yearly: 0,
       yearly: 0,
+      lifetime: 0,
     };
     for (const s of loadedSchools) {
       const pid = s.subscription?.planId;
@@ -277,10 +297,12 @@ export const MasterAdminSaaSPanel: React.FC = () => {
       suspended: 0,
       pending: 0,
       plans: {
+        free: 0,
         monthly: 0,
         quarterly: 0,
         half_yearly: 0,
         yearly: 0,
+        lifetime: 0,
       } as Record<SaaSPlanId, number>,
     };
 
@@ -361,7 +383,17 @@ export const MasterAdminSaaSPanel: React.FC = () => {
 
   const handlePlanOrStartChange = (planId: SaaSPlanId, startDate: string) => {
     const plan = plans.find((p) => p.id === planId);
-    const days = plan?.durationDays || (planId === 'yearly' ? 365 : planId === 'half_yearly' ? 180 : planId === 'quarterly' ? 90 : 30);
+    const days =
+      plan?.durationDays ||
+      (planId === 'lifetime'
+        ? 36500
+        : planId === 'yearly'
+        ? 365
+        : planId === 'half_yearly'
+        ? 180
+        : planId === 'quarterly'
+        ? 90
+        : 30);
     setNewSchool((prev) => ({
       ...prev,
       initialPlan: planId,
@@ -456,6 +488,47 @@ export const MasterAdminSaaSPanel: React.FC = () => {
       await loadAll();
     } catch (err: any) {
       setFeedback({ type: 'error', message: formatMasterWriteError(err, 'Failed to update school status.') });
+    } finally {
+      setBusyActionId(null);
+    }
+  };
+
+  const handleConfirmDeleteSchool = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deletingSchool || !deleteConfirmChecked) return;
+    const target = deletingSchool;
+    setBusyActionId(target.schoolId);
+    setFeedback(null);
+    try {
+      const res = await SaaSApi.masterDeleteSchool(target.schoolId);
+      if (detailsData?.school.schoolId === target.schoolId) {
+        setDetailsData(null);
+      }
+      if (credsModalSchoolId === target.schoolId) {
+        setCredsModalSchoolId(null);
+      }
+      try {
+        if (localStorage.getItem('school_erp_active_saas_school_id') === target.schoolId) {
+          localStorage.removeItem('school_erp_active_saas_school_id');
+        }
+      } catch {
+        // ignore storage errors
+      }
+      setDeletingSchool(null);
+      setDeleteConfirmChecked(false);
+      setFeedback({
+        type: 'success',
+        message:
+          language === 'bn'
+            ? `${target.schoolName} (${target.schoolId}) এবং এর সকল ডেটা, পেমেন্ট হিস্ট্রি ও ${res.deletedUsersCount ?? 0}টি ইউজার অ্যাকাউন্ট স্থায়ীভাবে ডিলিট করা হয়েছে।`
+            : `Permanently deleted ${target.schoolName} (${target.schoolId}), all tenant data, payment history, and ${res.deletedUsersCount ?? 0} user login account(s).`,
+      });
+      await loadAll();
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        message: formatMasterWriteError(err, 'Failed to permanently delete school.'),
+      });
     } finally {
       setBusyActionId(null);
     }
@@ -655,10 +728,12 @@ export const MasterAdminSaaSPanel: React.FC = () => {
   };
 
   const planLabels: Record<SaaSPlanId, { en: string; bn: string }> = {
+    free: { en: 'Free Plan', bn: 'ফ্রি (Free)' },
     monthly: { en: 'Monthly', bn: 'মাসিক (Monthly)' },
     quarterly: { en: 'Quarterly', bn: '৩ মাস (Quarterly)' },
     half_yearly: { en: 'Half-Yearly', bn: '৬ মাস (Half-Yearly)' },
     yearly: { en: 'Yearly', bn: '১ বছর (Yearly)' },
+    lifetime: { en: 'Lifetime', bn: 'লাইফটাইম (Lifetime)' },
   };
 
   return (
@@ -825,7 +900,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
             >
               {language === 'bn' ? 'সব প্ল্যান' : 'All Plans'} ({schools.length})
             </button>
-            {(['monthly', 'quarterly', 'half_yearly', 'yearly'] as SaaSPlanId[]).map((planKey) => {
+            {(['free', 'monthly', 'quarterly', 'half_yearly', 'yearly', 'lifetime'] as SaaSPlanId[]).map((planKey) => {
               const count = analytics.planDistribution?.[planKey] ?? schoolFilterCounts.plans[planKey] ?? 0;
               const isSelected = activeSubTab === 'schools' && schoolPlanFilter === planKey;
               return (
@@ -1093,7 +1168,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
               >
                 {language === 'bn' ? 'সব প্ল্যান' : 'All Plans'} ({language === 'bn' ? toBnNumber(schools.length) : schools.length})
               </button>
-              {(['monthly', 'quarterly', 'half_yearly', 'yearly'] as SaaSPlanId[]).map((pid) => {
+              {(['free', 'monthly', 'quarterly', 'half_yearly', 'yearly', 'lifetime'] as SaaSPlanId[]).map((pid) => {
                 const count = schoolFilterCounts.plans[pid] || 0;
                 const isActive = schoolPlanFilter === pid;
                 return (
@@ -1190,6 +1265,10 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                               ? 'Access Blocked'
                               : comp?.isExpired
                               ? `Expired ${comp.expiredDays}d ago`
+                              : s.subscription.planId === 'lifetime' || (comp?.remainingDays ?? 0) >= 10000
+                              ? language === 'bn'
+                                ? 'আজীবন (Lifetime)'
+                                : 'Lifetime'
                               : `${comp?.remainingDays ?? 0}d left`}
                           </div>
                         </td>
@@ -1254,6 +1333,23 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                                 <span>Suspend</span>
                               </>
                             )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeletingSchool(s);
+                              setDeleteConfirmChecked(false);
+                            }}
+                            disabled={busyActionId === s.schoolId}
+                            className="p-1.5 px-2 rounded-lg border border-rose-600 bg-rose-600 hover:bg-rose-700 text-white font-semibold inline-flex items-center space-x-1 disabled:opacity-50"
+                            title={
+                              language === 'bn'
+                                ? 'স্কুল এবং এর সব ডেটা ও অ্যাকাউন্ট স্থায়ীভাবে ডিলিট করুন'
+                                : 'Permanently Delete School & All Data'
+                            }
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete</span>
                           </button>
                         </td>
                       </tr>
@@ -1405,44 +1501,73 @@ export const MasterAdminSaaSPanel: React.FC = () => {
 
       {/* TAB 3: SUBSCRIPTION PLANS */}
       {activeSubTab === 'plans' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {plans.map((plan) => (
-            <div
-              key={plan.id}
-              className="p-5 bg-white rounded-2xl border border-slate-200 shadow-2xs flex flex-col justify-between space-y-4"
-            >
-              <div>
-                <div className="flex items-center justify-between">
-                  <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-mono font-bold text-[10px] uppercase">
-                    {plan.id}
-                  </span>
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                      plan.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {plans.map((plan) => {
+            const isFree = plan.id === 'free' || plan.priceBdt === 0;
+            const isLifetime = plan.id === 'lifetime' || plan.durationDays >= 36500;
+            return (
+              <div
+                key={plan.id}
+                className={`p-5 bg-white rounded-2xl border shadow-2xs flex flex-col justify-between space-y-4 ${
+                  isLifetime
+                    ? 'border-indigo-300 ring-1 ring-indigo-100'
+                    : isFree
+                    ? 'border-emerald-300 ring-1 ring-emerald-100'
+                    : 'border-slate-200'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span
+                      className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] uppercase ${
+                        isLifetime
+                          ? 'bg-indigo-50 text-indigo-700'
+                          : isFree
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : 'bg-blue-50 text-blue-700'
+                      }`}
+                    >
+                      {plan.id}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        plan.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
+                      }`}
+                    >
+                      {plan.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                  <h4 className="text-base font-black text-slate-900 mt-2">{plan.name}</h4>
+                  <p className="text-xs text-slate-500">{plan.nameBn}</p>
+                  <div
+                    className={`text-2xl font-black mt-3 ${
+                      isFree ? 'text-emerald-700' : isLifetime ? 'text-indigo-700' : 'text-blue-700'
                     }`}
                   >
-                    {plan.isActive ? 'Active' : 'Inactive'}
-                  </span>
+                    {isFree
+                      ? `${formatTaka(0)} (${language === 'bn' ? 'ফ্রি' : 'Free'})`
+                      : formatTaka(plan.priceBdt)}
+                  </div>
+                  <div className="text-xs font-semibold text-slate-600">
+                    Duration:{' '}
+                    {isLifetime
+                      ? `${language === 'bn' ? 'আজীবন' : 'Lifetime'} (${plan.durationDays} Days)`
+                      : `${plan.durationDays} Days`}
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-2">{plan.description}</p>
                 </div>
-                <h4 className="text-base font-black text-slate-900 mt-2">{plan.name}</h4>
-                <p className="text-xs text-slate-500">{plan.nameBn}</p>
-                <div className="text-2xl font-black text-blue-700 mt-3">{formatTaka(plan.priceBdt)}</div>
-                <div className="text-xs font-semibold text-slate-600">
-                  Duration: {plan.durationDays} Days
-                </div>
-                <p className="text-[11px] text-slate-500 mt-2">{plan.description}</p>
-              </div>
 
-              <button
-                type="button"
-                onClick={() => setEditingPlan({ ...plan })}
-                className="w-full py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-800 flex items-center justify-center space-x-1.5"
-              >
-                <Edit2 className="w-3.5 h-3.5" />
-                <span>Edit Plan</span>
-              </button>
-            </div>
-          ))}
+                <button
+                  type="button"
+                  onClick={() => setEditingPlan({ ...plan })}
+                  className="w-full py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-800 flex items-center justify-center space-x-1.5"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  <span>Edit Plan</span>
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -1826,7 +1951,11 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                   >
                     {plans.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.name} ({p.durationDays}d — ৳{p.priceBdt})
+                        {p.name} (
+                        {p.id === 'lifetime' || p.durationDays >= 36500
+                          ? 'Lifetime'
+                          : `${p.durationDays}d`}{' '}
+                        — ৳{p.priceBdt})
                       </option>
                     ))}
                   </select>
@@ -2026,12 +2155,19 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                 <label className="block font-bold mb-1">Plan Label</label>
                 <select
                   value={extendPlanId}
-                  onChange={(e) => setExtendPlanId(e.target.value as SaaSPlanId)}
+                  onChange={(e) => {
+                    const nextPid = e.target.value as SaaSPlanId;
+                    setExtendPlanId(nextPid);
+                    const chosen = plans.find((p) => p.id === nextPid);
+                    if (chosen) {
+                      setExtendDays(String(chosen.durationDays));
+                    }
+                  }}
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white"
                 >
                   {plans.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.name} ({p.durationDays} days)
+                      {p.name} ({p.id === 'lifetime' || p.durationDays >= 36500 ? 'Lifetime' : `${p.durationDays} days`})
                     </option>
                   ))}
                 </select>
@@ -2294,6 +2430,109 @@ export const MasterAdminSaaSPanel: React.FC = () => {
         >
           <div className="bg-white rounded-2xl p-3 max-w-xl w-full">
             <img src={previewImage} alt="Payment proof" className="w-full max-h-[75vh] object-contain rounded-xl" />
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: PERMANENT DELETE SCHOOL */}
+      {deletingSchool && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-rose-200 text-xs">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 rounded-xl bg-rose-100 text-rose-700">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-rose-900 text-sm">
+                    {language === 'bn' ? 'স্কুল স্থায়ীভাবে ডিলিট করুন' : 'Permanently Delete School'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    {deletingSchool.schoolName} ({deletingSchool.schoolId})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setDeletingSchool(null);
+                  setDeleteConfirmChecked(false);
+                }}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmDeleteSchool} className="mt-4 space-y-3.5">
+              <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 space-y-1.5">
+                <p className="font-bold">
+                  {language === 'bn'
+                    ? 'সতর্কতা: এই স্কুল ডিলিট করলে নিচের সবকিছু চিরতরে মুছে যাবে (আর ফেরত পাওয়া যাবে না):'
+                    : 'Warning: Deleting this school permanently erases all of the following (irreversible):'}
+                </p>
+                <ul className="list-disc list-inside text-[11px] space-y-0.5 text-rose-800">
+                  <li>
+                    {language === 'bn'
+                      ? 'সকল শিক্ষার্থী, শিক্ষক/স্টাফ, হাজিরা, ফি ও পরীক্ষার ডেটা'
+                      : 'All students, staff, attendance, fees, exams & ERP slices'}
+                  </li>
+                  <li>
+                    {language === 'bn'
+                      ? 'সকল পেমেন্ট রিকোয়েস্ট ও সাবস্ক্রিপশন হিস্ট্রি'
+                      : 'All payment requests, TrxID locks & subscription history'}
+                  </li>
+                  <li>
+                    {language === 'bn'
+                      ? `স্কুলের সকল লগইন অ্যাকাউন্ট (${deletingSchool.adminEmail} সহ)`
+                      : `All school Firebase Auth login accounts (including ${deletingSchool.adminEmail})`}
+                  </li>
+                </ul>
+              </div>
+
+              <label className="flex items-start space-x-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={deleteConfirmChecked}
+                  onChange={(e) => setDeleteConfirmChecked(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span className="text-[11px] font-semibold text-slate-800">
+                  {language === 'bn'
+                    ? `আমি নিশ্চিত যে "${deletingSchool.schoolName}" (${deletingSchool.schoolId}) এবং এর সকল ডেটা স্থায়ীভাবে ডিলিট করতে চাই।`
+                    : `I confirm I want to permanently delete "${deletingSchool.schoolName}" (${deletingSchool.schoolId}) and all its data.`}
+                </span>
+              </label>
+
+              <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeletingSchool(null);
+                    setDeleteConfirmChecked(false);
+                  }}
+                  className="px-4 py-2 rounded-xl border border-slate-200 font-semibold text-slate-700"
+                >
+                  {language === 'bn' ? 'বাতিল করুন' : 'Cancel'}
+                </button>
+                <button
+                  type="submit"
+                  disabled={!deleteConfirmChecked || busyActionId === deletingSchool.schoolId}
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold inline-flex items-center space-x-1.5 disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>
+                    {busyActionId === deletingSchool.schoolId
+                      ? language === 'bn'
+                        ? 'ডিলিট হচ্ছে...'
+                        : 'Deleting...'
+                      : language === 'bn'
+                      ? 'স্থায়ীভাবে ডিলিট করুন'
+                      : 'Delete Permanently'}
+                  </span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

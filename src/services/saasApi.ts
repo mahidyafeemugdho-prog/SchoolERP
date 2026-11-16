@@ -1,6 +1,6 @@
 import { getFreshIdToken } from './firebase';
 
-export type SaaSPlanId = 'monthly' | 'quarterly' | 'half_yearly' | 'yearly';
+export type SaaSPlanId = 'free' | 'monthly' | 'quarterly' | 'half_yearly' | 'yearly' | 'lifetime';
 export type SaaSSubscriptionStatus = 'Pending' | 'Active' | 'Expired' | 'Suspended';
 export type SaaSSchoolStatus = 'pending' | 'active' | 'expired' | 'suspended';
 
@@ -165,6 +165,17 @@ export interface SaaSMasterAnalytics {
 
 export const DEFAULT_FALLBACK_PLANS: SaaSPlanConfig[] = [
   {
+    id: 'free',
+    name: 'Free Plan',
+    nameBn: 'ফ্রি প্ল্যান',
+    durationDays: 30,
+    priceBdt: 0,
+    description: 'Free starter plan with full school ERP access',
+    descriptionBn: 'সম্পূর্ণ বিনামূল্যে ৩০ দিনের স্টার্টার স্কুল ইআরপি প্ল্যান',
+    isActive: true,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
     id: 'monthly',
     name: 'Monthly Plan',
     nameBn: 'মাসিক প্ল্যান',
@@ -205,6 +216,17 @@ export const DEFAULT_FALLBACK_PLANS: SaaSPlanConfig[] = [
     priceBdt: 15000,
     description: 'Best value 365-day annual institutional license',
     descriptionBn: '৩৬৫ দিনের সেরা সাশ্রয়ী বাৎসরিক লাইসেন্স',
+    isActive: true,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'lifetime',
+    name: 'Lifetime Plan',
+    nameBn: 'লাইফটাইম প্ল্যান',
+    durationDays: 36500,
+    priceBdt: 25000,
+    description: 'One-time lifetime institutional school ERP license',
+    descriptionBn: 'এককালীন পেমেন্টে আজীবন (লাইফটাইম) স্কুল ইআরপি লাইসেন্স',
     isActive: true,
     updatedAt: '2026-01-01T00:00:00.000Z',
   },

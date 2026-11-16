@@ -17,13 +17,11 @@ import {
   LogOut,
   Building2,
   KeyRound,
-  MessageSquare,
   Smartphone,
   ArrowRight,
   X,
 } from 'lucide-react';
 import { AccountCredentialsModal } from '../auth/AccountCredentialsModal';
-import { WebsiteMessagesModal } from '../auth/WebsiteMessagesModal';
 import { StorageService } from '../../services/storage';
 import { OnlinePaymentRequest } from '../../types';
 import { isTabAuthorized } from '../../utils/permissions';
@@ -43,7 +41,6 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, activeTab, onNa
   const [showRoleMenu, setShowRoleMenu] = useState(false);
   const [showNoticeMenu, setShowNoticeMenu] = useState(false);
   const [showCredsModal, setShowCredsModal] = useState(false);
-  const [showMessagesModal, setShowMessagesModal] = useState(false);
   const [pendingOnlinePayments, setPendingOnlinePayments] = useState<OnlinePaymentRequest[]>(() =>
     StorageService.getOnlinePaymentRequests().filter((r) => r.status === 'pending')
   );
@@ -157,11 +154,6 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, activeTab, onNa
                   {saasSession?.school?.schoolId && (
                     <span className="hidden md:inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono font-bold bg-slate-900 text-white rounded">
                       {saasSession.school.schoolId}
-                    </span>
-                  )}
-                  {schoolProfile.eiin && (
-                    <span className="hidden md:inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 rounded">
-                      EIIN: {schoolProfile.eiin}
                     </span>
                   )}
                 </>
@@ -398,26 +390,6 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, activeTab, onNa
                 </div>
               )}
 
-            {/* Super Admin / Master Admin Website Messages Inbox Button */}
-            {(activeRole === 'super_admin' || activeRole === 'master_admin') && (() => {
-              const unreadCount = StorageService.getWebsiteMessages().filter((m) => !m.isRead).length;
-              return (
-                <button
-                  onClick={() => setShowMessagesModal(true)}
-                  title={language === 'bn' ? 'ওয়েবসাইট থেকে আসা বার্তা ও অনুসন্ধান দেখুন' : 'View inquiries sent from website'}
-                  className="relative flex items-center space-x-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100 transition-colors shadow-2xs"
-                >
-                  <MessageSquare className="w-3.5 h-3.5 text-sky-600" />
-                  <span className="hidden md:inline">{language === 'bn' ? 'বার্তা ইনবক্স' : 'Web Inbox'}</span>
-                  {unreadCount > 0 && (
-                    <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-black bg-rose-600 text-white rounded-full animate-pulse shadow-xs">
-                      {language === 'bn' ? toBnNumber(unreadCount) : unreadCount}
-                    </span>
-                  )}
-                </button>
-              );
-            })()}
-
             {/* Universal User / Password Security Center (Visible for ALL Roles on PC + Mobile) */}
             <button
               onClick={() => setShowCredsModal(true)}
@@ -465,12 +437,6 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, activeTab, onNa
       <AccountCredentialsModal
         isOpen={showCredsModal}
         onClose={() => setShowCredsModal(false)}
-      />
-
-      {/* Super Admin Website Messages Modal */}
-      <WebsiteMessagesModal
-        isOpen={showMessagesModal}
-        onClose={() => setShowMessagesModal(false)}
       />
     </header>
   );

@@ -19,7 +19,23 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+const getCliArg = (flag: string): string | undefined => {
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === flag && args[i + 1]) return args[i + 1];
+    if (args[i].startsWith(`${flag}=`)) return args[i].slice(flag.length + 1);
+  }
+  return undefined;
+};
+
+const cliPort = Number(getCliArg('--port'));
+const envPort = Number(process.env.PORT);
+const PORT =
+  (Number.isFinite(cliPort) && cliPort > 0 ? cliPort : undefined) ??
+  (process.env.NODE_ENV === 'production'
+    ? (Number.isFinite(envPort) && envPort > 0 ? envPort : 3000)
+    : (Number.isFinite(envPort) && envPort > 0 && envPort !== 8080 ? envPort : 3000));
+const HOST = getCliArg('--host') || '0.0.0.0';
 
 // Data directory for cross-device shared configuration
 const DATA_DIR = path.resolve(__dirname, 'data_storage');
@@ -920,6 +936,8 @@ async function startServer() {
         middlewareMode: true,
         allowedHosts: true,
         hmr: isHmrDisabled ? false : { server: httpServer },
+        ws: isHmrDisabled ? false : { server: httpServer },
+        ...(isHmrDisabled ? { watch: null } : {}),
       },
       appType: 'spa',
     });
@@ -931,8 +949,8 @@ async function startServer() {
     });
   }
 
-  httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`AmarSchool ERP Server running on http://0.0.0.0:${PORT}`);
+  httpServer.listen(PORT, HOST, () => {
+    console.log(`AmarSchool ERP Server running on http://${HOST}:${PORT}`);
   });
 }
 

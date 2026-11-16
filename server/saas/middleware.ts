@@ -42,47 +42,44 @@ export function createSaaSMiddleware(
 
       const principal = await auth.verifyIdToken(token);
 
-      // Re-check server-side master admin registry if not already marked by custom claim
+      // Re-check server-side master admin registry & saas_users status in parallel if not already marked by custom claim
       if (!principal.isMasterAdmin) {
-        const isDbMaster = await db.isMasterAdminUidOrEmail(principal.uid, principal.email);
+        const [isDbMaster, userRecord] = await Promise.all([
+          db.isMasterAdminUidOrEmail(principal.uid, principal.email),
+          db.getSaaSUserByUid(principal.uid).catch((dbErr: any) => {
+            if (dbErr instanceof SaaSServiceError && dbErr.code === 'ADMIN_SDK_UNAVAILABLE') {
+              return null;
+            }
+            throw dbErr;
+          }),
+        ]);
+
         if (isDbMaster) {
           principal.isMasterAdmin = true;
           principal.schoolRole = 'master_admin';
-        }
-      }
-
-      // Check user status in saas_users if present (do not block if master admin)
-      if (!principal.isMasterAdmin) {
-        try {
-          const userRecord = await db.getSaaSUserByUid(principal.uid);
-          if (userRecord) {
-            if (userRecord.status === 'disabled') {
-              return res.status(403).json({
-                success: false,
-                code: 'ACCOUNT_DISABLED',
-                error: 'Your user account has been disabled by your administrator.',
-              });
-            }
-            // Enforce server-authoritative schoolId & role from claims or persisted record
-            if (!principal.schoolId && userRecord.schoolId) {
-              principal.schoolId = userRecord.schoolId;
-            }
-            if (!principal.schoolRole && userRecord.schoolRole) {
-              principal.schoolRole = userRecord.schoolRole;
-            }
-            if (userRecord.linkedStaffId) {
-              principal.linkedStaffId = userRecord.linkedStaffId;
-            }
-            if (userRecord.linkedStudentId) {
-              principal.linkedStudentId = userRecord.linkedStudentId;
-            }
-            if (userRecord.phone) {
-              principal.phone = userRecord.phone;
-            }
+        } else if (userRecord) {
+          if (userRecord.status === 'disabled') {
+            return res.status(403).json({
+              success: false,
+              code: 'ACCOUNT_DISABLED',
+              error: 'Your user account has been disabled by your administrator.',
+            });
           }
-        } catch (dbErr: any) {
-          if (!(dbErr instanceof SaaSServiceError && dbErr.code === 'ADMIN_SDK_UNAVAILABLE')) {
-            throw dbErr;
+          // Enforce server-authoritative schoolId & role from claims or persisted record
+          if (!principal.schoolId && userRecord.schoolId) {
+            principal.schoolId = userRecord.schoolId;
+          }
+          if (!principal.schoolRole && userRecord.schoolRole) {
+            principal.schoolRole = userRecord.schoolRole;
+          }
+          if (userRecord.linkedStaffId) {
+            principal.linkedStaffId = userRecord.linkedStaffId;
+          }
+          if (userRecord.linkedStudentId) {
+            principal.linkedStudentId = userRecord.linkedStudentId;
+          }
+          if (userRecord.phone) {
+            principal.phone = userRecord.phone;
           }
         }
       }

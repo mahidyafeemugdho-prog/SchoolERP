@@ -234,27 +234,23 @@ async function buildFirebaseClientFallbackMe(
     email: 'support@smartschoolbd.com',
   };
 
-  let isDbMasterAdmin = false;
-  try {
-    const masterSnap = await getDoc(doc(db, 'master_admins', fbUser.uid));
-    isDbMasterAdmin = masterSnap.exists() && masterSnap.data()?.active !== false;
-  } catch (err: any) {
-    if (err?.code === 'permission-denied') {
-      handleFirestoreError(err, OperationType.GET, `master_admins/${fbUser.uid}`);
-    }
-  }
+  const [masterResult, userResult] = await Promise.all([
+    getDoc(doc(db, 'master_admins', fbUser.uid)).catch((err: any) => {
+      if (err?.code === 'permission-denied') {
+        handleFirestoreError(err, OperationType.GET, `master_admins/${fbUser.uid}`);
+      }
+      return null;
+    }),
+    getDoc(doc(db, 'saas_users', fbUser.uid)).catch((err: any) => {
+      if (err?.code === 'permission-denied') {
+        handleFirestoreError(err, OperationType.GET, `saas_users/${fbUser.uid}`);
+      }
+      return null;
+    }),
+  ]);
 
-  let saasUserDoc: Record<string, any> | null = null;
-  try {
-    const userSnap = await getDoc(doc(db, 'saas_users', fbUser.uid));
-    if (userSnap.exists()) {
-      saasUserDoc = userSnap.data() || null;
-    }
-  } catch (err: any) {
-    if (err?.code === 'permission-denied') {
-      handleFirestoreError(err, OperationType.GET, `saas_users/${fbUser.uid}`);
-    }
-  }
+  const isDbMasterAdmin = Boolean(masterResult?.exists() && masterResult.data()?.active !== false);
+  const saasUserDoc: Record<string, any> | null = userResult?.exists() ? userResult.data() || null : null;
 
   if (saasUserDoc?.status === 'disabled') {
     throw new Error('Your user account has been disabled by your administrator.');
@@ -404,48 +400,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isExplicitLoginInProgressRef = useRef<boolean>(false);
   const isCheckingRedirectRef = useRef<boolean>(true);
 
-  const hydrateFromSaasMe = useCallback(async (fbUser: User): Promise<SaaSMeResponse | null> => {
-    try {
-      lastHydrateErrorRef.current = null;
-      // Ensure latest custom claims are loaded
-      const tokenResult = await fbUser.getIdTokenResult(true);
-      let me: SaaSMeResponse;
+  const hydrateFromSaasMe = useCallback(
+    async (fbUser: User, options?: { forceRefreshToken?: boolean }): Promise<SaaSMeResponse | null> => {
       try {
-        me = await SaaSApi.getMe();
-        if (me?.principal && !me.principal.isMasterAdmin && !me.principal.schoolId) {
-          try {
-            const clientMe = await buildFirebaseClientFallbackMe(fbUser, tokenResult);
-            if (clientMe.principal.isMasterAdmin || clientMe.principal.schoolId) {
-              me = clientMe;
+        lastHydrateErrorRef.current = null;
+        if (options?.forceRefreshToken) {
+          await fbUser.getIdToken(true).catch(() => {});
+        }
+        let me: SaaSMeResponse;
+        try {
+          me = await SaaSApi.getMe();
+          if (me?.principal && !me.principal.isMasterAdmin && !me.principal.schoolId) {
+            try {
+              const tokenResult = await fbUser.getIdTokenResult(false);
+              const clientMe = await buildFirebaseClientFallbackMe(fbUser, tokenResult);
+              if (clientMe.principal.isMasterAdmin || clientMe.principal.schoolId) {
+                me = clientMe;
+              }
+            } catch {
+              // Keep original /me response if fallback check throws
             }
-          } catch {
-            // Keep original /me response if fallback check throws
           }
+        } catch (apiErr: any) {
+          if (!shouldUseClientSaaSFallback(apiErr)) {
+            throw apiErr;
+          }
+          const tokenResult = await fbUser.getIdTokenResult(false);
+          me = await buildFirebaseClientFallbackMe(fbUser, tokenResult);
         }
-      } catch (apiErr: any) {
-        if (!shouldUseClientSaaSFallback(apiErr)) {
-          throw apiErr;
+
+        if (!me || !me.principal) {
+          throw new Error('Unable to verify user role and school tenant session.');
         }
-        me = await buildFirebaseClientFallbackMe(fbUser, tokenResult);
-      }
 
-      if (!me || !me.principal) {
-        throw new Error('Unable to verify user role and school tenant session.');
-      }
+        setSaasSession(me);
 
-      setSaasSession(me);
+        const resolvedRole = mapClaimsRoleToUserRole(
+          me.principal.schoolRole ?? null,
+          Boolean(me.principal.isMasterAdmin)
+        );
 
-      // Pull active tenant slices from Firestore BEFORE matching staff/student records or mounting authenticated views
-      if (me.principal.schoolId) {
-        await CloudSyncService.setActiveSaaSTenant(me.principal.schoolId, me.accessAllowed);
-      } else {
-        await CloudSyncService.setActiveSaaSTenant(null, false);
-      }
-
-      const resolvedRole = mapClaimsRoleToUserRole(
-        me.principal.schoolRole ?? null,
-        Boolean(me.principal.isMasterAdmin)
-      );
+        // Pull only essential bootstrap slices before mounting UI; pull remaining heavy slices in background
+        if (me.principal.schoolId) {
+          const prioritySlices: ('profile' | 'staff' | 'students')[] =
+            resolvedRole === 'student' || resolvedRole === 'guardian' || Boolean(me.principal.linkedStudentId)
+              ? ['profile', 'students']
+              : ['profile', 'staff'];
+          await CloudSyncService.setActiveSaaSTenant(me.principal.schoolId, me.accessAllowed, {
+            prioritySlices,
+            backgroundRemainingPull: true,
+            priorityTimeoutMs: 4000,
+          });
+        } else {
+          await CloudSyncService.setActiveSaaSTenant(null, false);
+        }
 
       if (me.principal.schoolId && me.school) {
         const currentProfile = StorageService.getSchoolProfile();
@@ -548,7 +556,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshSaasSession = useCallback(async (): Promise<SaaSMeResponse | null> => {
     const fbUser = auth.currentUser;
     if (!fbUser) return null;
-    return await hydrateFromSaasMe(fbUser);
+    return await hydrateFromSaasMe(fbUser, { forceRefreshToken: true });
   }, [hydrateFromSaasMe]);
 
   useEffect(() => {
@@ -566,58 +574,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let unsubscribe: (() => void) | null = null;
 
     const initAuth = async () => {
-      isCheckingRedirectRef.current = true;
       const pendingRedirect = isGoogleRedirectPending();
+      isCheckingRedirectRef.current = pendingRedirect;
 
-      try {
-        const redirectPromise = completeGoogleRedirectLogin();
-        const timeoutMs = pendingRedirect ? 5000 : 1800;
-        const redirectCred = await Promise.race([
-          redirectPromise,
-          new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
-        ]);
-        if (redirectCred?.user && isMounted) {
-          markGoogleRedirectPending(false);
-          hasExplicitLoginThisLoadRef.current = true;
-          isExplicitLoginInProgressRef.current = true;
-          const me = await hydrateFromSaasMe(redirectCred.user);
-          if (!me || !me.principal) {
-            hasExplicitLoginThisLoadRef.current = false;
-            await logoutUser().catch(() => {});
-            setIsAuthenticated(false);
-            setRedirectAuthError(
-              lastHydrateErrorRef.current || 'Could not verify SaaS session after Google sign-in.'
-            );
-          } else if (!me.principal.isMasterAdmin && !me.principal.schoolId) {
-            hasExplicitLoginThisLoadRef.current = false;
-            await logoutUser().catch(() => {});
-            setIsAuthenticated(false);
-            setRedirectAuthError(
-              `Signed in as ${me.principal.email}, but this email is not set as Master Admin (MASTER_ADMIN_EMAILS) or assigned to any school yet.`
-            );
-          } else {
-            setFirebaseUser(redirectCred.user);
+      if (pendingRedirect) {
+        try {
+          const redirectCred = await Promise.race([
+            completeGoogleRedirectLogin(),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+          ]);
+          if (redirectCred?.user && isMounted) {
+            markGoogleRedirectPending(false);
+            hasExplicitLoginThisLoadRef.current = true;
+            isExplicitLoginInProgressRef.current = true;
+            const me = await hydrateFromSaasMe(redirectCred.user);
+            if (!me || !me.principal) {
+              hasExplicitLoginThisLoadRef.current = false;
+              await logoutUser().catch(() => {});
+              setIsAuthenticated(false);
+              setRedirectAuthError(
+                lastHydrateErrorRef.current || 'Could not verify SaaS session after Google sign-in.'
+              );
+            } else if (!me.principal.isMasterAdmin && !me.principal.schoolId) {
+              hasExplicitLoginThisLoadRef.current = false;
+              await logoutUser().catch(() => {});
+              setIsAuthenticated(false);
+              setRedirectAuthError(
+                `Signed in as ${me.principal.email}, but this email is not set as Master Admin (MASTER_ADMIN_EMAILS) or assigned to any school yet.`
+              );
+            } else {
+              setFirebaseUser(redirectCred.user);
+            }
+            isExplicitLoginInProgressRef.current = false;
+            if (isMounted) setIsAuthInitializing(false);
+          } else if (isMounted) {
+            markGoogleRedirectPending(false);
           }
-          isExplicitLoginInProgressRef.current = false;
-          if (isMounted) setIsAuthInitializing(false);
-        } else if (pendingRedirect && isMounted) {
+        } catch (err: any) {
           markGoogleRedirectPending(false);
-        }
-      } catch (err: any) {
-        markGoogleRedirectPending(false);
-        if (isMounted) {
-          const code = err?.code || '';
-          const host = typeof window !== 'undefined' ? window.location.hostname : '';
-          if (code === 'auth/unauthorized-domain') {
-            setRedirectAuthError(
-              `ডোমেইনটি Firebase-এ অনুমোদিত নয় (${host})। Firebase Console → Authentication → Settings → Authorized domains-এ "${host}" যোগ করুন।`
-            );
-          } else {
-            setRedirectAuthError(err?.message || 'Google redirect sign-in failed. Please try again.');
+          if (isMounted) {
+            const code = err?.code || '';
+            const host = typeof window !== 'undefined' ? window.location.hostname : '';
+            if (code === 'auth/unauthorized-domain') {
+              setRedirectAuthError(
+                `ডোমেইনটি Firebase-এ অনুমোদিত নয় (${host})। Firebase Console → Authentication → Settings → Authorized domains-এ "${host}" যোগ করুন।`
+              );
+            } else {
+              setRedirectAuthError(err?.message || 'Google redirect sign-in failed. Please try again.');
+            }
           }
+        } finally {
+          isCheckingRedirectRef.current = false;
         }
-      } finally {
-        isCheckingRedirectRef.current = false;
       }
 
       if (!isMounted) return;

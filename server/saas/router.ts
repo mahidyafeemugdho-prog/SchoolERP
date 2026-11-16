@@ -121,7 +121,12 @@ export function createSaasRouter(deps: SaasRouterDeps) {
     try {
       const principal = req.principal!;
       const now = nowProvider();
-      const channels = await loadPaymentChannelsSafe();
+      const [channels, school] = await Promise.all([
+        loadPaymentChannelsSafe(),
+        !principal.isMasterAdmin && principal.schoolId
+          ? deps.db.getSchoolById(principal.schoolId)
+          : Promise.resolve(null),
+      ]);
       const platformSupportContact = {
         phone: channels.supportPhone,
         email: channels.supportEmail,
@@ -151,7 +156,6 @@ export function createSaasRouter(deps: SaasRouterDeps) {
         });
       }
 
-      const school = await deps.db.getSchoolById(principal.schoolId);
       if (!school) {
         return res.status(404).json({
           success: false,
@@ -207,19 +211,41 @@ export function createSaasRouter(deps: SaasRouterDeps) {
       const search = typeof req.query.search === 'string' ? req.query.search : undefined;
       const status = typeof req.query.status === 'string' ? req.query.status : undefined;
 
-      const allSchools = await tenantService.listSchoolsWithState();
-      const filtered = await tenantService.listSchoolsWithState({ search, status });
-      const payments = await deps.db.listPaymentRequests();
+      const [allSchools, payments] = await Promise.all([
+        tenantService.listSchoolsWithState(),
+        deps.db.listPaymentRequests(),
+      ]);
+      const filtered = allSchools.filter((item) => {
+        if (status && status !== 'all') {
+          const eff = item.computedSubscription.effectiveStatus.toLowerCase();
+          if (eff !== status.toLowerCase() && item.status !== status.toLowerCase()) {
+            return false;
+          }
+        }
+        if (search && search.trim()) {
+          const q = search.trim().toLowerCase();
+          const match =
+            item.schoolId.toLowerCase().includes(q) ||
+            item.schoolCode.toLowerCase().includes(q) ||
+            item.schoolName.toLowerCase().includes(q) ||
+            item.adminEmail.toLowerCase().includes(q) ||
+            item.principalName.toLowerCase().includes(q);
+          if (!match) return false;
+        }
+        return true;
+      });
 
       const approvedPayments = payments.filter((p) => p.status === 'approved');
       const totalRevenue = approvedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
       const pendingPaymentsCount = payments.filter((p) => p.status === 'pending').length;
 
       const planDistribution: Record<string, number> = {
+        free: 0,
         monthly: 0,
         quarterly: 0,
         half_yearly: 0,
         yearly: 0,
+        lifetime: 0,
       };
       for (const s of allSchools) {
         const pid = s.subscription.planId;
@@ -347,12 +373,21 @@ export function createSaasRouter(deps: SaasRouterDeps) {
       if (!existing) {
         return res.status(404).json({ success: false, code: 'PLAN_NOT_FOUND', error: 'Plan not found.' });
       }
+      const rawPrice = req.body.priceBdt;
+      const parsedPrice =
+        rawPrice !== undefined && rawPrice !== '' ? Number(rawPrice) : NaN;
+      const rawDuration = req.body.durationDays;
+      const parsedDuration =
+        rawDuration !== undefined && rawDuration !== '' ? Number(rawDuration) : NaN;
       const updated = await deps.db.upsertPlan({
         ...existing,
         name: req.body.name?.trim() || existing.name,
         nameBn: req.body.nameBn?.trim() || existing.nameBn,
-        priceBdt: Number(req.body.priceBdt) >= 0 ? Number(req.body.priceBdt) : existing.priceBdt,
-        durationDays: Number(req.body.durationDays) > 0 ? Number(req.body.durationDays) : existing.durationDays,
+        priceBdt: Number.isFinite(parsedPrice) && parsedPrice >= 0 ? parsedPrice : existing.priceBdt,
+        durationDays:
+          Number.isFinite(parsedDuration) && parsedDuration > 0
+            ? parsedDuration
+            : existing.durationDays,
         description: req.body.description ?? existing.description,
         descriptionBn: req.body.descriptionBn ?? existing.descriptionBn,
         isActive: req.body.isActive !== undefined ? Boolean(req.body.isActive) : existing.isActive,

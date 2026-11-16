@@ -61,7 +61,8 @@ export function createPaymentService(deps: PaymentServiceDeps) {
       }
 
       const amount = Number(input.amount);
-      if (!Number.isFinite(amount) || amount <= 0) {
+      const isFreePlan = Number(plan.priceBdt) === 0;
+      if (!Number.isFinite(amount) || (isFreePlan ? amount < 0 : amount <= 0)) {
         throw new SaaSServiceError('Payment amount must be greater than zero.', 400, 'INVALID_AMOUNT');
       }
 

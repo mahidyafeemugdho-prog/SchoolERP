@@ -1080,4 +1080,143 @@ describe('SmartSchoolBD Multi-Tenant SaaS Platform API & Security Tests', () => 
       .set('Authorization', `Bearer ${ctx.masterToken}`);
     expect(masterSelfDelete.status).toBe(400);
   });
+
+  it('24. Master Admin can permanently delete a school and all its slices, payments, history, and users without affecting other schools', async () => {
+    await createTestSchool(); // SCH001
+    await createTestSchool({
+      schoolName: 'Sylhet Public School',
+      schoolCode: 'SPS02',
+      adminEmail: 'admin@sps.edu.bd',
+    }); // SCH002
+
+    const school1AdminToken = ctx.auth.issueTestTokenForEmail('admin@dmhs.edu.bd');
+    const school2AdminToken = ctx.auth.issueTestTokenForEmail('admin@sps.edu.bd');
+
+    // Populate SCH001 with staff user, ERP slice data, and a payment request
+    const teacherRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${school1AdminToken}`)
+      .send({
+        email: 'teacher.del@dmhs.edu.bd',
+        password: 'Password@123',
+        displayName: 'Teacher To Delete',
+        schoolRole: 'teacher',
+      });
+    expect(teacherRes.status).toBe(201);
+
+    await request(ctx.app)
+      .put('/api/saas/tenant/slices/students')
+      .set('Authorization', `Bearer ${school1AdminToken}`)
+      .send({ school_erp_students: [{ id: 'stu_del', nameEn: 'Student Delete' }] })
+      .expect(200);
+
+    await request(ctx.app)
+      .post('/api/saas/payment-requests')
+      .set('Authorization', `Bearer ${school1AdminToken}`)
+      .send({
+        planId: 'monthly',
+        amount: 1500,
+        paymentMethod: 'bKash',
+        senderNumber: '01711223344',
+        transactionId: 'DEL-TRX-001',
+        paymentDate: '2026-05-01',
+      })
+      .expect(201);
+
+    // Non-Master Admin cannot delete a school
+    const forbiddenDel = await request(ctx.app)
+      .delete('/api/saas/master/schools/SCH001')
+      .set('Authorization', `Bearer ${school1AdminToken}`);
+    expect(forbiddenDel.status).toBe(403);
+
+    // Master Admin permanently deletes SCH001
+    const delRes = await request(ctx.app)
+      .delete('/api/saas/master/schools/SCH001')
+      .set('Authorization', `Bearer ${ctx.masterToken}`);
+    expect(delRes.status).toBe(200);
+    expect(delRes.body.deletedSchoolId).toBe('SCH001');
+    expect(delRes.body.deletedUsersCount).toBe(2);
+
+    // Verify SCH001 school record, slices, payments, history, TrxID lock, and Auth users are all gone
+    expect(await ctx.db.getSchoolById('SCH001')).toBeNull();
+    expect(await ctx.db.getTenantSlices('SCH001')).toEqual({});
+    expect(await ctx.db.listPaymentRequests('SCH001')).toHaveLength(0);
+    expect(await ctx.db.listSubscriptionHistory('SCH001')).toHaveLength(0);
+    expect(await ctx.db.getPaymentByNormalizedTrxId('DEL-TRX-001')).toBeNull();
+    expect(await ctx.auth.getUserByEmail('admin@dmhs.edu.bd')).toBeNull();
+    expect(await ctx.auth.getUserByEmail('teacher.del@dmhs.edu.bd')).toBeNull();
+
+    // SCH002 remains completely intact
+    expect(await ctx.db.getSchoolById('SCH002')).not.toBeNull();
+    const s2Me = await request(ctx.app)
+      .get('/api/saas/me')
+      .set('Authorization', `Bearer ${school2AdminToken}`);
+    expect(s2Me.status).toBe(200);
+    expect(s2Me.body.accessAllowed).toBe(true);
+  });
+
+  it('25. Free Plan and Lifetime Plan are listed, editable, and usable for schools and payments', async () => {
+    const plansRes = await request(ctx.app).get('/api/saas/plans');
+    expect(plansRes.status).toBe(200);
+    const planIds = plansRes.body.plans.map((p: any) => p.id);
+    expect(planIds).toContain('free');
+    expect(planIds).toContain('lifetime');
+
+    const freePlan = plansRes.body.plans.find((p: any) => p.id === 'free');
+    const lifetimePlan = plansRes.body.plans.find((p: any) => p.id === 'lifetime');
+    expect(freePlan.priceBdt).toBe(0);
+    expect(lifetimePlan.durationDays).toBe(36500);
+
+    // Master Admin can create a school on Free Plan and another on Lifetime Plan
+    const freeSchoolRes = await createTestSchool({
+      schoolName: 'Free Starter School',
+      schoolCode: 'FREE01',
+      adminEmail: 'admin@free.edu.bd',
+      initialPlan: 'free',
+    });
+    expect(freeSchoolRes.status).toBe(201);
+    expect(freeSchoolRes.body.school.subscription.planId).toBe('free');
+    expect(freeSchoolRes.body.school.subscription.amountBdt).toBe(0);
+
+    const lifetimeSchoolRes = await createTestSchool({
+      schoolName: 'Lifetime Academy',
+      schoolCode: 'LIFE01',
+      adminEmail: 'admin@life.edu.bd',
+      initialPlan: 'lifetime',
+    });
+    expect(lifetimeSchoolRes.status).toBe(201);
+    expect(lifetimeSchoolRes.body.school.subscription.planId).toBe('lifetime');
+    expect(lifetimeSchoolRes.body.school.computedSubscription.remainingDays).toBeGreaterThanOrEqual(36500);
+
+    // Free school can submit a 0 BDT Free Plan renewal/request, while paid plans still reject 0 BDT
+    const freeAdminToken = ctx.auth.issueTestTokenForEmail('admin@free.edu.bd');
+    const zeroPaidReject = await request(ctx.app)
+      .post('/api/saas/payment-requests')
+      .set('Authorization', `Bearer ${freeAdminToken}`)
+      .send({
+        planId: 'monthly',
+        amount: 0,
+        paymentMethod: 'bKash',
+        senderNumber: '01711223344',
+        transactionId: 'ZERO-PAID-FAIL',
+        paymentDate: '2026-05-01',
+      });
+    expect(zeroPaidReject.status).toBe(400);
+
+    const zeroFreeOk = await request(ctx.app)
+      .post('/api/saas/payment-requests')
+      .set('Authorization', `Bearer ${freeAdminToken}`)
+      .send({
+        planId: 'free',
+        amount: 0,
+        paymentMethod: 'bKash',
+        senderNumber: '01711223344',
+        transactionId: 'FREE-REQ-001',
+        paymentDate: '2026-05-01',
+      });
+    expect(zeroFreeOk.status).toBe(201);
+    expect(zeroFreeOk.body.paymentRequest.planId).toBe('free');
+    expect(zeroFreeOk.body.paymentRequest.amount).toBe(0);
+  });
 });
+
