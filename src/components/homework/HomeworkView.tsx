@@ -14,6 +14,7 @@ import {
 import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { compareStudentsByRoll } from '../../utils/studentSort';
 import { getLocalCalendarDateString } from '../../utils/homeworkPortal';
+import { DigitInput } from '../common/DigitInput';
 import {
   FileCheck,
   Search,
@@ -2388,12 +2389,11 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
                 <div>
                   <label className="block text-slate-700 font-bold mb-1">পূর্ণমান (Full Marks): *</label>
                   <div className="flex items-center gap-1.5">
-                    <input
-                      type="number"
-                      min="1"
-                      max="100"
+                    <DigitInput
+                      min={1}
+                      max={100}
                       value={fullMarks}
-                      onChange={(e) => setFullMarks(Number(e.target.value))}
+                      onValueChange={(val) => setFullMarks(val)}
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white font-bold text-blue-700"
                       required
                     />
@@ -3008,12 +3008,11 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-800 font-bold mb-1">শিক্ষকের চূড়ান্ত নম্বর (Final Marks):</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
+                  <DigitInput
+                    min={0}
+                    max={100}
                     value={teacherEditMarks}
-                    onChange={(e) => setTeacherEditMarks(Number(e.target.value))}
+                    onValueChange={(val) => setTeacherEditMarks(val)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-black text-emerald-700"
                   />
                 </div>

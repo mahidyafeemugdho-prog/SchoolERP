@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { ScheduledFee, ClassLevel } from '../../types';
+import { DigitInput } from '../common/DigitInput';
 import {
   Calendar,
   Plus,
@@ -280,7 +281,7 @@ export const ScheduledFeesTab: React.FC = () => {
                   <input
                     type="text"
                     required
-                    placeholder="যেমন: ১ম মডেল টেস্ট পরীক্ষার ফি, শিক্ষা সফর ফি..."
+                    placeholder="যেমন: 1ম মডেল টেস্ট পরীক্ষার ফি, শিক্ষা সফর ফি..."
                     value={titleBn}
                     onChange={(e) => setTitleBn(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-bold text-slate-900"
@@ -323,12 +324,11 @@ export const ScheduledFeesTab: React.FC = () => {
                   <label className="block font-semibold mb-1 text-slate-700">
                     {language === 'bn' ? 'টাকার পরিমাণ (৳) *' : 'Fee Amount (৳) *'}
                   </label>
-                  <input
-                    type="number"
+                  <DigitInput
                     required
                     min={0}
                     value={amount}
-                    onChange={(e) => setAmount(Number(e.target.value))}
+                    onValueChange={(val) => setAmount(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-bold text-blue-900 text-sm"
                   />
                 </div>

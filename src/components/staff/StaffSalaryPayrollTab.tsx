@@ -9,6 +9,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useSchool } from '../../context/SchoolContext';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
+import { DigitInput } from '../common/DigitInput';
 import {
   PAYROLL_MONTHS,
   getCurrentYearMonth,
@@ -1426,11 +1427,10 @@ export const StaffSalaryPayrollTab: React.FC<StaffSalaryPayrollTabProps> = ({
                       <label className="block text-[11px] font-medium text-slate-600 mb-1">
                         {language === 'bn' ? 'মূল বেতন (Basic)' : 'Basic Salary'}
                       </label>
-                      <input
-                        type="number"
+                      <DigitInput
                         min={0}
                         value={payBasic}
-                        onChange={(e) => setPayBasic(Math.max(0, Number(e.target.value)))}
+                        onValueChange={(val) => setPayBasic(Math.max(0, val))}
                         className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-mono"
                       />
                     </div>
@@ -1438,11 +1438,10 @@ export const StaffSalaryPayrollTab: React.FC<StaffSalaryPayrollTabProps> = ({
                       <label className="block text-[11px] font-medium text-slate-600 mb-1">
                         {language === 'bn' ? 'বাড়ি ভাড়া' : 'House Rent'}
                       </label>
-                      <input
-                        type="number"
+                      <DigitInput
                         min={0}
                         value={payHouseRent}
-                        onChange={(e) => setPayHouseRent(Math.max(0, Number(e.target.value)))}
+                        onValueChange={(val) => setPayHouseRent(Math.max(0, val))}
                         className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-mono"
                       />
                     </div>
@@ -1450,11 +1449,10 @@ export const StaffSalaryPayrollTab: React.FC<StaffSalaryPayrollTabProps> = ({
                       <label className="block text-[11px] font-medium text-slate-600 mb-1">
                         {language === 'bn' ? 'চিকিৎসা ভাতা' : 'Medical'}
                       </label>
-                      <input
-                        type="number"
+                      <DigitInput
                         min={0}
                         value={payMedical}
-                        onChange={(e) => setPayMedical(Math.max(0, Number(e.target.value)))}
+                        onValueChange={(val) => setPayMedical(Math.max(0, val))}
                         className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-mono"
                       />
                     </div>
@@ -1462,11 +1460,10 @@ export const StaffSalaryPayrollTab: React.FC<StaffSalaryPayrollTabProps> = ({
                       <label className="block text-[11px] font-medium text-slate-600 mb-1">
                         {language === 'bn' ? 'অন্যান্য ভাতা' : 'Other Allow.'}
                       </label>
-                      <input
-                        type="number"
+                      <DigitInput
                         min={0}
                         value={payOtherAllow}
-                        onChange={(e) => setPayOtherAllow(Math.max(0, Number(e.target.value)))}
+                        onValueChange={(val) => setPayOtherAllow(Math.max(0, val))}
                         className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-mono"
                       />
                     </div>
@@ -1475,11 +1472,10 @@ export const StaffSalaryPayrollTab: React.FC<StaffSalaryPayrollTabProps> = ({
                     <label className="block text-[11px] font-semibold text-emerald-700 mb-1">
                       {language === 'bn' ? 'বোনাস / অতিরিক্ত ক্লাস (+ Bonus)' : 'Bonus / Overtime (+)'}
                     </label>
-                    <input
-                      type="number"
+                    <DigitInput
                       min={0}
                       value={payBonus}
-                      onChange={(e) => setPayBonus(Math.max(0, Number(e.target.value)))}
+                      onValueChange={(val) => setPayBonus(Math.max(0, val))}
                       className="w-full px-2.5 py-1.5 border border-emerald-200 rounded-lg bg-white font-mono"
                     />
                   </div>
@@ -1494,11 +1490,10 @@ export const StaffSalaryPayrollTab: React.FC<StaffSalaryPayrollTabProps> = ({
                       <label className="block text-[11px] font-medium text-slate-600 mb-1">
                         {language === 'bn' ? 'প্রভিডেন্ট ফান্ড (PF)' : 'PF Deduction'}
                       </label>
-                      <input
-                        type="number"
+                      <DigitInput
                         min={0}
                         value={payPfDeduction}
-                        onChange={(e) => setPayPfDeduction(Math.max(0, Number(e.target.value)))}
+                        onValueChange={(val) => setPayPfDeduction(Math.max(0, val))}
                         className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-mono"
                       />
                     </div>
@@ -1506,11 +1501,10 @@ export const StaffSalaryPayrollTab: React.FC<StaffSalaryPayrollTabProps> = ({
                       <label className="block text-[11px] font-medium text-slate-600 mb-1">
                         {language === 'bn' ? 'অগ্রিম/অন্যান্য কর্তন' : 'Other Deduction'}
                       </label>
-                      <input
-                        type="number"
+                      <DigitInput
                         min={0}
                         value={payOtherDeduction}
-                        onChange={(e) => setPayOtherDeduction(Math.max(0, Number(e.target.value)))}
+                        onValueChange={(val) => setPayOtherDeduction(Math.max(0, val))}
                         className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-mono"
                       />
                     </div>
@@ -1581,12 +1575,11 @@ export const StaffSalaryPayrollTab: React.FC<StaffSalaryPayrollTabProps> = ({
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                       {language === 'bn' ? 'পরিশোধের টাকা *' : 'Amount Paying Now *'}
                     </label>
-                    <input
-                      type="number"
+                    <DigitInput
                       min={0}
                       value={payAmountNow}
-                      onChange={(e) => {
-                        setPayAmountNow(Math.max(0, Number(e.target.value)));
+                      onValueChange={(val) => {
+                        setPayAmountNow(Math.max(0, val));
                         setPayError('');
                       }}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white font-mono font-bold text-slate-900"

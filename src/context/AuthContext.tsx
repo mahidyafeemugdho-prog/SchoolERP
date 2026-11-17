@@ -285,6 +285,8 @@ async function buildFirebaseClientFallbackMe(
       (typeof saasUserDoc?.phone === 'string' && saasUserDoc.phone) ||
       fbUser.phoneNumber ||
       undefined,
+    avatarUrl:
+      typeof saasUserDoc?.avatarUrl === 'string' ? saasUserDoc.avatarUrl : undefined,
   };
 
   if (isMasterAdmin) {
@@ -373,6 +375,7 @@ interface AuthContextType {
   syncNow: () => Promise<void>;
   loginWithGooglePopup: () => Promise<LoginResult>;
   loginWithGoogleRedirectFallback: () => Promise<LoginResult>;
+  updateUserAvatar: (avatarUrl: string) => Promise<void>;
   redirectAuthError: string | null;
   clearRedirectAuthError: () => void;
 }
@@ -506,6 +509,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             )
           : undefined;
 
+      const currentSchoolProfile = StorageService.getSchoolProfile();
+      const resolvedAvatar =
+        me.principal.avatarUrl !== undefined
+          ? me.principal.avatarUrl
+          : resolvedRole === 'super_admin' && currentSchoolProfile.superAdminAvatarUrl
+          ? currentSchoolProfile.superAdminAvatarUrl
+          : matchedStaff?.photoUrl || matchedStudent?.photoUrl || undefined;
+
       const userProfile: UserProfile = {
         ...defaultProfiles[resolvedRole],
         id: fbUser.uid,
@@ -517,6 +528,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           matchedStudent?.guardianPhone ||
           matchedStudent?.phone ||
           undefined,
+        avatar: resolvedAvatar || undefined,
         name:
           me.principal.displayName ||
           fbUser.displayName ||
@@ -939,6 +951,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const updateUserAvatar = useCallback(
+    async (avatarUrl: string) => {
+      const cleanUrl = (avatarUrl || '').trim();
+
+      setLoggedInUser((prev) => {
+        const base = prev || defaultProfiles[activeRole];
+        const nextUser: UserProfile = { ...base, avatar: cleanUrl || undefined };
+        safeSetLocalStorage('school_erp_user', JSON.stringify(nextUser));
+        return nextUser;
+      });
+
+      setSaasSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              principal: {
+                ...prev.principal,
+                avatarUrl: cleanUrl,
+              },
+            }
+          : prev
+      );
+
+      if (activeRole === 'super_admin' || saasSession?.principal?.schoolRole === 'super_admin') {
+        const currentProfile = StorageService.getSchoolProfile();
+        const nextProfile = { ...currentProfile, superAdminAvatarUrl: cleanUrl };
+        if (saasSession?.accessAllowed) {
+          StorageService.saveSchoolProfile(nextProfile);
+        } else {
+          StorageService.saveSchoolProfileLocally(nextProfile);
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('school_profile_updated', { detail: nextProfile }));
+        }
+      }
+
+      if (auth.currentUser) {
+        try {
+          await SaaSApi.updateMyCredentials({ avatarUrl: cleanUrl });
+        } catch (err: any) {
+          const code = err?.code;
+          const status = err?.status;
+          const isBackendMissing =
+            code === 'NON_JSON_RESPONSE' ||
+            code === 'EMPTY_RESPONSE' ||
+            code === 'ADMIN_SDK_UNAVAILABLE' ||
+            code === 'AUTH_VERIFIER_UNAVAILABLE' ||
+            status === 502 ||
+            status === 503 ||
+            status === 504;
+          if (!isBackendMissing) {
+            throw err;
+          }
+        }
+      }
+    },
+    [activeRole, saasSession]
+  );
+
   const currentUser: UserProfile =
     loggedInUser && loggedInUser.role === activeRole
       ? loggedInUser
@@ -976,6 +1047,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         syncNow,
         loginWithGooglePopup: handleGoogleLogin,
         loginWithGoogleRedirectFallback: handleGoogleRedirectLogin,
+        updateUserAvatar,
         redirectAuthError,
         clearRedirectAuthError: () => setRedirectAuthError(null),
       }}

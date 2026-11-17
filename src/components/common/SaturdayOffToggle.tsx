@@ -39,10 +39,10 @@ export const SaturdayOffToggle: React.FC<SaturdayOffToggleProps> = ({ compact = 
         title={
           isSaturdayOff
             ? language === 'bn'
-              ? 'শনিবার সাপ্তাহিক ছুটি সক্রিয় (স্কুল মোড)। মাদরাসার জন্য শনিবার ক্লাস চালু করতে ১-ক্লিক করুন।'
+              ? 'শনিবার সাপ্তাহিক ছুটি সক্রিয় (স্কুল মোড)। মাদরাসার জন্য শনিবার ক্লাস চালু করতে 1-ক্লিক করুন।'
               : 'Saturday Weekend Off (School mode). Click to make Saturday an Open working day (Madrasha mode).'
             : language === 'bn'
-              ? 'শনিবার খোলা ও ক্লাস চালু (মাদরাসা মোড)। শনিবার সাপ্তাহিক ছুটি করতে ১-ক্লিক করুন।'
+              ? 'শনিবার খোলা ও ক্লাস চালু (মাদরাসা মোড)। শনিবার সাপ্তাহিক ছুটি করতে 1-ক্লিক করুন।'
               : 'Saturday is Open & Working (Madrasha mode). Click to make Saturday a Weekend Off.'
         }
         className={`inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-black transition-all shadow-2xs border ${
@@ -70,7 +70,7 @@ export const SaturdayOffToggle: React.FC<SaturdayOffToggleProps> = ({ compact = 
             isSaturdayOff ? 'bg-amber-200 text-amber-900' : 'bg-emerald-200 text-emerald-900'
           }`}
         >
-          {language === 'bn' ? '১-ক্লিক' : 'Toggle'}
+          {language === 'bn' ? '1-ক্লিক' : 'Toggle'}
         </span>
       </button>
     );
@@ -117,10 +117,10 @@ export const SaturdayOffToggle: React.FC<SaturdayOffToggleProps> = ({ compact = 
             <p className="text-xs text-slate-600 mt-0.5">
               {isSaturdayOff
                 ? language === 'bn'
-                  ? 'সাধারণ স্কুলে শনিবার সাপ্তাহিক ছুটি থাকে। মাদরাসা বা যে প্রতিষ্ঠানে শনিবার ক্লাস হয়, তারা ১-ক্লিকে খোলা রাখতে পারেন।'
+                  ? 'সাধারণ স্কুলে শনিবার সাপ্তাহিক ছুটি থাকে। মাদরাসা বা যে প্রতিষ্ঠানে শনিবার ক্লাস হয়, তারা 1-ক্লিকে খোলা রাখতে পারেন।'
                   : 'Schools normally keep Saturday as weekend. For Madrashas or institutions with Saturday classes, toggle to Open with 1-click.'
                 : language === 'bn'
-                ? 'মাদরাসা ও বিশেষ প্রতিষ্ঠানে শনিবার নিয়মিত ক্লাস ও হাজিরা সক্রিয় রয়েছে। ছুটি করতে ১-ক্লিকে বন্ধ করুন।'
+                ? 'মাদরাসা ও বিশেষ প্রতিষ্ঠানে শনিবার নিয়মিত ক্লাস ও হাজিরা সক্রিয় রয়েছে। ছুটি করতে 1-ক্লিকে বন্ধ করুন।'
                 : 'Madrashas operate on Saturdays. Click button to switch to Saturday Off.'}
             </p>
           </div>

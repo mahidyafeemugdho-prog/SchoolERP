@@ -310,7 +310,7 @@ export const CertificatesView: React.FC = () => {
                     }`}
                   >
                     <Scissors className="w-3 h-3 text-amber-300" />
-                    <span>{language === 'bn' ? '১ পাতায় ২টি (পেপার সেভার)' : '2 Cards / A4'}</span>
+                    <span>{language === 'bn' ? '1 পাতায় 2টি (পেপার সেভার)' : '2 Cards / A4'}</span>
                   </button>
                 </div>
               </div>
@@ -318,17 +318,17 @@ export const CertificatesView: React.FC = () => {
               {/* In 2 Cards per Page mode: Mode selector */}
               {admitFormat === 'two_per_page' && (
                 <div className="flex items-center space-x-1.5 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200 text-xs">
-                  <span className="font-bold text-blue-900 text-[11px]">{language === 'bn' ? '২য় কার্ড:' : '2nd Card:'}</span>
+                  <span className="font-bold text-blue-900 text-[11px]">{language === 'bn' ? '2য় কার্ড:' : '2nd Card:'}</span>
                   <select
                     value={admitTwoPerPageMode}
                     onChange={(e) => setAdmitTwoPerPageMode(e.target.value as any)}
                     className="px-2 py-0.5 bg-white border border-blue-300 rounded text-xs font-semibold text-blue-950"
                   >
                     <option value="duplicate">
-                      {language === 'bn' ? 'একই শিক্ষার্থীর ২ কপি (শিক্ষার্থী + অফিস কপি)' : 'Student + Office Copy (Same)'}
+                      {language === 'bn' ? 'একই শিক্ষার্থীর 2 কপি (শিক্ষার্থী + অফিস কপি)' : 'Student + Office Copy (Same)'}
                     </option>
                     <option value="two_students">
-                      {language === 'bn' ? 'পরপর ২ জন শিক্ষার্থী (৫০% কাগজ সাশ্রয়)' : 'Consecutive Students (Save 50% Paper)'}
+                      {language === 'bn' ? 'পরপর 2 জন শিক্ষার্থী (50% কাগজ সাশ্রয়)' : 'Consecutive Students (Save 50% Paper)'}
                     </option>
                   </select>
                 </div>
@@ -345,7 +345,7 @@ export const CertificatesView: React.FC = () => {
                   >
                     <option value="auto">{language === 'bn' ? 'অটো-ফিট (Auto)' : 'Auto-Fit'}</option>
                     <option value="standard">{language === 'bn' ? 'স্বাভাবিক (Standard)' : 'Standard'}</option>
-                    <option value="compact">{language === 'bn' ? 'কম্প্যাক্ট (ঘন - ১২ বিষয়)' : 'Compact'}</option>
+                    <option value="compact">{language === 'bn' ? 'কম্প্যাক্ট (ঘন - 12 বিষয়)' : 'Compact'}</option>
                   </select>
                 </div>
 
@@ -357,9 +357,9 @@ export const CertificatesView: React.FC = () => {
                     className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-medium"
                   >
                     <option value="auto">{language === 'bn' ? 'স্মার্ট (Smart)' : 'Smart Auto'}</option>
-                    <option value="full">{language === 'bn' ? 'পূর্ণাঙ্গ (৪টি নিয়ম)' : 'Full (4 Rules)'}</option>
-                    <option value="compact">{language === 'bn' ? '২-কলাম সংক্ষিপ্ত' : 'Compact 2-Col'}</option>
-                    <option value="minimal">{language === 'bn' ? '১-লাইন সামারি' : '1-Line Minimal'}</option>
+                    <option value="full">{language === 'bn' ? 'পূর্ণাঙ্গ (4টি নিয়ম)' : 'Full (4 Rules)'}</option>
+                    <option value="compact">{language === 'bn' ? '2-কলাম সংক্ষিপ্ত' : 'Compact 2-Col'}</option>
+                    <option value="minimal">{language === 'bn' ? '1-লাইন সামারি' : '1-Line Minimal'}</option>
                     <option value="none">{language === 'bn' ? 'বাদ দিন (None)' : 'None'}</option>
                   </select>
                 </div>
@@ -402,11 +402,11 @@ export const CertificatesView: React.FC = () => {
                 <span className="text-slate-700 font-medium text-[11px]">
                   {classRoutines.length <= 7 ? (
                     language === 'bn'
-                      ? `এই শ্রেণিতে মোট ${classRoutines.length}টি বিষয় রয়েছে। পেপার সাশ্রয় করতে 'হাফ A4' অথবা '১ পাতায় ২টি (পেপার সেভার)' বেছে নিতে পারেন!`
+                      ? `এই শ্রেণিতে মোট ${classRoutines.length}টি বিষয় রয়েছে। পেপার সাশ্রয় করতে 'হাফ A4' অথবা '1 পাতায় 2টি (পেপার সেভার)' বেছে নিতে পারেন!`
                       : `This class has ${classRoutines.length} subjects. Consider using 'Half A4' or '2 Cards / A4' to save paper!`
                   ) : (
                     language === 'bn'
-                      ? `এই শ্রেণিতে মোট ${classRoutines.length}টি বিষয় রয়েছে। এটি কোনো অবস্থাতেই A4 সাইজের বাইরে যাবে না—নিখুঁত ১ পেজে ফিট রাখার জন্য অপ্টিমাইজ করা হয়েছে!`
+                      ? `এই শ্রেণিতে মোট ${classRoutines.length}টি বিষয় রয়েছে। এটি কোনো অবস্থাতেই A4 সাইজের বাইরে যাবে না—নিখুঁত 1 পেজে ফিট রাখার জন্য অপ্টিমাইজ করা হয়েছে!`
                       : `This class has ${classRoutines.length} subjects. It is strictly optimized to never exceed 1 single A4 sheet!`
                   )}
                 </span>
@@ -449,7 +449,7 @@ export const CertificatesView: React.FC = () => {
                         : 'text-slate-700 hover:text-slate-900'
                     }`}
                   >
-                    {language === 'bn' ? '১৪ × ১১ ইঞ্চি ল্যান্ডস্কেপ' : '14 × 11 Inch Landscape'}
+                    {language === 'bn' ? '14 × 11 ইঞ্চি ল্যান্ডস্কেপ' : '14 × 11 Inch Landscape'}
                   </button>
                 </div>
               </div>
@@ -470,7 +470,7 @@ export const CertificatesView: React.FC = () => {
                         : 'text-slate-700 hover:text-slate-900'
                     }`}
                   >
-                    {language === 'bn' ? 'টেমপ্লেট ১: ৪টি রয়্যাল ডিজাইন (3:2)' : '4 Bespoke Designs (3:2 Landscape)'}
+                    {language === 'bn' ? 'টেমপ্লেট 1: 4টি রয়্যাল ডিজাইন (3:2)' : '4 Bespoke Designs (3:2 Landscape)'}
                   </button>
                   <button
                     type="button"
@@ -481,7 +481,7 @@ export const CertificatesView: React.FC = () => {
                         : 'text-slate-700 hover:text-slate-900'
                     }`}
                   >
-                    {language === 'bn' ? 'টেমপ্লেট ২: ক্লাসিক ফর্মাল' : 'Classic Formal'}
+                    {language === 'bn' ? 'টেমপ্লেট 2: ক্লাসিক ফর্মাল' : 'Classic Formal'}
                   </button>
                 </div>
               </div>
@@ -492,8 +492,8 @@ export const CertificatesView: React.FC = () => {
                 <CheckCircle className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                 <span>
                   {certSize === 'a4_landscape'
-                    ? '৪টি সনদের জন্য ৪টি ভিন্ন প্রিমিয়াম ডিজাইন (3:2 অনুপাত · 1536 × 1024 px) — A4 Landscape (297 × 210 mm) প্রিন্ট সেটআপ সক্রিয়।'
-                    : '৪টি সনদের জন্য ৪টি ভিন্ন প্রিমিয়াম ডিজাইন (3:2 অনুপাত) — ১৪ × ১১ ইঞ্চি ল্যান্ডস্কেপ প্রিন্ট সেটআপ সক্রিয়।'}
+                    ? '4টি সনদের জন্য 4টি ভিন্ন প্রিমিয়াম ডিজাইন (3:2 অনুপাত · 1536 × 1024 px) — A4 Landscape (297 × 210 mm) প্রিন্ট সেটআপ সক্রিয়।'
+                    : '4টি সনদের জন্য 4টি ভিন্ন প্রিমিয়াম ডিজাইন (3:2 অনুপাত) — 14 × 11 ইঞ্চি ল্যান্ডস্কেপ প্রিন্ট সেটআপ সক্রিয়।'}
                 </span>
               </span>
               <span className="font-mono font-bold text-blue-800">
@@ -898,27 +898,27 @@ export const CertificatesView: React.FC = () => {
                 <table className="w-full border-collapse border border-slate-300 text-left text-slate-800">
                   <tbody>
                     <tr className="border-b border-slate-200 bg-slate-50/50">
-                      <td className="p-2.5 font-bold text-slate-700 w-1/3 border-r border-slate-200">১. শিক্ষার্থীর নাম (Student Name):</td>
+                      <td className="p-2.5 font-bold text-slate-700 w-1/3 border-r border-slate-200">1. শিক্ষার্থীর নাম (Student Name):</td>
                       <td className="p-2.5 font-black text-slate-950 text-sm">{student.nameEn} ({student.nameBn})</td>
                     </tr>
                     <tr className="border-b border-slate-200">
-                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">২. স্টুডেন্ট / ভর্তি আইডি (Student ID):</td>
+                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">2. স্টুডেন্ট / ভর্তি আইডি (Student ID):</td>
                       <td className="p-2.5 font-mono font-black text-blue-900">{student.studentId}</td>
                     </tr>
                     <tr className="border-b border-slate-200 bg-slate-50/50">
-                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">৩. পিতার নাম (Father's Name):</td>
+                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">3. পিতার নাম (Father's Name):</td>
                       <td className="p-2.5 font-semibold text-slate-900">{student.fatherNameEn} ({student.fatherNameBn || '—'})</td>
                     </tr>
                     <tr className="border-b border-slate-200">
-                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">৪. মাতার নাম (Mother's Name):</td>
+                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">4. মাতার নাম (Mother's Name):</td>
                       <td className="p-2.5 font-semibold text-slate-900">{student.motherNameEn} ({student.motherNameBn || '—'})</td>
                     </tr>
                     <tr className="border-b border-slate-200 bg-slate-50/50">
-                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">৫. জন্ম তারিখ (Date of Birth):</td>
+                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">5. জন্ম তারিখ (Date of Birth):</td>
                       <td className="p-2.5 font-mono font-bold text-slate-900">{student.dob}</td>
                     </tr>
                     <tr className="border-b border-slate-200">
-                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">৬. সর্বশেষ অধ্যয়নরত শ্রেণি ও রোল:</td>
+                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">6. সর্বশেষ অধ্যয়নরত শ্রেণি ও রোল:</td>
                       <td className="p-2.5 font-bold text-slate-900">
                         {student.className} (রোল: {student.roll}, শাখা: {student.section})
                         {['Class 9', 'Class 10'].includes(student.className) && (
@@ -927,19 +927,19 @@ export const CertificatesView: React.FC = () => {
                       </td>
                     </tr>
                     <tr className="border-b border-slate-200 bg-slate-50/50">
-                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">৭. শিক্ষাবর্ষ (Academic Session):</td>
+                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">7. শিক্ষাবর্ষ (Academic Session):</td>
                       <td className="p-2.5 font-bold text-slate-900">{student.session || school.currentSession || '2026'}</td>
                     </tr>
                     <tr className="border-b border-slate-200">
-                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">৮. বকেয়া বেতন ও ফি পরিশোধের বিবরণ:</td>
+                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">8. বকেয়া বেতন ও ফি পরিশোধের বিবরণ:</td>
                       <td className="p-2.5 font-bold text-emerald-700">সমস্ত প্রাতিষ্ঠানিক ফি ও বকেয়া সম্পূর্ণ পরিশোধিত (Full Dues Cleared)</td>
                     </tr>
                     <tr className="border-b border-slate-200 bg-slate-50/50">
-                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">৯. সাধারণ আচরণ ও চরিত্র:</td>
+                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">9. সাধারণ আচরণ ও চরিত্র:</td>
                       <td className="p-2.5 font-bold text-slate-900">সন্তোষজনক ও প্রশংসনীয় (Satisfactory & Exemplary)</td>
                     </tr>
                     <tr>
-                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">১০. বিদ্যালয় ত্যাগের কারণ:</td>
+                      <td className="p-2.5 font-bold text-slate-700 border-r border-slate-200">10. বিদ্যালয় ত্যাগের কারণ:</td>
                       <td className="p-2.5 font-bold text-slate-900">অভিভাবকের স্থানান্তর / ব্যক্তিগত সুবিধা (Guardian Transfer / Relocation)</td>
                     </tr>
                   </tbody>

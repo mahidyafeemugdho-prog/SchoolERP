@@ -26,25 +26,25 @@ export const ID_CARD_THEME_OPTIONS: Array<{
 }> = [
   {
     id: 'executive_royal',
-    labelBn: '১. ক্রিমসন ও নেভি',
+    labelBn: '1. ক্রিমসন ও নেভি',
     labelEn: '1. Crimson Navy',
     activeClass: 'bg-[#A61C24] text-white shadow-xs',
   },
   {
     id: 'classic_academic',
-    labelBn: '২. রয়্যাল ইনডিগো',
+    labelBn: '2. রয়্যাল ইনডিগো',
     labelEn: '2. Royal Indigo',
     activeClass: 'bg-[#1E2678] text-white shadow-xs',
   },
   {
     id: 'modern_emerald',
-    labelBn: '৩. টিল ও ম্যাজেন্টা',
+    labelBn: '3. টিল ও ম্যাজেন্টা',
     labelEn: '3. Teal & Rose',
     activeClass: 'bg-[#0F6A73] text-white shadow-xs',
   },
   {
     id: 'amber_charcoal',
-    labelBn: '৪. অ্যাম্বার চারকোল',
+    labelBn: '4. অ্যাম্বার চারকোল',
     labelEn: '4. Amber Charcoal',
     activeClass: 'bg-[#D97706] text-white shadow-xs',
   },

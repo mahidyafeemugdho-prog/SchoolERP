@@ -262,6 +262,151 @@ service cloud.firestore {
     match /online_payments/{docId} {
       allow read, write: if isMasterAdmin();
     }
+    // -------------------------------------------------------------------------
+    // Support Team Two-Way Tickets & Screenshot Chat
+    // -------------------------------------------------------------------------
+    function isValidSupportTicket(data, ticketId) {
+      return data.keys().hasAll([
+          'id', 'schoolId', 'schoolName', 'createdByUid', 'createdByEmail',
+          'createdByRole', 'subject', 'category', 'status',
+          'lastSenderRole', 'unreadByMaster', 'unreadBySchool',
+          'messageCount', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'schoolId', 'schoolName', 'schoolCode', 'createdByUid',
+          'createdByName', 'createdByEmail', 'createdByRole',
+          'subject', 'category', 'status', 'lastMessagePreview',
+          'lastSenderRole', 'unreadByMaster', 'unreadBySchool',
+          'messageCount', 'createdAt', 'updatedAt'
+        ])
+        && data.id == ticketId
+        && data.schoolId is string && data.schoolId.size() >= 1 && data.schoolId.size() <= 128
+        && data.schoolName is string && data.schoolName.size() >= 1 && data.schoolName.size() <= 200
+        && (!('schoolCode' in data) || (data.schoolCode is string && data.schoolCode.size() <= 64))
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && (!('createdByName' in data) || (data.createdByName is string && data.createdByName.size() <= 150))
+        && data.createdByEmail is string && data.createdByEmail.size() <= 200
+        && data.createdByRole is string && data.createdByRole.size() >= 1 && data.createdByRole.size() <= 40
+        && data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 240
+        && data.category in ['technical', 'billing', 'training', 'data', 'other']
+        && data.status in ['open', 'replied', 'resolved']
+        && (!('lastMessagePreview' in data) || (data.lastMessagePreview is string && data.lastMessagePreview.size() <= 500))
+        && data.lastSenderRole in ['school', 'master_admin']
+        && data.unreadByMaster is bool
+        && data.unreadBySchool is bool
+        && data.messageCount is int && data.messageCount >= 0 && data.messageCount <= 10000
+        && data.createdAt is string && data.createdAt.size() <= 64
+        && data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidSupportMessage(data, ticketId, messageId) {
+      return data.keys().hasAll([
+          'id', 'ticketId', 'schoolId', 'senderUid', 'senderName',
+          'senderRole', 'text', 'imageUrls', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ticketId', 'schoolId', 'ticketCreatorUid', 'senderUid',
+          'senderName', 'senderEmail', 'senderRole', 'senderSchoolRole',
+          'text', 'imageUrls', 'createdAt'
+        ])
+        && data.id == messageId
+        && data.ticketId == ticketId
+        && data.schoolId is string && data.schoolId.size() >= 1 && data.schoolId.size() <= 128
+        && (!('ticketCreatorUid' in data) || (data.ticketCreatorUid is string && data.ticketCreatorUid.size() <= 128))
+        && data.senderUid is string && data.senderUid.size() >= 1 && data.senderUid.size() <= 128
+        && data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 150
+        && (!('senderEmail' in data) || (data.senderEmail is string && data.senderEmail.size() <= 200))
+        && data.senderRole in ['school', 'master_admin']
+        && (!('senderSchoolRole' in data) || (data.senderSchoolRole is string && data.senderSchoolRole.size() <= 40))
+        && data.text is string && data.text.size() <= 3500
+        && data.imageUrls is list && data.imageUrls.size() <= 3
+        && (data.text.size() > 0 || data.imageUrls.size() > 0)
+        && data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    match /support_tickets/{ticketId} {
+      allow get: if isValidId(ticketId) && (
+        isMasterAdmin() ||
+        (
+          isSignedIn() && (
+            resource.data.createdByUid == request.auth.uid ||
+            (request.auth.token.schoolId is string && resource.data.schoolId == request.auth.token.schoolId)
+          )
+        )
+      );
+      allow list: if isMasterAdmin() || (
+        isSignedIn() && (
+          resource.data.createdByUid == request.auth.uid ||
+          (request.auth.token.schoolId is string && resource.data.schoolId == request.auth.token.schoolId)
+        )
+      );
+      allow create: if isValidId(ticketId)
+        && isSignedIn()
+        && isValidSupportTicket(request.resource.data, ticketId)
+        && request.resource.data.createdByUid == request.auth.uid
+        && (
+          isMasterAdmin() ||
+          (
+            request.resource.data.lastSenderRole == 'school'
+            && (hasSchoolClaim(request.resource.data.schoolId) || request.resource.data.schoolId == request.auth.uid)
+          )
+        );
+      allow update: if isValidId(ticketId)
+        && isSignedIn()
+        && isValidSupportTicket(request.resource.data, ticketId)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.schoolId == resource.data.schoolId
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && (
+          isMasterAdmin() ||
+          (
+            (resource.data.createdByUid == request.auth.uid || hasSchoolClaim(resource.data.schoolId))
+            && (request.resource.data.lastSenderRole == resource.data.lastSenderRole || request.resource.data.lastSenderRole == 'school')
+          )
+        );
+      allow delete: if isValidId(ticketId) && isMasterAdmin();
+
+      match /messages/{messageId} {
+        allow get: if isValidId(ticketId) && isValidId(messageId) && (
+          isMasterAdmin() ||
+          (
+            isSignedIn() && (
+              resource.data.senderUid == request.auth.uid ||
+              resource.data.ticketCreatorUid == request.auth.uid ||
+              (request.auth.token.schoolId is string && resource.data.schoolId == request.auth.token.schoolId)
+            )
+          )
+        );
+        allow list: if isValidId(ticketId) && (
+          isMasterAdmin() ||
+          (
+            isSignedIn() && (
+              resource.data.senderUid == request.auth.uid ||
+              resource.data.ticketCreatorUid == request.auth.uid ||
+              (request.auth.token.schoolId is string && resource.data.schoolId == request.auth.token.schoolId)
+            )
+          )
+        );
+        allow create: if isValidId(ticketId)
+          && isValidId(messageId)
+          && isSignedIn()
+          && isValidSupportMessage(request.resource.data, ticketId, messageId)
+          && request.resource.data.senderUid == request.auth.uid
+          && (
+            isMasterAdmin() ||
+            (
+              request.resource.data.senderRole == 'school'
+              && (
+                hasSchoolClaim(request.resource.data.schoolId) ||
+                request.resource.data.ticketCreatorUid == request.auth.uid
+              )
+            )
+          );
+        allow update, delete: if false;
+      }
+    }
+
     match /test/{docId} {
       allow get: if isSignedIn();
       allow list, write: if false;

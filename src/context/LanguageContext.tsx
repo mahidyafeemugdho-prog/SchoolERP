@@ -1,5 +1,15 @@
 import React, { createContext, useContext, useState } from 'react';
-import { Language, translations, formatTaka, toBnNumber, formatDate, amountInWords } from '../utils/i18n';
+import {
+  Language,
+  translations,
+  formatTaka,
+  toBnNumber,
+  toEnNumber,
+  parseLocaleNumber,
+  sanitizeNumericInput,
+  formatDate,
+  amountInWords,
+} from '../utils/i18n';
 
 interface LanguageContextType {
   language: Language;
@@ -8,6 +18,12 @@ interface LanguageContextType {
   t: (key: keyof typeof translations['en']) => string;
   formatTaka: (amount: number) => string;
   toBnNumber: (val: number | string | undefined | null) => string;
+  toEnNumber: (val: number | string | undefined | null) => string;
+  parseLocaleNumber: (val: string | number | undefined | null, fallback?: number) => number;
+  sanitizeNumericInput: (
+    raw: string,
+    options?: { allowDecimal?: boolean; allowNegative?: boolean }
+  ) => string;
   formatDate: (dateStr: string) => string;
   amountInWords: (amount: number) => string;
 }
@@ -42,6 +58,9 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         t,
         formatTaka: (amount: number) => formatTaka(amount, language),
         toBnNumber,
+        toEnNumber,
+        parseLocaleNumber,
+        sanitizeNumericInput,
         formatDate: (dateStr: string) => formatDate(dateStr, language),
         amountInWords: (amount: number) => amountInWords(amount, language),
       }}

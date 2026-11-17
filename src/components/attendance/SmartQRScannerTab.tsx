@@ -40,6 +40,7 @@ import { useAuth } from '../../context/AuthContext';
 import { safeGetLocalStorage, compressImageToPassportSize } from '../../utils/storageHelper';
 import { CloudSyncService } from '../../services/cloudSync';
 import { LiveCameraModal } from '../common/LiveCameraModal';
+import { DigitInput } from '../common/DigitInput';
 import {
   extractFaceDescriptorFromImageData,
   analyzeCenterFacePresence,
@@ -1247,7 +1248,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       setQuickFaceModal({
         isOpen: true,
         snapshot: fallbackSnap,
-        hintText: 'কোনো শিক্ষার্থী বা শিক্ষকের ফেস ছবি এখনো এনরোল করা হয়নি। নিচে থেকে ব্যক্তি নির্বাচন করে ১-ট্যাপেই ছবি সেভ ও হাজিরা দিন।',
+        hintText: 'কোনো শিক্ষার্থী বা শিক্ষকের ফেস ছবি এখনো এনরোল করা হয়নি। নিচে থেকে ব্যক্তি নির্বাচন করে 1-ট্যাপেই ছবি সেভ ও হাজিরা দিন।',
         targetType: 'student',
         search: '',
       });
@@ -1319,7 +1320,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
         snapshot: fallbackSnap,
         hintText: matchResult.bestCandidate
           ? `ক্যামেরার ছবির সাথে নিশ্চিত মিল পাওয়া যায়নি (সর্বোচ্চ মিল ${Math.max(0, Math.round(matchResult.displayConfidence))}%)। ব্যক্তি নির্বাচন করে ছবি আপডেট ও হাজিরা দিন।`
-          : 'ক্যামেরা থেকে মুখমণ্ডল স্পষ্ট আসেনি অথবা এই ব্যক্তির ফেস ছবি যুক্ত নেই। তালিকা থেকে ব্যক্তি নির্বাচন করে ১-ট্যাপে এনরোল ও হাজিরা দিন।',
+          : 'ক্যামেরা থেকে মুখমণ্ডল স্পষ্ট আসেনি অথবা এই ব্যক্তির ফেস ছবি যুক্ত নেই। তালিকা থেকে ব্যক্তি নির্বাচন করে 1-ট্যাপে এনরোল ও হাজিরা দিন।',
         targetType: 'student',
         search: '',
       });
@@ -1770,7 +1771,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
             className="hidden"
           >
             <Zap className="w-4 h-4 text-amber-200" />
-            <span>১. অটো (QR + Face একসাথে)</span>
+            <span>1. অটো (QR + Face একসাথে)</span>
           </button>
           <button
             type="button"
@@ -2105,7 +2106,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
                     : scannerType === 'auto'
                     ? 'ক্যামেরার সামনে মুখমণ্ডল অথবা QR আইডি কার্ড ধরলেই স্বয়ংক্রিয়ভাবে হাজিরা হয়ে যাবে'
                     : scannerType === 'face'
-                    ? 'শিক্ষার্থী বা শিক্ষকের মুখমণ্ডল ক্যামেরায় স্ক্যান করে অটো বা ১-ট্যাপ হাজিরা নিতে ক্যামেরা চালু করুন'
+                    ? 'শিক্ষার্থী বা শিক্ষকের মুখমণ্ডল ক্যামেরায় স্ক্যান করে অটো বা 1-ট্যাপ হাজিরা নিতে ক্যামেরা চালু করুন'
                     : 'আইডি কার্ড বা কিউআর কোড স্ক্যান করে উপস্থিতি নিতে স্ক্রিনে অথবা বাটনে চাপ দিন'}
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3">
@@ -2154,7 +2155,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
                       </span>
                     </div>
                     <p className="text-[10px] text-slate-400">
-                      ক্যামেরা বন্ধ থাকলেও আইডি/রোল লিখে বা তালিকা থেকে ১-ট্যাপে সরাসরি উপস্থিতি নিন
+                      ক্যামেরা বন্ধ থাকলেও আইডি/রোল লিখে বা তালিকা থেকে 1-ট্যাপে সরাসরি উপস্থিতি নিন
                     </p>
                   </div>
                 </div>
@@ -2613,7 +2614,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
           <summary className="px-4 py-3 text-xs font-bold text-slate-500 cursor-pointer flex items-center justify-between hover:bg-slate-50 transition-colors select-none">
             <span className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-500" />
-              <span>অতিরিক্ত টুলস: ১-ক্লিক টেস্ট সিমুলেশন ও সাম্প্রতিক স্ক্যান হিস্ট্রি</span>
+              <span>অতিরিক্ত টুলস: 1-ক্লিক টেস্ট সিমুলেশন ও সাম্প্রতিক স্ক্যান হিস্ট্রি</span>
           </span>
           <span className="text-[10px] text-slate-400 group-open:rotate-180 transition-transform">▼</span>
         </summary>
@@ -2624,7 +2625,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                <span>১-ক্লিকে টেস্ট করুন (ভয়েস ঘোষণা ও স্ক্রিন ছবি পরীক্ষা):</span>
+                <span>1-ক্লিকে টেস্ট করুন (ভয়েস ঘোষণা ও স্ক্রিন ছবি পরীক্ষা):</span>
               </span>
               <button
                 type="button"
@@ -2851,7 +2852,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
                             ✓
                           </div>
                           <span className="text-[11px] font-black font-mono text-emerald-600 mt-1">
-                            {biometricScore ? `${toBnNumber(biometricScore)}%` : '৯৮%'}
+                            {biometricScore ? `${toBnNumber(biometricScore)}%` : '98%'}
                           </span>
                           <span className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">ম্যাচ</span>
                         </div>
@@ -3095,7 +3096,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
               <div className="space-y-2 pt-1">
                 <div className="flex items-center justify-between text-[11px] text-slate-500 font-semibold">
                   <span>স্ক্যানার তাৎক্ষণিক পরবর্তী হাজিরার জন্য প্রস্তুত...</span>
-                  <span className="font-mono text-blue-600 font-bold">{modalDismissTimer > 0 ? '১.৩s' : '০s'}</span>
+                  <span className="font-mono text-blue-600 font-bold">{modalDismissTimer > 0 ? '1.3s' : '0s'}</span>
                 </div>
 
                 {/* Animated timer bar */}
@@ -3192,7 +3193,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
                   <div className="p-3 bg-indigo-50/70 border border-indigo-200/80 rounded-2xl space-y-2">
                     <div className="flex items-center space-x-1.5 font-bold text-indigo-900 text-[11px]">
                       <Zap className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>১-ক্লিকে শিফট ও শ্রেণির সময় সেট করুন (Quick Presets):</span>
+                      <span>1-ক্লিকে শিফট ও শ্রেণির সময় সেট করুন (Quick Presets):</span>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button
@@ -3200,14 +3201,14 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
                         onClick={applyPrimarySecondaryPreset}
                         className="px-3 py-1.5 bg-white border border-indigo-300 hover:bg-indigo-600 hover:text-white text-indigo-800 rounded-xl font-bold text-[11px] shadow-2xs transition-colors"
                       >
-                        ⚡ প্রাইমারি (০৭:৪৫) ও মাধ্যমিক (১১:৩০)
+                        ⚡ প্রাইমারি (07:45) ও মাধ্যমিক (11:30)
                       </button>
                       <button
                         type="button"
                         onClick={applyMorningDayShiftPreset}
                         className="px-3 py-1.5 bg-white border border-indigo-300 hover:bg-indigo-600 hover:text-white text-indigo-800 rounded-xl font-bold text-[11px] shadow-2xs transition-colors"
                       >
-                        ⚡ মর্নিং (০৭:৩০) ও ডে শিফট (১২:০০)
+                        ⚡ মর্নিং (07:30) ও ডে শিফট (12:00)
                       </button>
                       <button
                         type="button"
@@ -3446,15 +3447,14 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
                         </p>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <input
-                          type="number"
+                        <DigitInput
                           min={1}
                           max={180}
                           value={rules.duplicateCooldownMinutes ?? 10}
-                          onChange={(e) =>
+                          onValueChange={(val) =>
                             setRules({
                               ...rules,
-                              duplicateCooldownMinutes: Math.max(1, parseInt(e.target.value, 10) || 10),
+                              duplicateCooldownMinutes: Math.max(1, val || 10),
                               duplicateCooldownConfigured: true,
                             })
                           }

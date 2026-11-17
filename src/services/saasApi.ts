@@ -123,6 +123,7 @@ export interface SaaSUserDTO {
   linkedStaffId?: string;
   linkedStudentId?: string;
   phone?: string;
+  avatarUrl?: string;
   status: 'active' | 'disabled';
   createdAt: string;
 }
@@ -140,6 +141,7 @@ export interface SaaSMeResponse {
     linkedStaffId?: string;
     linkedStudentId?: string;
     phone?: string;
+    avatarUrl?: string;
   };
   school: SaaSSchoolRecord | null;
   subscription: SaaSComputedSubscription | null;
@@ -161,6 +163,46 @@ export interface SaaSMasterAnalytics {
   pendingPaymentsCount: number;
   approvedPaymentsCount: number;
   planDistribution: Record<string, number>;
+}
+
+export type SupportCategory = 'technical' | 'billing' | 'training' | 'data' | 'other';
+export type SupportTicketStatus = 'open' | 'replied' | 'resolved';
+export type SupportSenderRole = 'school' | 'master_admin';
+
+export interface SupportTicketDTO {
+  id: string;
+  schoolId: string;
+  schoolName: string;
+  schoolCode?: string;
+  createdByUid: string;
+  createdByName?: string;
+  createdByEmail: string;
+  createdByRole: string;
+  subject: string;
+  category: SupportCategory;
+  status: SupportTicketStatus;
+  lastMessagePreview?: string;
+  lastSenderRole: SupportSenderRole;
+  unreadByMaster: boolean;
+  unreadBySchool: boolean;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupportMessageDTO {
+  id: string;
+  ticketId: string;
+  schoolId: string;
+  ticketCreatorUid?: string;
+  senderUid: string;
+  senderName: string;
+  senderEmail?: string;
+  senderRole: SupportSenderRole;
+  senderSchoolRole?: string;
+  text: string;
+  imageUrls: string[];
+  createdAt: string;
 }
 
 export const DEFAULT_FALLBACK_PLANS: SaaSPlanConfig[] = [
@@ -441,6 +483,7 @@ export const SaaSApi = {
     email?: string;
     password?: string;
     phone?: string;
+    avatarUrl?: string;
   }) =>
     saasFetch<{
       success: boolean;
@@ -449,6 +492,7 @@ export const SaaSApi = {
         email: string;
         displayName: string;
         phone?: string;
+        avatarUrl?: string;
         schoolId: string | null;
         schoolRole: string | null;
         isMasterAdmin: boolean;
@@ -686,4 +730,61 @@ export const SaaSApi = {
 
   listHomeworkSubmissions: () =>
     saasFetch<{ success: boolean; schoolId: string; submissions: any[] }>('/tenant/homework-submissions'),
+
+  // Support Team Two-Way Chat & Screenshot Feedback
+  listSupportTickets: (filters?: { status?: string; schoolId?: string }) => {
+    const params = new URLSearchParams();
+    if (filters?.status && filters.status !== 'all') params.set('status', filters.status);
+    if (filters?.schoolId) params.set('schoolId', filters.schoolId);
+    const qs = params.toString();
+    return saasFetch<{ success: boolean; tickets: SupportTicketDTO[] }>(
+      `/support/tickets${qs ? `?${qs}` : ''}`
+    );
+  },
+
+  createSupportTicket: (payload: {
+    subject: string;
+    category: SupportCategory;
+    text: string;
+    imageUrls?: string[];
+    schoolId?: string;
+    schoolName?: string;
+    schoolCode?: string;
+  }) =>
+    saasFetch<{ success: boolean; ticket: SupportTicketDTO; message: SupportMessageDTO }>(
+      '/support/tickets',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  listSupportMessages: (ticketId: string) =>
+    saasFetch<{ success: boolean; ticket: SupportTicketDTO; messages: SupportMessageDTO[] }>(
+      `/support/tickets/${encodeURIComponent(ticketId)}/messages`
+    ),
+
+  sendSupportMessage: (
+    ticketId: string,
+    payload: { text: string; imageUrls?: string[] }
+  ) =>
+    saasFetch<{ success: boolean; ticket: SupportTicketDTO; message: SupportMessageDTO }>(
+      `/support/tickets/${encodeURIComponent(ticketId)}/messages`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  updateSupportTicketStatus: (
+    ticketId: string,
+    payload: { status?: SupportTicketStatus; markRead?: boolean }
+  ) =>
+    saasFetch<{ success: boolean; ticket: SupportTicketDTO }>(
+      `/support/tickets/${encodeURIComponent(ticketId)}/status`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }
+    ),
 };

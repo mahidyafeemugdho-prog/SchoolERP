@@ -454,7 +454,7 @@ export const BlogManagementView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  placeholder="যেমন: বার্ষিক বিজ্ঞান ও উদ্ভাবন মেলা ২০২৬"
+                  placeholder="যেমন: বার্ষিক বিজ্ঞান ও উদ্ভাবন মেলা 2026"
                   value={titleBn}
                   onChange={(e) => setTitleBn(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold text-slate-900 focus:ring-2 focus:ring-blue-500"
@@ -515,7 +515,7 @@ export const BlogManagementView: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  placeholder="১-২ লাইনে পাঠকদের জন্য সংক্ষিপ্ত ধারণা..."
+                  placeholder="1-2 লাইনে পাঠকদের জন্য সংক্ষিপ্ত ধারণা..."
                   value={excerpt}
                   onChange={(e) => setExcerpt(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-800"

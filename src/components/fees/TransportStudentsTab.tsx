@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { StudentTransport, Student, TransportRoute } from '../../types';
+import { DigitInput } from '../common/DigitInput';
 import {
   Bus,
   Search,
@@ -405,12 +406,11 @@ export const TransportStudentsTab: React.FC = () => {
                 <label className="block font-semibold mb-1 text-slate-700">
                   {language === 'bn' ? 'নির্দিষ্ট শিক্ষার্থীর মাসিক ভাড়া (৳) *' : 'Student Monthly Transport Fare (৳) *'}
                 </label>
-                <input
-                  type="number"
+                <DigitInput
                   required
                   min={0}
                   value={monthlyFare}
-                  onChange={(e) => setMonthlyFare(Number(e.target.value))}
+                  onValueChange={(val) => setMonthlyFare(val)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg font-bold text-emerald-800 text-sm"
                 />
                 <p className="text-[10px] text-slate-500 mt-1">

@@ -71,6 +71,7 @@
         "displayName": { "type": "string" },
         "schoolId": { "type": "string" },
         "schoolRole": { "type": "string" },
+        "avatarUrl": { "type": "string" },
         "status": { "type": "string", "enum": ["active", "disabled"] }
       },
       "required": ["uid", "email", "schoolId", "schoolRole", "status"]
@@ -85,6 +86,78 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["schoolId", "slice"]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Two-way support conversation thread between a school user and Master Admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "schoolName": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "createdByUid": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "createdByEmail": { "type": "string" },
+        "createdByRole": { "type": "string" },
+        "subject": { "type": "string", "maxLength": 240 },
+        "category": { "type": "string", "enum": ["technical", "billing", "training", "data", "other"] },
+        "status": { "type": "string", "enum": ["open", "replied", "resolved"] },
+        "lastMessagePreview": { "type": "string", "maxLength": 500 },
+        "lastSenderRole": { "type": "string", "enum": ["school", "master_admin"] },
+        "unreadByMaster": { "type": "boolean" },
+        "unreadBySchool": { "type": "boolean" },
+        "messageCount": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": [
+        "id",
+        "schoolId",
+        "schoolName",
+        "createdByUid",
+        "createdByEmail",
+        "createdByRole",
+        "subject",
+        "category",
+        "status",
+        "lastSenderRole",
+        "unreadByMaster",
+        "unreadBySchool",
+        "messageCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SupportMessage": {
+      "title": "SupportMessage",
+      "description": "Individual message inside a support ticket with optional compressed screenshot attachments",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ticketId": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "ticketCreatorUid": { "type": "string" },
+        "senderUid": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderEmail": { "type": "string" },
+        "senderRole": { "type": "string", "enum": ["school", "master_admin"] },
+        "senderSchoolRole": { "type": "string" },
+        "text": { "type": "string", "maxLength": 3500 },
+        "imageUrls": { "type": "array", "maxItems": 3 },
+        "createdAt": { "type": "string" }
+      },
+      "required": [
+        "id",
+        "ticketId",
+        "schoolId",
+        "senderUid",
+        "senderName",
+        "senderRole",
+        "text",
+        "imageUrls",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -115,6 +188,14 @@
     "/saas_users/{uid}": {
       "schema": "SaaSUser",
       "description": "Global user-to-school index"
+    },
+    "/support_tickets/{ticketId}": {
+      "schema": "SupportTicket",
+      "description": "Two-way school support tickets"
+    },
+    "/support_tickets/{ticketId}/messages/{messageId}": {
+      "schema": "SupportMessage",
+      "description": "Support chat messages with screenshot attachments"
     }
   }
 }

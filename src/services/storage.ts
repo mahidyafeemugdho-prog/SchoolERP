@@ -47,6 +47,7 @@ import {
   buildSuperAdminPublishMeta,
   buildSuperAdminRejectMeta,
 } from '../utils/approvalWorkflow';
+import { canEditOrDeleteInvoice, canEditOrDeleteFinanceRecord } from '../utils/permissions';
 import {
   initialSchoolProfile,
   initialClasses,
@@ -1388,7 +1389,7 @@ export const StorageService = {
     setStored(STORAGE_KEYS.INVOICES, [invoice, ...current]);
     CloudSyncService.pushSliceToCloud('finance', true);
   },
-  updateInvoice(invoice: FeeInvoice): void {
+  _recalculateAndStoreInvoice(invoice: FeeInvoice): void {
     const current = this.getInvoices();
     setStored(
       STORAGE_KEYS.INVOICES,
@@ -1396,13 +1397,24 @@ export const StorageService = {
     );
     CloudSyncService.pushSliceToCloud('finance', true);
   },
-  deleteInvoice(id: string): void {
+  updateInvoice(invoice: FeeInvoice, actorRole?: UserRole | null): boolean {
+    if (!canEditOrDeleteInvoice(actorRole)) {
+      return false;
+    }
+    this._recalculateAndStoreInvoice(invoice);
+    return true;
+  },
+  deleteInvoice(id: string, actorRole?: UserRole | null): boolean {
+    if (!canEditOrDeleteInvoice(actorRole)) {
+      return false;
+    }
     const current = this.getInvoices();
     setStored(
       STORAGE_KEYS.INVOICES,
       current.filter((inv) => inv.id !== id)
     );
     CloudSyncService.pushSliceToCloud('finance', true);
+    return true;
   },
   getPayments(): FeePayment[] {
     return getStored<FeePayment[]>(STORAGE_KEYS.PAYMENTS, initialPayments || []);
@@ -1420,7 +1432,7 @@ export const StorageService = {
       const newPaid = allPaymentsForInv.reduce((sum, p) => sum + p.amount, 0);
       const newDue = Math.max(0, inv.netAmount - newPaid);
       const newStatus = newDue === 0 ? 'Paid' : newPaid > 0 ? 'Partial' : 'Unpaid';
-      this.updateInvoice({
+      this._recalculateAndStoreInvoice({
         ...inv,
         paidAmount: newPaid,
         dueAmount: newDue,
@@ -1429,7 +1441,10 @@ export const StorageService = {
     }
     CloudSyncService.pushSliceToCloud('finance', true);
   },
-  updatePayment(payment: FeePayment): void {
+  updatePayment(payment: FeePayment, actorRole?: UserRole | null): boolean {
+    if (!canEditOrDeleteFinanceRecord(actorRole)) {
+      return false;
+    }
     const currentPayments = this.getPayments();
     const updatedPayments = currentPayments.map((p) => (p.id === payment.id ? payment : p));
     setStored(STORAGE_KEYS.PAYMENTS, updatedPayments);
@@ -1442,7 +1457,7 @@ export const StorageService = {
       const newPaid = allPaymentsForInv.reduce((sum, p) => sum + p.amount, 0);
       const newDue = Math.max(0, inv.netAmount - newPaid);
       const newStatus = newDue === 0 ? 'Paid' : newPaid > 0 ? 'Partial' : 'Unpaid';
-      this.updateInvoice({
+      this._recalculateAndStoreInvoice({
         ...inv,
         paidAmount: newPaid,
         dueAmount: newDue,
@@ -1450,11 +1465,15 @@ export const StorageService = {
       });
     }
     CloudSyncService.pushSliceToCloud('finance', true);
+    return true;
   },
-  deletePayment(id: string): void {
+  deletePayment(id: string, actorRole?: UserRole | null): boolean {
+    if (!canEditOrDeleteFinanceRecord(actorRole)) {
+      return false;
+    }
     const currentPayments = this.getPayments();
     const targetPayment = currentPayments.find((p) => p.id === id);
-    if (!targetPayment) return;
+    if (!targetPayment) return false;
 
     const remainingPayments = currentPayments.filter((p) => p.id !== id);
     setStored(STORAGE_KEYS.PAYMENTS, remainingPayments);
@@ -1467,7 +1486,7 @@ export const StorageService = {
       const newPaid = allPaymentsForInv.reduce((sum, p) => sum + p.amount, 0);
       const newDue = Math.max(0, inv.netAmount - newPaid);
       const newStatus = newDue === 0 ? 'Paid' : newPaid > 0 ? 'Partial' : 'Unpaid';
-      this.updateInvoice({
+      this._recalculateAndStoreInvoice({
         ...inv,
         paidAmount: newPaid,
         dueAmount: newDue,
@@ -1475,6 +1494,7 @@ export const StorageService = {
       });
     }
     CloudSyncService.pushSliceToCloud('finance', true);
+    return true;
   },
 
   // Class Fee Configurations (শ্রেণিভিত্তিক ফি কাঠামো - Nursery to Class 10)
@@ -1648,12 +1668,12 @@ export const StorageService = {
           const isItMt = itNameBnClean.includes('মডেলটেস্ট') || itNameClean.includes('modeltest');
           const isSfMt = cleanTitleBn.includes('মডেলটেস্ট') || cleanTitleEn.includes('modeltest');
           if (isItMt && isSfMt) {
-            const it1 = itNameBnClean.includes('১ম') || itNameClean.includes('1st') || itNameClean.includes('mt1');
-            const sf1 = cleanTitleBn.includes('১ম') || cleanTitleEn.includes('1st') || cleanTitleEn.includes('mt1');
-            const it2 = itNameBnClean.includes('২য়') || itNameBnClean.includes('২য়') || itNameClean.includes('2nd') || itNameClean.includes('mt2');
-            const sf2 = cleanTitleBn.includes('২য়') || cleanTitleBn.includes('২য়') || cleanTitleEn.includes('2nd') || cleanTitleEn.includes('mt2');
-            const it3 = itNameBnClean.includes('৩য়') || itNameBnClean.includes('৩য়') || itNameClean.includes('3rd') || itNameClean.includes('mt3');
-            const sf3 = cleanTitleBn.includes('৩য়') || cleanTitleBn.includes('৩য়') || cleanTitleEn.includes('3rd') || cleanTitleEn.includes('mt3');
+            const it1 = itNameBnClean.includes('১ম') || itNameBnClean.includes('1ম') || itNameClean.includes('1st') || itNameClean.includes('mt1');
+            const sf1 = cleanTitleBn.includes('১ম') || cleanTitleBn.includes('1ম') || cleanTitleEn.includes('1st') || cleanTitleEn.includes('mt1');
+            const it2 = itNameBnClean.includes('২য়') || itNameBnClean.includes('২য়') || itNameBnClean.includes('2য়') || itNameBnClean.includes('2য়') || itNameClean.includes('2nd') || itNameClean.includes('mt2');
+            const sf2 = cleanTitleBn.includes('২য়') || cleanTitleBn.includes('২য়') || cleanTitleBn.includes('2য়') || cleanTitleBn.includes('2য়') || cleanTitleEn.includes('2nd') || cleanTitleEn.includes('mt2');
+            const it3 = itNameBnClean.includes('৩য়') || itNameBnClean.includes('৩য়') || itNameBnClean.includes('3য়') || itNameBnClean.includes('3য়') || itNameClean.includes('3rd') || itNameClean.includes('mt3');
+            const sf3 = cleanTitleBn.includes('৩য়') || cleanTitleBn.includes('৩য়') || cleanTitleBn.includes('3য়') || cleanTitleBn.includes('3য়') || cleanTitleEn.includes('3rd') || cleanTitleEn.includes('mt3');
 
             return (it1 && sf1) || (it2 && sf2) || (it3 && sf3);
           }
@@ -1662,12 +1682,12 @@ export const StorageService = {
           const isItSem = itNameBnClean.includes('সেমিস্টার') || itNameClean.includes('semester');
           const isSfSem = cleanTitleBn.includes('সেমিস্টার') || cleanTitleEn.includes('semester');
           if (isItSem && isSfSem) {
-            const it1 = itNameBnClean.includes('১ম') || itNameClean.includes('1st') || itNameClean.includes('sem1');
-            const sf1 = cleanTitleBn.includes('১ম') || cleanTitleEn.includes('1st') || cleanTitleEn.includes('sem1');
-            const it2 = itNameBnClean.includes('২য়') || itNameBnClean.includes('২য়') || itNameClean.includes('2nd') || itNameClean.includes('sem2');
-            const sf2 = cleanTitleBn.includes('২য়') || cleanTitleBn.includes('২য়') || cleanTitleEn.includes('2nd') || cleanTitleEn.includes('sem2');
-            const it3 = itNameBnClean.includes('৩য়') || itNameBnClean.includes('৩য়') || itNameClean.includes('3rd') || itNameClean.includes('sem3');
-            const sf3 = cleanTitleBn.includes('৩য়') || cleanTitleBn.includes('৩য়') || cleanTitleEn.includes('3rd') || cleanTitleEn.includes('sem3');
+            const it1 = itNameBnClean.includes('১ম') || itNameBnClean.includes('1ম') || itNameClean.includes('1st') || itNameClean.includes('sem1');
+            const sf1 = cleanTitleBn.includes('১ম') || cleanTitleBn.includes('1ম') || cleanTitleEn.includes('1st') || cleanTitleEn.includes('sem1');
+            const it2 = itNameBnClean.includes('২য়') || itNameBnClean.includes('২য়') || itNameBnClean.includes('2য়') || itNameBnClean.includes('2য়') || itNameClean.includes('2nd') || itNameClean.includes('sem2');
+            const sf2 = cleanTitleBn.includes('২য়') || cleanTitleBn.includes('২য়') || cleanTitleBn.includes('2য়') || cleanTitleBn.includes('2য়') || cleanTitleEn.includes('2nd') || cleanTitleEn.includes('sem2');
+            const it3 = itNameBnClean.includes('৩য়') || itNameBnClean.includes('৩য়') || itNameBnClean.includes('3য়') || itNameBnClean.includes('3য়') || itNameClean.includes('3rd') || itNameClean.includes('sem3');
+            const sf3 = cleanTitleBn.includes('৩য়') || cleanTitleBn.includes('৩য়') || cleanTitleBn.includes('3য়') || cleanTitleBn.includes('3য়') || cleanTitleEn.includes('3rd') || cleanTitleEn.includes('sem3');
 
             return (it1 && sf1) || (it2 && sf2) || (it3 && sf3);
           }
@@ -2138,7 +2158,10 @@ export const StorageService = {
     }
     CloudSyncService.pushSliceToCloud('finance', true);
   },
-  updateExpense(expense: Expense): void {
+  updateExpense(expense: Expense, actorRole?: UserRole | null): boolean {
+    if (!canEditOrDeleteFinanceRecord(actorRole)) {
+      return false;
+    }
     const current = this.getExpenses();
     const updated = current.map((e) => (e.id === expense.id ? expense : e));
     setStored(STORAGE_KEYS.EXPENSES, updated);
@@ -2150,8 +2173,12 @@ export const StorageService = {
       } catch {}
     }
     CloudSyncService.pushSliceToCloud('finance', true);
+    return true;
   },
-  deleteExpense(id: string): void {
+  deleteExpense(id: string, actorRole?: UserRole | null): boolean {
+    if (!canEditOrDeleteFinanceRecord(actorRole)) {
+      return false;
+    }
     const current = this.getExpenses();
     const updated = current.filter((e) => e.id !== id);
     setStored(STORAGE_KEYS.EXPENSES, updated);
@@ -2163,6 +2190,7 @@ export const StorageService = {
       } catch {}
     }
     CloudSyncService.pushSliceToCloud('finance', true);
+    return true;
   },
 
   // Staff Salary & Monthly Payroll Ledger
@@ -2995,18 +3023,13 @@ export const StorageService = {
         return h * 60 + m;
       };
 
-      const toBnDigits = (n: number | string): string => {
-        const bn = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
-        return String(n).replace(/[0-9]/g, (d) => bn[parseInt(d, 10)]);
-      };
-
       const formatDuration = (mins: number): string => {
-        if (mins < 1) return '১ মিনিটের কম';
+        if (mins < 1) return '1 মিনিটের কম';
         const h = Math.floor(mins / 60);
         const m = mins % 60;
-        if (h === 0) return `${toBnDigits(m)} মিনিট`;
-        if (m === 0) return `${toBnDigits(h)} ঘণ্টা`;
-        return `${toBnDigits(h)} ঘণ্টা ${toBnDigits(m)} মিনিট`;
+        if (h === 0) return `${m} মিনিট`;
+        if (m === 0) return `${h} ঘণ্টা`;
+        return `${h} ঘণ্টা ${m} মিনিট`;
       };
 
       // 1. If both inTime and outTime are already recorded today:
@@ -3028,7 +3051,7 @@ export const StorageService = {
             outTime: existingRecord.outTime,
             scanTime: timeFormatted,
             record: existingRecord,
-            message: `⚠️ ডুপ্লিকেট স্ক্যান রোধ (${toBnDigits(cooldownMinutes)} মিনিট নিয়ম): ${staffName} স্যারের আজকের প্রস্থান এইমাত্র [${existingRecord.outTime}]-এ সম্পন্ন হয়েছে।`,
+            message: `⚠️ ডুপ্লিকেট স্ক্যান রোধ (${cooldownMinutes} মিনিট নিয়ম): ${staffName} স্যারের আজকের প্রস্থান এইমাত্র [${existingRecord.outTime}]-এ সম্পন্ন হয়েছে।`,
           };
         }
 
@@ -3088,7 +3111,7 @@ export const StorageService = {
             inTime: existingRecord.inTime,
             scanTime: timeFormatted,
             record: existingRecord,
-            message: `⚠️ ডুপ্লিকেট স্ক্যান রোধ (${toBnDigits(cooldownMinutes)} মিনিট নিয়ম): ${staffName} স্যার [${existingRecord.inTime}]-এ প্রবেশ হাজিরা দিয়েছেন (${elapsedSinceIn > 0 ? `${toBnDigits(elapsedSinceIn)} মিনিট আগে` : 'কয়েক সেকেন্ড আগে'})। ${toBnDigits(cooldownMinutes)} মিনিটের মধ্যে পুনরায় স্ক্যান ডুপ্লিকেট হিসেবে গণ্য হবে।`,
+            message: `⚠️ ডুপ্লিকেট স্ক্যান রোধ (${cooldownMinutes} মিনিট নিয়ম): ${staffName} স্যার [${existingRecord.inTime}]-এ প্রবেশ হাজিরা দিয়েছেন (${elapsedSinceIn > 0 ? `${elapsedSinceIn} মিনিট আগে` : 'কয়েক সেকেন্ড আগে'})। ${cooldownMinutes} মিনিটের মধ্যে পুনরায় স্ক্যান ডুপ্লিকেট হিসেবে গণ্য হবে।`,
           };
         }
 
@@ -3362,18 +3385,13 @@ export const StorageService = {
       return h * 60 + m;
     };
 
-    const toBnDigits = (n: number | string): string => {
-      const bn = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
-      return String(n).replace(/[0-9]/g, (d) => bn[parseInt(d, 10)]);
-    };
-
     const formatDuration = (mins: number): string => {
-      if (mins < 1) return '১ মিনিটের কম';
+      if (mins < 1) return '1 মিনিটের কম';
       const h = Math.floor(mins / 60);
       const m = mins % 60;
-      if (h === 0) return `${toBnDigits(m)} মিনিট`;
-      if (m === 0) return `${toBnDigits(h)} ঘণ্টা`;
-      return `${toBnDigits(h)} ঘণ্টা ${toBnDigits(m)} মিনিট`;
+      if (h === 0) return `${m} মিনিট`;
+      if (m === 0) return `${h} ঘণ্টা`;
+      return `${h} ঘণ্টা ${m} মিনিট`;
     };
 
     // 1. If both inTime and outTime are already recorded today:
@@ -3395,7 +3413,7 @@ export const StorageService = {
           outTime: existingRecord.outTime,
           scanTime: timeFormatted,
           record: existingRecord,
-          message: `⚠️ ডুপ্লিকেট স্ক্যান রোধ (${toBnDigits(cooldownMinutes)} মিনিট নিয়ম): ${studentName}-এর আজকের ছুটির প্রস্থান এইমাত্র [${existingRecord.outTime}]-এ সম্পন্ন হয়েছে।`,
+          message: `⚠️ ডুপ্লিকেট স্ক্যান রোধ (${cooldownMinutes} মিনিট নিয়ম): ${studentName}-এর আজকের ছুটির প্রস্থান এইমাত্র [${existingRecord.outTime}]-এ সম্পন্ন হয়েছে।`,
         };
       }
 
@@ -3455,7 +3473,7 @@ export const StorageService = {
           inTime: existingRecord.inTime,
           scanTime: timeFormatted,
           record: existingRecord,
-          message: `⚠️ ডুপ্লিকেট স্ক্যান রোধ (${toBnDigits(cooldownMinutes)} মিনিট নিয়ম): ${studentName} ${elapsedSinceIn > 0 ? `${toBnDigits(elapsedSinceIn)} মিনিট আগে` : 'কয়েক সেকেন্ড পূর্বে'} [${existingRecord.inTime}]-এ স্কুলে প্রবেশ করেছে। ${toBnDigits(cooldownMinutes)} মিনিটের মধ্যে পুনরায় স্ক্যান ডুপ্লিকেট হিসেবে গণ্য হবে।`,
+          message: `⚠️ ডুপ্লিকেট স্ক্যান রোধ (${cooldownMinutes} মিনিট নিয়ম): ${studentName} ${elapsedSinceIn > 0 ? `${elapsedSinceIn} মিনিট আগে` : 'কয়েক সেকেন্ড পূর্বে'} [${existingRecord.inTime}]-এ স্কুলে প্রবেশ করেছে। ${cooldownMinutes} মিনিটের মধ্যে পুনরায় স্ক্যান ডুপ্লিকেট হিসেবে গণ্য হবে।`,
         };
       }
 
@@ -3762,7 +3780,7 @@ export const StorageService = {
 
     const aiRecommendations: string[] = [];
     if (weakSubjects.length > 0) {
-      aiRecommendations.push(`${weakSubjects.join(' ও ')}-এ দক্ষতা বৃদ্ধিতে প্রতিদিন অন্তত ৪৫ মিনিট অতিরিক্ত সমাধান অনুশীলন প্রয়োজন।`);
+      aiRecommendations.push(`${weakSubjects.join(' ও ')}-এ দক্ষতা বৃদ্ধিতে প্রতিদিন অন্তত 45 মিনিট অতিরিক্ত সমাধান অনুশীলন প্রয়োজন।`);
       aiRecommendations.push(`${weakSubjects[0]}-এর জন্য বিশেষ সাপ্তাহিক হোমওয়ার্ক ও সহকারী শিক্ষকের রিভিশন ফিডব্যাক সেশন নেওয়া যেতে পারে।`);
     } else {
       aiRecommendations.push('মেধা তালিকায় ধারাবাহিক শীর্ষস্থান বজায় রাখতে মডেল টেস্ট ও পূর্ববর্তী বোর্ড প্রশ্ন সমাধান চর্চা অব্যাহত রাখা উচিত।');
@@ -3773,7 +3791,7 @@ export const StorageService = {
     }
 
     if (attendanceWarning) {
-      aiRecommendations.push('উপস্থিতির হার ৮০%-এর নিচে নামলে বোর্ড পরীক্ষায় অংশগ্রহণে জটিলতা হতে পারে; নিয়মিত স্কুলে উপস্থিতি নিশ্চিত করুন।');
+      aiRecommendations.push('উপস্থিতির হার 80%-এর নিচে নামলে বোর্ড পরীক্ষায় অংশগ্রহণে জটিলতা হতে পারে; নিয়মিত স্কুলে উপস্থিতি নিশ্চিত করুন।');
     } else {
       aiRecommendations.push('নিয়মিত উপস্থিতি বজায় রাখায় আন্তরিক ধন্যবাদ ও প্রশংসা প্রাপ্য।');
     }
@@ -4277,7 +4295,7 @@ export const StorageService = {
   clearAllSchoolData(): boolean {
     try {
       const profile = this.getSchoolProfile();
-      profile.statsStudents = '০';
+      profile.statsStudents = '0';
       safeSetLocalStorage(STORAGE_KEYS.SCHOOL, JSON.stringify(profile));
       safeSetLocalStorage(STORAGE_KEYS.STUDENTS, JSON.stringify([]));
       safeSetLocalStorage(STORAGE_KEYS.EXAMS, JSON.stringify([]));
@@ -4529,9 +4547,9 @@ export const StorageService = {
 ------------------------------------------------------------------------
 রিস্টোর নির্দেশিকা (How to Restore):
 ------------------------------------------------------------------------
-১. শুধুমাত্র মাস্টার অ্যাডমিন পোর্টাল (Master Admin Portal) এ যান।
-২. "ব্যাকআপ জিপ আপলোড ও রিস্টোর" সেকশনে এই .zip ফাইলটি ড্রপ বা সিলেক্ট করুন।
-৩. সিস্টেম স্বয়ংক্রিয়ভাবে ফাইল যাচাই করবে এবং কনফার্ম করলেই সম্পূর্ণ ডাটাবেজ
+1. শুধুমাত্র মাস্টার অ্যাডমিন পোর্টাল (Master Admin Portal) এ যান।
+2. "ব্যাকআপ জিপ আপলোড ও রিস্টোর" সেকশনে এই .zip ফাইলটি ড্রপ বা সিলেক্ট করুন।
+3. সিস্টেম স্বয়ংক্রিয়ভাবে ফাইল যাচাই করবে এবং কনফার্ম করলেই সম্পূর্ণ ডাটাবেজ
    পুনরুদ্ধার হয়ে যাবে এবং ক্লাউড ডাটাবেজে সিঙ্ক হবে।
 ========================================================================`;
     zip.file('00_README_BACKUP_INFO.txt', readmeContent);

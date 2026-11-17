@@ -346,7 +346,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({ initialSubTab, j
       return {
         dateRangeStart: toLocalDateStr(startD),
         dateRangeEnd: toLocalDateStr(endD),
-        periodLabel: language === 'bn' ? 'চলতি সপ্তাহ (গত ৭ দিন)' : 'This Week (Last 7 Days)',
+        periodLabel: language === 'bn' ? 'চলতি সপ্তাহ (গত 7 দিন)' : 'This Week (Last 7 Days)',
       };
     } else if (periodPreset === 'this_month') {
       const y = String(bY);
@@ -1476,7 +1476,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({ initialSubTab, j
                     </span>
                   </div>
                   <span className="text-[11px] text-slate-500 font-medium">
-                    পরীক্ষায় বসার জন্য ন্যূনতম ৭৫% উপস্থিতি বাধ্যতামূলক
+                    পরীক্ষায় বসার জন্য ন্যূনতম 75% উপস্থিতি বাধ্যতামূলক
                   </span>
                 </div>
 
@@ -1923,9 +1923,9 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({ initialSubTab, j
                     onChange={(e) => setStaffYear(e.target.value)}
                     className="px-3 py-1.5 border border-slate-200 rounded-xl bg-white font-bold text-blue-900"
                   >
-                    <option value="2026">2026 Session (২০২৬ শিক্ষাবর্ষ)</option>
-                    <option value="2025">2025 Session (২০২৫ শিক্ষাবর্ষ)</option>
-                    <option value="2027">2027 Session (২০২৭ শিক্ষাবর্ষ)</option>
+                    <option value="2026">2026 Session (2026 শিক্ষাবর্ষ)</option>
+                    <option value="2025">2025 Session (2025 শিক্ষাবর্ষ)</option>
+                    <option value="2027">2027 Session (2027 শিক্ষাবর্ষ)</option>
                   </select>
                   <button
                     onClick={() => window.print()}
@@ -2110,7 +2110,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({ initialSubTab, j
             </div>
           )}
 
-          {/* 2. THIS MONTH (চলতি মাসের মাস্টার শিট - দিন ১ থেকে ৩১) */}
+          {/* 2. THIS MONTH (চলতি মাসের মাস্টার শিট - দিন 1 থেকে 31) */}
           {staffViewMode === 'monthly' && (
             <div className="space-y-4">
               <style>{`

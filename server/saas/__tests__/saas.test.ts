@@ -1218,5 +1218,49 @@ describe('SmartSchoolBD Multi-Tenant SaaS Platform API & Security Tests', () => 
     expect(zeroFreeOk.body.paymentRequest.planId).toBe('free');
     expect(zeroFreeOk.body.paymentRequest.amount).toBe(0);
   });
-});
 
+  it('26. Super Admin can upload, persist, retrieve via /me, and remove circular profile avatar', async () => {
+    const s1 = await createTestSchool();
+    expect(s1.status).toBe(201);
+    const superAdminToken = ctx.auth.issueTestTokenForEmail('admin@dmhs.edu.bd')!;
+
+    const sampleAvatar = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA==';
+
+    // Invalid format rejected
+    const badRes = await request(ctx.app)
+      .patch('/api/saas/me/credentials')
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .send({ avatarUrl: 'javascript:alert(1)' });
+    expect(badRes.status).toBe(400);
+    expect(badRes.body.code).toBe('INVALID_IMAGE_FORMAT');
+
+    // Valid avatar persisted
+    const saveRes = await request(ctx.app)
+      .patch('/api/saas/me/credentials')
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .send({ avatarUrl: sampleAvatar });
+    expect(saveRes.status).toBe(200);
+    expect(saveRes.body.user.avatarUrl).toBe(sampleAvatar);
+
+    // Returned on /api/saas/me
+    const meRes = await request(ctx.app)
+      .get('/api/saas/me')
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(meRes.status).toBe(200);
+    expect(meRes.body.principal.avatarUrl).toBe(sampleAvatar);
+
+    // Cleared when empty string sent
+    const removeRes = await request(ctx.app)
+      .patch('/api/saas/me/credentials')
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .send({ avatarUrl: '' });
+    expect(removeRes.status).toBe(200);
+    expect(removeRes.body.user.avatarUrl).toBe('');
+
+    const meAfterRemove = await request(ctx.app)
+      .get('/api/saas/me')
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(meAfterRemove.status).toBe(200);
+    expect(meAfterRemove.body.principal.avatarUrl).toBe('');
+  });
+});

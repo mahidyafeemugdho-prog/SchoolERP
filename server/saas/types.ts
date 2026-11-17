@@ -216,6 +216,7 @@ export interface SaaSUserRecord {
   linkedStaffId?: string;
   linkedStudentId?: string;
   phone?: string;
+  avatarUrl?: string;
   status: 'active' | 'disabled';
   createdAt: string;
   createdBy: string;
@@ -233,6 +234,7 @@ export interface AuthPrincipal {
   linkedStaffId?: string;
   linkedStudentId?: string;
   phone?: string;
+  avatarUrl?: string;
 }
 
 export interface CreateSchoolInput {
@@ -298,6 +300,7 @@ export interface UpdateOwnCredentialsInput {
   email?: string;
   password?: string;
   phone?: string;
+  avatarUrl?: string;
 }
 
 export interface UpdateTenantUserCredentialsInput {
@@ -379,6 +382,46 @@ export function getDefaultPlatformPaymentChannels(): PlatformPaymentChannels {
   };
 }
 
+export type SupportCategory = 'technical' | 'billing' | 'training' | 'data' | 'other';
+export type SupportTicketStatus = 'open' | 'replied' | 'resolved';
+export type SupportSenderRole = 'school' | 'master_admin';
+
+export interface SupportTicketRecord {
+  id: string;
+  schoolId: string;
+  schoolName: string;
+  schoolCode?: string;
+  createdByUid: string;
+  createdByName?: string;
+  createdByEmail: string;
+  createdByRole: string;
+  subject: string;
+  category: SupportCategory;
+  status: SupportTicketStatus;
+  lastMessagePreview?: string;
+  lastSenderRole: SupportSenderRole;
+  unreadByMaster: boolean;
+  unreadBySchool: boolean;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupportMessageRecord {
+  id: string;
+  ticketId: string;
+  schoolId: string;
+  ticketCreatorUid?: string;
+  senderUid: string;
+  senderName: string;
+  senderEmail?: string;
+  senderRole: SupportSenderRole;
+  senderSchoolRole?: string;
+  text: string;
+  imageUrls: string[];
+  createdAt: string;
+}
+
 export interface DatabaseProviderInterface {
   readonly providerName: string;
   isMasterAdminUidOrEmail(uid: string, email: string): Promise<boolean>;
@@ -413,6 +456,23 @@ export interface DatabaseProviderInterface {
 
   getTenantSlices(schoolId: string): Promise<Record<string, any>>;
   saveTenantSlice(schoolId: string, sliceName: string, data: Record<string, any>): Promise<void>;
+
+  listSupportTickets(schoolId?: string): Promise<SupportTicketRecord[]>;
+  getSupportTicketById(ticketId: string): Promise<SupportTicketRecord | null>;
+  createSupportTicket(
+    ticket: SupportTicketRecord,
+    initialMessage: SupportMessageRecord
+  ): Promise<{ ticket: SupportTicketRecord; message: SupportMessageRecord }>;
+  listSupportMessages(ticketId: string): Promise<SupportMessageRecord[]>;
+  addSupportMessage(
+    ticketId: string,
+    message: SupportMessageRecord,
+    ticketUpdates: Partial<SupportTicketRecord>
+  ): Promise<{ ticket: SupportTicketRecord; message: SupportMessageRecord }>;
+  updateSupportTicket(
+    ticketId: string,
+    updates: Partial<SupportTicketRecord>
+  ): Promise<SupportTicketRecord>;
 
   runInTransaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T>;
 }

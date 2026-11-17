@@ -392,7 +392,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             </span>
           </div>
           <div className="mt-3 text-xs text-slate-500 font-medium flex items-center justify-between border-t border-slate-100 pt-2.5">
-            <span>{language === 'bn' ? '১২টি সক্রিয় শ্রেণি' : '12 Active Classes'}</span>
+            <span>{language === 'bn' ? '12টি সক্রিয় শ্রেণি' : '12 Active Classes'}</span>
             {isTabAuthorized('students', activeRole, currentUser) && (
               <button onClick={() => onNavigate('students')} className="text-blue-600 font-bold hover:underline">
                 {t('details')} &rarr;
@@ -473,7 +473,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
               </span>
             </div>
             <div className="mt-3 text-xs text-slate-500 font-medium flex items-center justify-between border-t border-slate-100 pt-2.5">
-              <span>{language === 'bn' ? 'অক্টোবর ২০২৬ সেশন' : 'October 2026 Invoices'}</span>
+              <span>{language === 'bn' ? 'অক্টোবর 2026 সেশন' : 'October 2026 Invoices'}</span>
               <button onClick={() => onNavigate('fees')} className="text-amber-700 font-bold hover:underline">
                 {t('details')} &rarr;
               </button>
@@ -545,16 +545,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             {[
               { cls: 'Nursery', bn: 'প্লে / নার্সারি' },
               { cls: 'KG', bn: 'কেজি (KG)' },
-              { cls: 'Class 1', bn: '১ম শ্রেণি' },
-              { cls: 'Class 2', bn: '২য় শ্রেণি' },
-              { cls: 'Class 3', bn: '৩য় শ্রেণি' },
-              { cls: 'Class 4', bn: '৪র্থ শ্রেণি' },
-              { cls: 'Class 5', bn: '৫ম শ্রেণি' },
-              { cls: 'Class 6', bn: '৬ষ্ঠ শ্রেণি' },
-              { cls: 'Class 7', bn: '৭ম শ্রেণি' },
-              { cls: 'Class 8', bn: '৮ম শ্রেণি' },
-              { cls: 'Class 9', bn: '৯ম শ্রেণি' },
-              { cls: 'Class 10', bn: '১০ম শ্রেণি' },
+              { cls: 'Class 1', bn: '1ম শ্রেণি' },
+              { cls: 'Class 2', bn: '2য় শ্রেণি' },
+              { cls: 'Class 3', bn: '3য় শ্রেণি' },
+              { cls: 'Class 4', bn: '4র্থ শ্রেণি' },
+              { cls: 'Class 5', bn: '5ম শ্রেণি' },
+              { cls: 'Class 6', bn: '6ষ্ঠ শ্রেণি' },
+              { cls: 'Class 7', bn: '7ম শ্রেণি' },
+              { cls: 'Class 8', bn: '8ম শ্রেণি' },
+              { cls: 'Class 9', bn: '9ম শ্রেণি' },
+              { cls: 'Class 10', bn: '10ম শ্রেণি' },
             ].map((item) => {
               const count = classCounts[item.cls] || 0;
               return (
@@ -581,7 +581,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             <div className="flex items-center space-x-2">
               <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
               <span className="text-slate-600">
-                {language === 'bn' ? 'বিজ্ঞান, ব্যবসায়, মানবিক ও ভোকেশনাল বিভাগ (৯ম-১০ম)' : 'Science, Commerce, Arts & Vocational Groups (9-10)'}
+                {language === 'bn' ? 'বিজ্ঞান, ব্যবসায়, মানবিক ও ভোকেশনাল বিভাগ (9ম-10ম)' : 'Science, Commerce, Arts & Vocational Groups (9-10)'}
               </span>
             </div>
             <div className="flex items-center space-x-2">

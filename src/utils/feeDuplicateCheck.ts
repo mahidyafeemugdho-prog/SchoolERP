@@ -130,6 +130,7 @@ function detectFeeKind(cleanText: string): FeeKind {
 function extractOrdinal(cleanText: string, kind: 'model_test' | 'semester_exam'): '1' | '2' | '3' | null {
   if (
     cleanText.includes('১ম') ||
+    cleanText.includes('1ম') ||
     cleanText.includes('1st') ||
     (kind === 'model_test' && cleanText.includes('mt1')) ||
     (kind === 'semester_exam' &&
@@ -139,6 +140,9 @@ function extractOrdinal(cleanText: string, kind: 'model_test' | 'semester_exam')
   }
   if (
     cleanText.includes('২য়') ||
+    cleanText.includes('২য়') ||
+    cleanText.includes('2য়') ||
+    cleanText.includes('2য়') ||
     cleanText.includes('2nd') ||
     (kind === 'model_test' && cleanText.includes('mt2')) ||
     (kind === 'semester_exam' && cleanText.includes('sem2'))
@@ -147,6 +151,9 @@ function extractOrdinal(cleanText: string, kind: 'model_test' | 'semester_exam')
   }
   if (
     cleanText.includes('৩য়') ||
+    cleanText.includes('৩য়') ||
+    cleanText.includes('3য়') ||
+    cleanText.includes('3য়') ||
     cleanText.includes('3rd') ||
     (kind === 'model_test' && cleanText.includes('mt3')) ||
     (kind === 'semester_exam' &&

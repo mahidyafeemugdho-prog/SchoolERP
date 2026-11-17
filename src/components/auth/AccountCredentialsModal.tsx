@@ -45,7 +45,9 @@ import {
   Building2,
   Sparkles,
   Trash2,
+  Camera,
 } from 'lucide-react';
+import { compressImageToPassportSize } from '../../utils/storageHelper';
 
 export interface AccountCredentialsModalProps {
   isOpen: boolean;
@@ -81,8 +83,10 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
   initialTab = 'my_account',
   initialSchoolId,
 }) => {
-  const { currentUser, activeRole, saasSession, firebaseUser, refreshSaasSession } = useAuth();
+  const { currentUser, activeRole, saasSession, firebaseUser, refreshSaasSession, updateUserAvatar } = useAuth();
   const { language } = useLanguage();
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const modalAvatarInputId = React.useId();
 
   const isMaster = activeRole === 'master_admin' || Boolean(saasSession?.principal?.isMasterAdmin);
   const canManageUsers = isMaster || activeRole === 'super_admin' || activeRole === 'admin';
@@ -370,7 +374,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
           type: 'error',
           text:
             language === 'bn'
-              ? 'নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।'
+              ? 'নতুন পাসওয়ার্ড কমপক্ষে 6 অক্ষরের হতে হবে।'
               : 'New password must be at least 6 characters.',
         });
         return;
@@ -567,7 +571,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
         type: 'error',
         text:
           language === 'bn'
-            ? 'নাম, সঠিক ইমেইল এবং কমপক্ষে ৬ অক্ষরের পাসওয়ার্ড দিন।'
+            ? 'নাম, সঠিক ইমেইল এবং কমপক্ষে 6 অক্ষরের পাসওয়ার্ড দিন।'
             : 'Please provide full name, valid email, and a password of at least 6 characters.',
       });
       return;
@@ -677,7 +681,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
         type: 'error',
         text:
           language === 'bn'
-            ? 'নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।'
+            ? 'নতুন পাসওয়ার্ড কমপক্ষে 6 অক্ষরের হতে হবে।'
             : 'New password must be at least 6 characters.',
       });
       return;
@@ -923,41 +927,131 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
         <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-5">
           {tab === 'my_account' && (
             <>
-              {/* Active Identity Overview */}
+              {/* Active Identity Overview + Profile Photo Upload */}
               <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="space-y-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
-                    <span className="font-extrabold text-sm text-slate-900 truncate">
-                      {currentUser.name}
-                    </span>
-                    <span className="text-[11px] font-bold text-blue-700 bg-blue-100/70 px-2 py-0.5 rounded">
-                      {getRoleLabel(activeRole)}
-                    </span>
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="relative w-14 h-14 rounded-full bg-purple-100 border-2 border-purple-200 flex items-center justify-center overflow-hidden shrink-0">
+                    {currentUser.avatar ? (
+                      <img
+                        src={currentUser.avatar}
+                        alt={currentUser.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-lg font-extrabold text-purple-700">
+                        {currentUser.name.charAt(0)}
+                      </span>
+                    )}
                   </div>
-                  <div className="text-[11px] text-slate-600 font-mono truncate">
-                    {currentUser.email}
-                  </div>
-                  <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span>
-                      {isMaster
-                        ? language === 'bn'
-                          ? 'প্ল্যাটফর্ম মাস্টার একাউন্ট'
-                          : 'Platform Master Account'
-                        : `${saasSession?.school?.schoolName || 'School'} (${saasSession?.school?.schoolId || currentUser.schoolId || 'SaaS'})`}
-                    </span>
-                    <span>•</span>
-                    <span>
-                      {userHasPassword
-                        ? language === 'bn'
-                          ? 'পাসওয়ার্ড লগইন সক্রিয়'
-                          : 'Password Login Active'
-                        : language === 'bn'
-                        ? 'Google লগইন একাউন্ট'
-                        : 'Google Sign-In Account'}
-                    </span>
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
+                      <span className="font-extrabold text-sm text-slate-900 truncate">
+                        {currentUser.name}
+                      </span>
+                      <span className="text-[11px] font-bold text-blue-700 bg-blue-100/70 px-2 py-0.5 rounded">
+                        {getRoleLabel(activeRole)}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-600 font-mono truncate">
+                      {currentUser.email}
+                    </div>
+                    <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <span>
+                        {isMaster
+                          ? language === 'bn'
+                            ? 'প্ল্যাটফর্ম মাস্টার একাউন্ট'
+                            : 'Platform Master Account'
+                          : `${saasSession?.school?.schoolName || 'School'} (${saasSession?.school?.schoolId || currentUser.schoolId || 'SaaS'})`}
+                      </span>
+                      <span>•</span>
+                      <span>
+                        {userHasPassword
+                          ? language === 'bn'
+                            ? 'পাসওয়ার্ড লগইন সক্রিয়'
+                            : 'Password Login Active'
+                          : language === 'bn'
+                          ? 'Google লগইন একাউন্ট'
+                          : 'Google Sign-In Account'}
+                      </span>
+                    </div>
                   </div>
                 </div>
+                {(activeRole === 'super_admin' || activeRole === 'master_admin' || activeRole === 'admin') && (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <input
+                      id={modalAvatarInputId}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!file || !file.type.startsWith('image/')) return;
+                        setAvatarBusy(true);
+                        setMyFeedback(null);
+                        try {
+                          let compressed = await compressImageToPassportSize(file, 240, 240, 0.8);
+                          if (compressed.length > 150_000) {
+                            compressed = await compressImageToPassportSize(file, 160, 160, 0.68);
+                          }
+                          await updateUserAvatar(compressed);
+                          setMyFeedback({
+                            type: 'success',
+                            text:
+                              language === 'bn'
+                                ? 'প্রোফাইল ছবি সফলভাবে আপডেট হয়েছে!'
+                                : 'Profile photo updated successfully!',
+                          });
+                        } catch (err: any) {
+                          setMyFeedback({
+                            type: 'error',
+                            text: err?.message || 'Failed to save profile photo.',
+                          });
+                        } finally {
+                          setAvatarBusy(false);
+                        }
+                      }}
+                    />
+                    <label
+                      htmlFor={modalAvatarInputId}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold cursor-pointer transition-colors"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>
+                        {avatarBusy
+                          ? language === 'bn'
+                            ? 'আপলোড হচ্ছে...'
+                            : 'Saving...'
+                          : currentUser.avatar
+                          ? language === 'bn'
+                            ? 'ছবি পরিবর্তন'
+                            : 'Change Photo'
+                          : language === 'bn'
+                          ? 'ছবি আপলোড'
+                          : 'Upload Photo'}
+                      </span>
+                    </label>
+                    {currentUser.avatar && (
+                      <button
+                        type="button"
+                        disabled={avatarBusy}
+                        onClick={async () => {
+                          setAvatarBusy(true);
+                          try {
+                            await updateUserAvatar('');
+                          } finally {
+                            setAvatarBusy(false);
+                          }
+                        }}
+                        title={language === 'bn' ? 'ছবি মুছুন' : 'Remove Photo'}
+                        className="p-1.5 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {myFeedback && (
@@ -1088,7 +1182,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                     <div>
                       <label className="block font-semibold text-slate-700 mb-1">
-                        {language === 'bn' ? 'নতুন পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর)' : 'New Password (min 6 chars)'}
+                        {language === 'bn' ? 'নতুন পাসওয়ার্ড (কমপক্ষে 6 অক্ষর)' : 'New Password (min 6 chars)'}
                       </label>
                       <div className="relative">
                         <input
@@ -1395,7 +1489,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                     </div>
                     <div className="sm:col-span-2">
                       <label className="block font-semibold text-slate-700 mb-1">
-                        {language === 'bn' ? 'প্রাথমিক পাসওয়ার্ড (৬+ অক্ষর) *' : 'Initial Password (6+ chars) *'}
+                        {language === 'bn' ? 'প্রাথমিক পাসওয়ার্ড (6+ অক্ষর) *' : 'Initial Password (6+ chars) *'}
                       </label>
                       <div className="flex items-center gap-1.5">
                         <input
@@ -1557,7 +1651,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                           type={showEditUserPass ? 'text' : 'password'}
                           value={editUserForm.newPassword}
                           onChange={(e) => setEditUserForm((p) => ({ ...p, newPassword: e.target.value }))}
-                          placeholder={language === 'bn' ? 'কমপক্ষে ৬ অক্ষরের নতুন পাসওয়ার্ড' : 'Min 6 characters'}
+                          placeholder={language === 'bn' ? 'কমপক্ষে 6 অক্ষরের নতুন পাসওয়ার্ড' : 'Min 6 characters'}
                           className="w-full pl-3 pr-9 py-2 rounded-lg border border-slate-300 bg-white text-xs font-mono"
                         />
                         <button

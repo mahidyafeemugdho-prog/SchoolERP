@@ -17,6 +17,7 @@ import { compareStudentsByRoll } from '../../utils/studentSort';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 import { buildPrincipalSignatureHtml } from '../../utils/signatureHelper';
 import { getMarksheetRowBreakdown } from '../../utils/marksheetBreakdown';
+import { DigitInput } from '../common/DigitInput';
 import {
   Award,
   Search,
@@ -442,6 +443,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   // Handle Mark Entry Change
   const handleMarkChange = (studentId: string, field: 'written' | 'mcq' | 'practical', value: number) => {
     if (!canManage || !currentSubject) return;
+    const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
 
     const existingIndex = allMarks.findIndex(
       (m) => m.examId === selectedExamId && m.studentId === studentId && m.subjectId === currentSubject.id
@@ -456,7 +458,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
       entry = {
         ...allMarks[existingIndex],
         className: allMarks[existingIndex].className || selectedClass,
-        [field]: value,
+        [field]: safeValue,
         ...draftMeta,
       };
     } else {
@@ -473,7 +475,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
         total: 0,
         grade: 'F',
         gpa: 0,
-        [field]: value,
+        [field]: safeValue,
         ...draftMeta,
       };
     }
@@ -2427,13 +2429,13 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-white border-b border-slate-200 text-slate-600 font-semibold uppercase">
-                        <th className="py-3 px-4 w-16">Roll</th>
-                        <th className="py-3 px-4">Student Name</th>
-                        <th className="py-3 px-4 w-28">Written (CQ)</th>
+                        <th className="py-3 px-4 w-16">{language === 'bn' ? 'রোল' : 'Roll'}</th>
+                        <th className="py-3 px-4">{language === 'bn' ? 'শিক্ষার্থীর নাম' : 'Student Name'}</th>
+                        <th className="py-3 px-4 w-28">{language === 'bn' ? 'লিখিত (CQ)' : 'Written (CQ)'}</th>
                         <th className="py-3 px-4 w-28">MCQ</th>
-                        <th className="py-3 px-4 w-28">Practical</th>
-                        <th className="py-3 px-4 w-24">Total</th>
-                        <th className="py-3 px-4 w-20">Grade</th>
+                        <th className="py-3 px-4 w-28">{language === 'bn' ? 'ব্যবহারিক' : 'Practical'}</th>
+                        <th className="py-3 px-4 w-24">{language === 'bn' ? 'মোট' : 'Total'}</th>
+                        <th className="py-3 px-4 w-20">{language === 'bn' ? 'গ্রেড' : 'Grade'}</th>
                         <th className="py-3 px-4 w-20">GPA</th>
                       </tr>
                     </thead>
@@ -2459,7 +2461,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                           return (
                             <tr key={std.id} className="hover:bg-slate-50/60 transition-colors">
                               <td className="py-3 px-4 font-bold text-slate-700">
-                                {language === 'bn' ? toBnNumber(std.roll) : std.roll}
+                                {toBnNumber(std.roll)}
                               </td>
                               <td className="py-3 px-4">
                                 <div className="font-semibold text-slate-900">{std.nameEn}</div>
@@ -2473,35 +2475,35 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                                 </div>
                               </td>
                               <td className="py-3 px-4">
-                                <input
-                                  type="number"
+                                <DigitInput
+                                  allowDecimal
                                   disabled={!canManage || !isEditingMarks}
                                   min={0}
                                   max={currentSubject.writtenMarks}
                                   value={m.written}
-                                  onChange={(e) => handleMarkChange(std.id, 'written', Number(e.target.value))}
+                                  onValueChange={(val) => handleMarkChange(std.id, 'written', val)}
                                   className="w-20 px-2.5 py-1.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 font-semibold disabled:bg-slate-100 disabled:text-slate-500"
                                 />
                               </td>
                               <td className="py-3 px-4">
-                                <input
-                                  type="number"
+                                <DigitInput
+                                  allowDecimal
                                   disabled={!canManage || !isEditingMarks || !currentSubject.mcqMarks}
                                   min={0}
                                   max={currentSubject.mcqMarks || 0}
                                   value={m.mcq}
-                                  onChange={(e) => handleMarkChange(std.id, 'mcq', Number(e.target.value))}
+                                  onValueChange={(val) => handleMarkChange(std.id, 'mcq', val)}
                                   className="w-20 px-2.5 py-1.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 font-semibold disabled:bg-slate-100 disabled:text-slate-500"
                                 />
                               </td>
                               <td className="py-3 px-4">
-                                <input
-                                  type="number"
+                                <DigitInput
+                                  allowDecimal
                                   disabled={!canManage || !isEditingMarks || !currentSubject.practicalMarks}
                                   min={0}
                                   max={currentSubject.practicalMarks || 0}
                                   value={m.practical}
-                                  onChange={(e) => handleMarkChange(std.id, 'practical', Number(e.target.value))}
+                                  onValueChange={(val) => handleMarkChange(std.id, 'practical', val)}
                                   className="w-20 px-2.5 py-1.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 font-semibold disabled:bg-slate-100 disabled:text-slate-500"
                                 />
                               </td>
@@ -3185,15 +3187,14 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                             </label>
                             {checked && useCustomExamWeights && (
                               <div className="flex items-center space-x-1 pl-1.5 border-l border-slate-200">
-                                <input
-                                  type="number"
+                                <DigitInput
                                   min={1}
                                   max={100}
                                   value={meritExamWeights[ex.id] ?? 1}
-                                  onChange={(e) =>
+                                  onValueChange={(val) =>
                                     setMeritExamWeights((prev) => ({
                                       ...prev,
-                                      [ex.id]: Math.max(1, Number(e.target.value) || 1),
+                                      [ex.id]: Math.max(1, val || 1),
                                     }))
                                   }
                                   className="w-12 px-1.5 py-0.5 border border-blue-300 rounded text-center text-[11px] font-bold"

@@ -14,6 +14,8 @@ import { formatGroupName } from '../../utils/i18n';
 import { findDuplicatePaidFee } from '../../utils/feeDuplicateCheck';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 import { buildPrincipalSignatureHtml } from '../../utils/signatureHelper';
+import { canEditOrDeleteInvoice } from '../../utils/permissions';
+import { DigitInput } from '../common/DigitInput';
 import {
   Wallet,
   Search,
@@ -58,6 +60,7 @@ import {
   MessageSquare,
   Edit2,
   Download,
+  Lock,
 } from 'lucide-react';
 
 const MONTH_NAMES = [
@@ -94,12 +97,12 @@ const MONTH_NAMES_BN: Record<string, string> = {
 const QUICK_PRESETS = [
   { id: 'tuition', nameEn: 'Monthly Tuition Fee', nameBn: 'মাসিক বেতন', defaultAmount: 800, icon: BookOpen },
   { id: 'session', nameEn: 'Session Charge', nameBn: 'বাৎসরিক সেশন ফি', defaultAmount: 3000, icon: Building },
-  { id: 'exam_mt1', nameEn: '1st Model Test Fee', nameBn: '১ম মডেল টেস্ট ফি', defaultAmount: 300, icon: Award },
-  { id: 'exam_sem1', nameEn: '1st Semester Exam Fee', nameBn: '১ম সেমিস্টার পরীক্ষা ফি', defaultAmount: 400, icon: Award },
-  { id: 'exam_mt2', nameEn: '2nd Model Test Fee', nameBn: '২য় মডেল টেস্ট ফি', defaultAmount: 300, icon: Award },
-  { id: 'exam_sem2', nameEn: '2nd Semester Exam Fee', nameBn: '২য় সেমিস্টার পরীক্ষা ফি', defaultAmount: 400, icon: Award },
-  { id: 'exam_mt3', nameEn: '3rd Model Test Fee', nameBn: '৩য় মডেল টেস্ট ফি', defaultAmount: 300, icon: Award },
-  { id: 'exam_sem3', nameEn: '3rd Semester Exam Fee', nameBn: '৩য় সেমিস্টার পরীক্ষা ফি', defaultAmount: 500, icon: Award },
+  { id: 'exam_mt1', nameEn: '1st Model Test Fee', nameBn: '1ম মডেল টেস্ট ফি', defaultAmount: 300, icon: Award },
+  { id: 'exam_sem1', nameEn: '1st Semester Exam Fee', nameBn: '1ম সেমিস্টার পরীক্ষা ফি', defaultAmount: 400, icon: Award },
+  { id: 'exam_mt2', nameEn: '2nd Model Test Fee', nameBn: '2য় মডেল টেস্ট ফি', defaultAmount: 300, icon: Award },
+  { id: 'exam_sem2', nameEn: '2nd Semester Exam Fee', nameBn: '2য় সেমিস্টার পরীক্ষা ফি', defaultAmount: 400, icon: Award },
+  { id: 'exam_mt3', nameEn: '3rd Model Test Fee', nameBn: '3য় মডেল টেস্ট ফি', defaultAmount: 300, icon: Award },
+  { id: 'exam_sem3', nameEn: '3rd Semester Exam Fee', nameBn: '3য় সেমিস্টার পরীক্ষা ফি', defaultAmount: 500, icon: Award },
   { id: 'transport', nameEn: 'Transport Bus Fee', nameBn: 'পরিবহন বাস ফি', defaultAmount: 1500, icon: Bus },
   { id: 'tour', nameEn: 'Educational Study Tour', nameBn: 'শিক্ষা সফর ফি', defaultAmount: 1500, icon: Sparkles },
   { id: 'sports', nameEn: 'Sports & Cultural Fee', nameBn: 'ক্রীড়া ও সাংস্কৃতিক ফি', defaultAmount: 500, icon: Sparkles },
@@ -603,6 +606,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   };
 
   const canManage = activeRole === 'super_admin' || activeRole === 'admin' || activeRole === 'accountant' || activeRole === 'master_admin';
+  const canEditDeleteInvoices = canEditOrDeleteInvoice(activeRole);
 
   // Comprehensive Outstanding Dues across all students (Unpaid invoices + Overdue monthly tuition + Scheduled fees + Transport + Custom fees)
   const comprehensiveDueEntries = useMemo(() => {
@@ -720,12 +724,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
         const isDueMt = cleanDue.includes('মডেলটেস্ট') || cleanDue.includes('modeltest');
         const isItemMt = cleanItem.includes('মডেলটেস্ট') || cleanItem.includes('modeltest');
         if (isDueMt && isItemMt) {
-          const due1 = cleanDue.includes('১ম') || cleanDue.includes('1st') || cleanDue.includes('mt1');
-          const item1 = cleanItem.includes('১ম') || cleanItem.includes('1st') || cleanItem.includes('mt1');
-          const due2 = cleanDue.includes('২য়') || cleanDue.includes('২য়') || cleanDue.includes('2nd') || cleanDue.includes('mt2');
-          const item2 = cleanItem.includes('২য়') || cleanItem.includes('২য়') || cleanItem.includes('2nd') || cleanItem.includes('mt2');
-          const due3 = cleanDue.includes('৩য়') || cleanDue.includes('৩য়') || cleanDue.includes('3rd') || cleanDue.includes('mt3');
-          const item3 = cleanItem.includes('৩য়') || cleanItem.includes('৩য়') || cleanItem.includes('3rd') || cleanItem.includes('mt3');
+          const due1 = cleanDue.includes('১ম') || cleanDue.includes('1ম') || cleanDue.includes('1st') || cleanDue.includes('mt1');
+          const item1 = cleanItem.includes('১ম') || cleanItem.includes('1ম') || cleanItem.includes('1st') || cleanItem.includes('mt1');
+          const due2 = cleanDue.includes('২য়') || cleanDue.includes('২য়') || cleanDue.includes('2য়') || cleanDue.includes('2য়') || cleanDue.includes('2nd') || cleanDue.includes('mt2');
+          const item2 = cleanItem.includes('২য়') || cleanItem.includes('২য়') || cleanItem.includes('2য়') || cleanItem.includes('2য়') || cleanItem.includes('2nd') || cleanItem.includes('mt2');
+          const due3 = cleanDue.includes('৩য়') || cleanDue.includes('৩য়') || cleanDue.includes('3য়') || cleanDue.includes('3য়') || cleanDue.includes('3rd') || cleanDue.includes('mt3');
+          const item3 = cleanItem.includes('৩য়') || cleanItem.includes('৩য়') || cleanItem.includes('3য়') || cleanItem.includes('3য়') || cleanItem.includes('3rd') || cleanItem.includes('mt3');
           return (due1 && item1) || (due2 && item2) || (due3 && item3);
         }
 
@@ -733,12 +737,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
         const isDueSem = cleanDue.includes('সেমিস্টার') || cleanDue.includes('semester');
         const isItemSem = cleanItem.includes('সেমিস্টার') || cleanItem.includes('semester');
         if (isDueSem && isItemSem) {
-          const due1 = cleanDue.includes('১ম') || cleanDue.includes('1st') || cleanDue.includes('sem1');
-          const item1 = cleanItem.includes('১ম') || cleanItem.includes('1st') || cleanItem.includes('sem1');
-          const due2 = cleanDue.includes('২য়') || cleanDue.includes('২য়') || cleanDue.includes('2nd') || cleanDue.includes('sem2');
-          const item2 = cleanItem.includes('২য়') || cleanItem.includes('২য়') || cleanItem.includes('2nd') || cleanItem.includes('sem2');
-          const due3 = cleanDue.includes('৩য়') || cleanDue.includes('৩য়') || cleanDue.includes('3rd') || cleanDue.includes('sem3');
-          const item3 = cleanItem.includes('৩য়') || cleanItem.includes('৩য়') || cleanItem.includes('3rd') || cleanItem.includes('sem3');
+          const due1 = cleanDue.includes('১ম') || cleanDue.includes('1ম') || cleanDue.includes('1st') || cleanDue.includes('sem1');
+          const item1 = cleanItem.includes('১ম') || cleanItem.includes('1ম') || cleanItem.includes('1st') || cleanItem.includes('sem1');
+          const due2 = cleanDue.includes('২য়') || cleanDue.includes('২য়') || cleanDue.includes('2য়') || cleanDue.includes('2য়') || cleanDue.includes('2nd') || cleanDue.includes('sem2');
+          const item2 = cleanItem.includes('২য়') || cleanItem.includes('২য়') || cleanItem.includes('2য়') || cleanItem.includes('2য়') || cleanItem.includes('2nd') || cleanItem.includes('sem2');
+          const due3 = cleanDue.includes('৩য়') || cleanDue.includes('৩য়') || cleanDue.includes('3য়') || cleanDue.includes('3য়') || cleanDue.includes('3rd') || cleanDue.includes('sem3');
+          const item3 = cleanItem.includes('৩য়') || cleanItem.includes('৩য়') || cleanItem.includes('3য়') || cleanItem.includes('3য়') || cleanItem.includes('3rd') || cleanItem.includes('sem3');
           return (due1 && item1) || (due2 && item2) || (due3 && item3);
         }
 
@@ -943,12 +947,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       { id: 'admission', nameEn: 'Admission Fee', nameBn: 'নতুন ভর্তি ফি', defaultAmount: classFee.admissionFee ?? 1500, icon: UserPlus },
       { id: 'tuition', nameEn: 'Monthly Tuition Fee', nameBn: 'মাসিক বেতন', defaultAmount: classFee.tuitionFee, icon: BookOpen },
       { id: 'session', nameEn: 'Session Charge', nameBn: 'বাৎসরিক সেশন ফি', defaultAmount: classFee.sessionFee, icon: Building },
-      { id: 'exam_mt1', nameEn: '1st Model Test Fee', nameBn: '১ম মডেল টেস্ট ফি', defaultAmount: classFee.examFee1stModelTest ?? classFee.examFee1stTest ?? 250, icon: Award },
-      { id: 'exam_sem1', nameEn: '1st Semester Exam Fee', nameBn: '১ম সেমিস্টার পরীক্ষা ফি', defaultAmount: classFee.examFee1stSemester ?? classFee.examFeeHalfYearly ?? 350, icon: Award },
-      { id: 'exam_mt2', nameEn: '2nd Model Test Fee', nameBn: '২য় মডেল টেস্ট ফি', defaultAmount: classFee.examFee2ndModelTest ?? classFee.examFeeModelTest ?? 250, icon: Award },
-      { id: 'exam_sem2', nameEn: '2nd Semester Exam Fee', nameBn: '২য় সেমিস্টার পরীক্ষা ফি', defaultAmount: classFee.examFee2ndSemester ?? classFee.examFeeHalfYearly ?? 350, icon: Award },
-      { id: 'exam_mt3', nameEn: '3rd Model Test Fee', nameBn: '৩য় মডেল টেস্ট ফি', defaultAmount: classFee.examFee3rdModelTest ?? classFee.examFeeModelTest ?? 250, icon: Award },
-      { id: 'exam_sem3', nameEn: '3rd Semester Exam Fee', nameBn: '৩য় সেমিস্টার পরীক্ষা ফি', defaultAmount: classFee.examFee3rdSemester ?? classFee.examFeeAnnual ?? 400, icon: Award },
+      { id: 'exam_mt1', nameEn: '1st Model Test Fee', nameBn: '1ম মডেল টেস্ট ফি', defaultAmount: classFee.examFee1stModelTest ?? classFee.examFee1stTest ?? 250, icon: Award },
+      { id: 'exam_sem1', nameEn: '1st Semester Exam Fee', nameBn: '1ম সেমিস্টার পরীক্ষা ফি', defaultAmount: classFee.examFee1stSemester ?? classFee.examFeeHalfYearly ?? 350, icon: Award },
+      { id: 'exam_mt2', nameEn: '2nd Model Test Fee', nameBn: '2য় মডেল টেস্ট ফি', defaultAmount: classFee.examFee2ndModelTest ?? classFee.examFeeModelTest ?? 250, icon: Award },
+      { id: 'exam_sem2', nameEn: '2nd Semester Exam Fee', nameBn: '2য় সেমিস্টার পরীক্ষা ফি', defaultAmount: classFee.examFee2ndSemester ?? classFee.examFeeHalfYearly ?? 350, icon: Award },
+      { id: 'exam_mt3', nameEn: '3rd Model Test Fee', nameBn: '3য় মডেল টেস্ট ফি', defaultAmount: classFee.examFee3rdModelTest ?? classFee.examFeeModelTest ?? 250, icon: Award },
+      { id: 'exam_sem3', nameEn: '3rd Semester Exam Fee', nameBn: '3য় সেমিস্টার পরীক্ষা ফি', defaultAmount: classFee.examFee3rdSemester ?? classFee.examFeeAnnual ?? 400, icon: Award },
       { id: 'transport', nameEn: 'Transport Bus Fee', nameBn: 'পরিবহন বাস ফি', defaultAmount: transport ? transport.monthlyFare : 1500, icon: Bus },
       { id: 'tour', nameEn: 'Educational Study Tour', nameBn: 'শিক্ষা সফর ফি', defaultAmount: 1500, icon: Sparkles },
       { id: 'sports', nameEn: 'Sports & Cultural Fee', nameBn: 'ক্রীড়া ও সাংস্কৃতিক ফি', defaultAmount: 500, icon: Sparkles },
@@ -1240,6 +1244,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
     if (!expenseTitle || expenseAmount <= 0) return;
 
     if (editingExpense) {
+      if (!canEditDeleteInvoices) {
+        return;
+      }
       const updatedExpense: Expense = {
         ...editingExpense,
         category: expenseCategory,
@@ -1248,7 +1255,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
         paidTo: expensePaidTo,
         paymentMethod: expenseMethod,
       };
-      StorageService.updateExpense(updatedExpense);
+      StorageService.updateExpense(updatedExpense, activeRole);
       setExpenses(StorageService.getExpenses());
       setShowExpenseModal(false);
       setEditingExpense(null);
@@ -1279,6 +1286,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   };
 
   const handleOpenEditExpense = (exp: Expense) => {
+    if (!canEditDeleteInvoices) {
+      return;
+    }
     setEditingExpense(exp);
     setExpenseTitle(exp.title);
     setExpenseCategory(exp.category);
@@ -1289,6 +1299,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   };
 
   const handleDeleteExpense = (exp: Expense) => {
+    if (!canEditDeleteInvoices) {
+      return;
+    }
     if (
       window.confirm(
         language === 'bn'
@@ -1296,12 +1309,15 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           : `Are you sure you want to delete voucher "${exp.voucherNo}"?`
       )
     ) {
-      StorageService.deleteExpense(exp.id);
+      StorageService.deleteExpense(exp.id, activeRole);
       setExpenses(StorageService.getExpenses());
     }
   };
 
   const handleOpenEditReceipt = (payment: FeePayment) => {
+    if (!canEditDeleteInvoices) {
+      return;
+    }
     setEditingReceipt(payment);
     setEditReceiptAmount(payment.amount);
     setEditReceiptDate(payment.paidDate || new Date().toISOString().split('T')[0]);
@@ -1313,7 +1329,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
 
   const handleSaveEditReceipt = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingReceipt) return;
+    if (!editingReceipt || !canEditDeleteInvoices) return;
     const updated: FeePayment = {
       ...editingReceipt,
       amount: Number(editReceiptAmount),
@@ -1322,7 +1338,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       transactionId: editReceiptTrxId.trim() || undefined,
       notes: editReceiptNotes.trim() || undefined,
     };
-    StorageService.updatePayment(updated);
+    StorageService.updatePayment(updated, activeRole);
     setPayments(StorageService.getPayments());
     setInvoices(StorageService.getInvoices());
     setShowEditReceiptModal(false);
@@ -1330,6 +1346,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   };
 
   const handleDeletePayment = (payment: FeePayment) => {
+    if (!canEditDeleteInvoices) {
+      return;
+    }
     if (
       window.confirm(
         language === 'bn'
@@ -1337,13 +1356,16 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           : `Are you sure you want to delete receipt "${payment.receiptNo}"? This will restore the due amount.`
       )
     ) {
-      StorageService.deletePayment(payment.id);
+      StorageService.deletePayment(payment.id, activeRole);
       setPayments(StorageService.getPayments());
       setInvoices(StorageService.getInvoices());
     }
   };
 
   const handleOpenEditInvoice = (inv: FeeInvoice) => {
+    if (!canEditDeleteInvoices) {
+      return;
+    }
     setEditingInvoice(inv);
     setEditInvoiceFeeType(inv.feeType);
     setEditInvoiceNetAmount(inv.netAmount);
@@ -1354,7 +1376,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
 
   const handleSaveEditInvoice = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingInvoice) return;
+    if (!editingInvoice || !canEditDeleteInvoices) return;
     const newNet = Number(editInvoiceNetAmount);
     const newPaid = editingInvoice.paidAmount;
     const newDue = Math.max(0, newNet - newPaid);
@@ -1369,13 +1391,16 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       dueDate: editInvoiceDueDate,
       discount: Number(editInvoiceDiscount),
     };
-    StorageService.updateInvoice(updated);
+    StorageService.updateInvoice(updated, activeRole);
     setInvoices(StorageService.getInvoices());
     setShowEditInvoiceModal(false);
     setEditingInvoice(null);
   };
 
   const handleDeleteInvoice = (inv: FeeInvoice) => {
+    if (!canEditDeleteInvoices) {
+      return;
+    }
     if (
       window.confirm(
         language === 'bn'
@@ -1383,7 +1408,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           : `Are you sure you want to delete invoice "${inv.invoiceNo}"?`
       )
     ) {
-      StorageService.deleteInvoice(inv.id);
+      StorageService.deleteInvoice(inv.id, activeRole);
       setInvoices(StorageService.getInvoices());
     }
   };
@@ -1720,7 +1745,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
             {language === 'bn'
-              ? 'শিক্ষার্থী নির্বাচন করে ২-৩ মাসের বেতন, পরীক্ষা ফি, বাসের ভাড়া একসাথে ইনভয়েস তৈরি ও ডুপ্লিকেট মানি রসিদ প্রিন্ট'
+              ? 'শিক্ষার্থী নির্বাচন করে 2-3 মাসের বেতন, পরীক্ষা ফি, বাসের ভাড়া একসাথে ইনভয়েস তৈরি ও ডুপ্লিকেট মানি রসিদ প্রিন্ট'
               : 'Search & select students, combine 2-3 months tuition, exam, transport & other fees in 1 invoice with duplicate receipts'}
           </p>
         </div>
@@ -2324,16 +2349,15 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                           <span className="font-bold text-slate-800 text-xs flex items-center space-x-1.5">
                             <Calendar className="w-3.5 h-3.5 text-blue-600" />
                             <span>
-                              {language === 'bn' ? 'মাসিক বেতন (১ বা একাধিক মাস সিলেক্ট করুন):' : 'Monthly Tuition (Multi-Month):'}
+                              {language === 'bn' ? 'মাসিক বেতন (1 বা একাধিক মাস সিলেক্ট করুন):' : 'Monthly Tuition (Multi-Month):'}
                             </span>
                           </span>
                           <div className="flex items-center space-x-1.5 self-end sm:self-auto">
                             <span className="text-[10px] text-slate-500">{language === 'bn' ? 'হার/মাস:' : 'Rate/mo:'}</span>
-                            <input
-                              type="number"
+                            <DigitInput
+                              min={0}
                               value={monthlyTuitionRate}
-                              onChange={(e) => {
-                                const val = Number(e.target.value);
+                              onValueChange={(val) => {
                                 setMonthlyTuitionRate(val);
                                 setInvoiceItems((prev) =>
                                   prev.map((item) =>
@@ -2441,11 +2465,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                               onChange={(e) => setCustomItemPeriod(e.target.value)}
                               className="flex-1 px-2 py-1 text-xs border border-slate-200 rounded-lg bg-white"
                             />
-                            <input
-                              type="number"
+                            <DigitInput
+                              min={0}
+                              emptyWhenZero
                               placeholder="৳"
                               value={customItemAmount || ''}
-                              onChange={(e) => setCustomItemAmount(Number(e.target.value))}
+                              onValueChange={(val) => setCustomItemAmount(val)}
                               className="w-20 px-2 py-1 text-xs font-bold border border-slate-200 rounded-lg bg-white text-right"
                             />
                             <button
@@ -2506,11 +2531,10 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                                     {item.month || '-'}
                                   </td>
                                   <td className="py-2 px-2 text-right">
-                                    <input
-                                      type="number"
+                                    <DigitInput
                                       min={0}
                                       value={item.amount}
-                                      onChange={(e) => handleItemAmountChange(item.id, Number(e.target.value))}
+                                      onValueChange={(val) => handleItemAmountChange(item.id, val)}
                                       className="w-18 px-1.5 py-1 border border-slate-200 rounded font-bold text-slate-900 text-right text-xs bg-slate-50 focus:bg-white focus:border-blue-500"
                                     />
                                   </td>
@@ -2575,7 +2599,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                 <div className="border-t border-slate-200 pt-4 space-y-4">
                   <h4 className="font-bold text-slate-900 text-sm flex items-center space-x-2">
                     <CreditCard className="w-4 h-4 text-blue-600" />
-                    <span>{language === 'bn' ? '৩. ছাড়, আদায় ও পেমেন্ট বিবরণ' : '3. Discount, Collection & Payment Details'}</span>
+                    <span>{language === 'bn' ? '3. ছাড়, আদায় ও পেমেন্ট বিবরণ' : '3. Discount, Collection & Payment Details'}</span>
                   </h4>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -2583,13 +2607,13 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                       <label className="block font-semibold mb-1 text-slate-700">
                         {language === 'bn' ? 'বিশেষ ছাড় / ওয়েভার (৳)' : 'Discount / Waiver (৳)'}
                       </label>
-                      <input
-                        type="number"
+                      <DigitInput
                         min={0}
                         max={subTotal}
+                        emptyWhenZero
                         value={discountAmount || ''}
-                        onChange={(e) => {
-                          setDiscountAmount(Number(e.target.value));
+                        onValueChange={(val) => {
+                          setDiscountAmount(val);
                           setIsManualPaidAmount(false);
                         }}
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg font-bold text-slate-900"
@@ -2612,12 +2636,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                       <label className="block font-semibold mb-1 text-slate-700">
                         {language === 'bn' ? 'বিলম্ব ফি / জরিমানা (৳)' : 'Late Fine (৳)'}
                       </label>
-                      <input
-                        type="number"
+                      <DigitInput
                         min={0}
+                        emptyWhenZero
                         value={lateFineAmount || ''}
-                        onChange={(e) => {
-                          setLateFineAmount(Number(e.target.value));
+                        onValueChange={(val) => {
+                          setLateFineAmount(val);
                           setIsManualPaidAmount(false);
                         }}
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg font-bold text-slate-900"
@@ -2644,13 +2668,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                       <label className="block font-bold text-emerald-900 mb-1">
                         {language === 'bn' ? 'এখন আদায় হচ্ছে (৳) *' : 'Amount Being Paid (৳) *'}
                       </label>
-                      <input
-                        type="number"
+                      <DigitInput
                         min={0}
                         max={netPayable}
                         value={effectivePaidAmount}
-                        onChange={(e) => {
-                          setPaidNowAmount(Number(e.target.value));
+                        onValueChange={(val) => {
+                          setPaidNowAmount(val);
                           setIsManualPaidAmount(true);
                         }}
                         className="w-full px-3 py-1.5 border-2 border-emerald-500 rounded-lg font-extrabold text-emerald-800 text-base bg-white"
@@ -3169,6 +3192,16 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       {/* TAB: INVOICES TABLE */}
       {activeTab === 'collection' && (
         <div className="space-y-4">
+          {canManage && !canEditDeleteInvoices && (
+            <div className="px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-900 font-medium">
+              <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                {language === 'bn'
+                  ? 'নিরাপত্তা নীতি: একটি ইনভয়েস তৈরি হওয়ার পর হিসাবরক্ষক সেটি এডিট বা ডিলিট করতে পারবেন না — শুধুমাত্র সুপার অ্যাডমিন সংশোধন বা ডিলিট করতে পারবেন।'
+                  : 'Audit lock: Created invoices cannot be edited or deleted by Accountants — only Super Admin can edit or delete them.'}
+              </span>
+            </div>
+          )}
           <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
@@ -3298,7 +3331,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                               <Printer className="w-4 h-4" />
                             </button>
                           )}
-                          {canManage && (
+                          {canEditDeleteInvoices ? (
                             <>
                               <button
                                 type="button"
@@ -3317,7 +3350,18 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </>
-                          )}
+                          ) : canManage ? (
+                            <span
+                              className="inline-flex items-center p-1 text-slate-400 bg-slate-100 rounded border border-slate-200 cursor-not-allowed"
+                              title={
+                                language === 'bn'
+                                  ? 'শুধুমাত্র সুপার অ্যাডমিন ইনভয়েস এডিট বা ডিলিট করতে পারবেন'
+                                  : 'Only Super Admin can edit or delete invoices'
+                              }
+                            >
+                              <Lock className="w-3.5 h-3.5" />
+                            </span>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -3375,7 +3419,18 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
 
       {/* TAB: PAID RECEIPTS */}
       {activeTab === 'invoices' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="space-y-4">
+          {canManage && !canEditDeleteInvoices && (
+            <div className="px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-900 font-medium">
+              <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                {language === 'bn'
+                  ? 'নিরাপত্তা নীতি: রসিদ তৈরি হওয়ার পর হিসাবরক্ষক সেটি এডিট বা ডিলিট করতে পারবেন না — শুধুমাত্র সুপার অ্যাডমিন সংশোধন বা ডিলিট করতে পারবেন।'
+                  : 'Audit lock: Created receipts cannot be edited or deleted by Accountants — only Super Admin can edit or delete them.'}
+              </span>
+            </div>
+          )}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="p-4 border-b border-slate-100 flex items-center justify-between text-xs">
             <span className="font-bold text-slate-900">
               {language === 'bn' ? 'পরিশোধিত ফি রসিদ খাতা' : 'Official Fee Payment Receipts Registry'}
@@ -3432,7 +3487,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                         >
                           <Printer className="w-4 h-4" />
                         </button>
-                        {canManage && (
+                        {canEditDeleteInvoices ? (
                           <>
                             <button
                               type="button"
@@ -3451,13 +3506,25 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </>
-                        )}
+                        ) : canManage ? (
+                          <span
+                            className="inline-flex items-center p-1.5 text-slate-400 bg-slate-100 rounded-lg border border-slate-200 cursor-not-allowed"
+                            title={
+                              language === 'bn'
+                                ? 'শুধুমাত্র সুপার অ্যাডমিন রসিদ এডিট বা ডিলিট করতে পারবেন'
+                                : 'Only Super Admin can edit or delete receipts'
+                            }
+                          >
+                            <Lock className="w-3.5 h-3.5" />
+                          </span>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
           </div>
         </div>
       )}
@@ -3663,22 +3730,37 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                                   >
                                     Collect
                                   </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenEditInvoice(singleEntry.sourceInvoice!)}
-                                    className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                    title="বকেয়া এডিট বা মওকুফ করুন"
-                                  >
-                                    <Edit2 className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteInvoice(singleEntry.sourceInvoice!)}
-                                    className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                                    title="বকেয়া ইনভয়েস মুছে ফেলুন"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
+                                  {canEditDeleteInvoices ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEditInvoice(singleEntry.sourceInvoice!)}
+                                        className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                        title="বকেয়া এডিট বা মওকুফ করুন"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteInvoice(singleEntry.sourceInvoice!)}
+                                        className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                        title="বকেয়া ইনভয়েস মুছে ফেলুন"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <span
+                                      className="inline-flex items-center p-1.5 text-slate-400 bg-slate-100 rounded-lg border border-slate-200 cursor-not-allowed"
+                                      title={
+                                        language === 'bn'
+                                          ? 'শুধুমাত্র সুপার অ্যাডমিন ইনভয়েস এডিট বা ডিলিট করতে পারবেন'
+                                          : 'Only Super Admin can edit or delete invoices'
+                                      }
+                                    >
+                                      <Lock className="w-3.5 h-3.5" />
+                                    </span>
+                                  )}
                                 </>
                               )}
                               {canManage && !(singleEntry?.sourceInvoice) && group.student && (
@@ -3752,22 +3834,37 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                                             >
                                               Collect
                                             </button>
-                                            <button
-                                              type="button"
-                                              onClick={() => handleOpenEditInvoice(entry.sourceInvoice!)}
-                                              className="p-1 text-slate-500 hover:text-blue-600 rounded"
-                                              title="বকেয়া এডিট বা মওকুফ করুন"
-                                            >
-                                              <Edit2 className="w-3 h-3" />
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={() => handleDeleteInvoice(entry.sourceInvoice!)}
-                                              className="p-1 text-slate-500 hover:text-rose-600 rounded"
-                                              title="বকেয়া ইনভয়েস মুছে ফেলুন"
-                                            >
-                                              <Trash2 className="w-3 h-3" />
-                                            </button>
+                                            {canEditDeleteInvoices ? (
+                                              <>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleOpenEditInvoice(entry.sourceInvoice!)}
+                                                  className="p-1 text-slate-500 hover:text-blue-600 rounded"
+                                                  title="বকেয়া এডিট বা মওকুফ করুন"
+                                                >
+                                                  <Edit2 className="w-3 h-3" />
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleDeleteInvoice(entry.sourceInvoice!)}
+                                                  className="p-1 text-slate-500 hover:text-rose-600 rounded"
+                                                  title="বকেয়া ইনভয়েস মুছে ফেলুন"
+                                                >
+                                                  <Trash2 className="w-3 h-3" />
+                                                </button>
+                                              </>
+                                            ) : (
+                                              <span
+                                                className="inline-flex items-center p-1 text-slate-400 bg-slate-100 rounded border border-slate-200 cursor-not-allowed"
+                                                title={
+                                                  language === 'bn'
+                                                    ? 'শুধুমাত্র সুপার অ্যাডমিন ইনভয়েস এডিট বা ডিলিট করতে পারবেন'
+                                                    : 'Only Super Admin can edit or delete invoices'
+                                                }
+                                              >
+                                                <Lock className="w-3 h-3" />
+                                              </span>
+                                            )}
                                           </div>
                                         )}
                                         {canManage && !entry.sourceInvoice && entry.student && (
@@ -3812,7 +3909,18 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
 
       {/* TAB: EXPENSES */}
       {activeTab === 'expenses' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="space-y-4">
+          {canManage && !canEditDeleteInvoices && (
+            <div className="px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-900 font-medium">
+              <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                {language === 'bn'
+                  ? 'নিরাপত্তা নীতি: ব্যয় ভাউচার তৈরি হওয়ার পর হিসাবরক্ষক সেটি এডিট বা ডিলিট করতে পারবেন না — শুধুমাত্র সুপার অ্যাডমিন সংশোধন বা ডিলিট করতে পারবেন।'
+                  : 'Audit lock: Created expense vouchers cannot be edited or deleted by Accountants — only Super Admin can edit or delete them.'}
+              </span>
+            </div>
+          )}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="p-4 border-b border-slate-200 flex items-center justify-between text-xs">
             <span className="font-bold text-slate-900 text-sm">
               {language === 'bn' ? 'বিদ্যালয়ের পরিচালনা ও প্রাতিষ্ঠানিক ব্যয়' : 'Institutional Operational Expenses'}
@@ -3850,7 +3958,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                       {formatTaka(e.amount)}
                     </td>
                     <td className="py-3 px-4 text-right">
-                      {canManage && (
+                      {canEditDeleteInvoices ? (
                         <div className="flex items-center justify-end space-x-1">
                           <button
                             type="button"
@@ -3869,12 +3977,24 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
-                      )}
+                      ) : canManage ? (
+                        <span
+                          className="inline-flex items-center p-1.5 text-slate-400 bg-slate-100 rounded-lg border border-slate-200 cursor-not-allowed"
+                          title={
+                            language === 'bn'
+                              ? 'শুধুমাত্র সুপার অ্যাডমিন ব্যয় ভাউচার এডিট বা ডিলিট করতে পারবেন'
+                              : 'Only Super Admin can edit or delete expense vouchers'
+                          }
+                        >
+                          <Lock className="w-3.5 h-3.5" />
+                        </span>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
           </div>
         </div>
       )}
@@ -3882,6 +4002,16 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       {/* TAB: CASHBOOK */}
       {activeTab === 'cashbook' && (
         <div className="p-6 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-6">
+          {canManage && !canEditDeleteInvoices && (
+            <div className="px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-900 font-medium">
+              <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                {language === 'bn'
+                  ? 'নিরাপত্তা নীতি: ক্যাশ বুকে এন্ট্রি হওয়ার পর হিসাবরক্ষক কোনো আয় (রসিদ) বা ব্যয় (ভাউচার) এডিট বা ডিলিট করতে পারবেন না — শুধুমাত্র সুপার অ্যাডমিন পারবেন।'
+                  : 'Audit lock: Income receipts and expenditure vouchers in Cashbook cannot be edited or deleted by Accountants — only Super Admin can edit or delete them.'}
+              </span>
+            </div>
+          )}
           <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div>
               <h3 className="font-bold text-slate-900 text-base">
@@ -3913,7 +4043,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                     </div>
                     <div className="flex items-center space-x-2">
                       <span className="font-bold text-emerald-700">{formatTaka(p.amount)}</span>
-                      {canManage && (
+                      {canEditDeleteInvoices ? (
                         <div className="flex items-center space-x-1">
                           <button
                             type="button"
@@ -3932,7 +4062,18 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                             <Trash2 className="w-3 h-3" />
                           </button>
                         </div>
-                      )}
+                      ) : canManage ? (
+                        <span
+                          className="inline-flex items-center p-1 text-slate-400 bg-slate-100 rounded border border-slate-200 cursor-not-allowed"
+                          title={
+                            language === 'bn'
+                              ? 'শুধুমাত্র সুপার অ্যাডমিন রসিদ এডিট বা ডিলিট করতে পারবেন'
+                              : 'Only Super Admin can edit or delete receipts'
+                          }
+                        >
+                          <Lock className="w-3 h-3" />
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 ))}
@@ -3953,7 +4094,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                     </div>
                     <div className="flex items-center space-x-2">
                       <span className="font-bold text-rose-600">{formatTaka(e.amount)}</span>
-                      {canManage && (
+                      {canEditDeleteInvoices ? (
                         <div className="flex items-center space-x-1">
                           <button
                             type="button"
@@ -3972,7 +4113,18 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                             <Trash2 className="w-3 h-3" />
                           </button>
                         </div>
-                      )}
+                      ) : canManage ? (
+                        <span
+                          className="inline-flex items-center p-1 text-slate-400 bg-slate-100 rounded border border-slate-200 cursor-not-allowed"
+                          title={
+                            language === 'bn'
+                              ? 'শুধুমাত্র সুপার অ্যাডমিন ব্যয় ভাউচার এডিট বা ডিলিট করতে পারবেন'
+                              : 'Only Super Admin can edit or delete expense vouchers'
+                          }
+                        >
+                          <Lock className="w-3 h-3" />
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 ))}
@@ -4005,13 +4157,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
 
               <div>
                 <label className="block font-semibold mb-1">Amount to Collect (৳) *</label>
-                <input
-                  type="number"
+                <DigitInput
                   required
                   min={1}
                   max={targetInvoice.dueAmount}
                   value={singleCollectAmount}
-                  onChange={(e) => setSingleCollectAmount(Number(e.target.value))}
+                  onValueChange={(val) => setSingleCollectAmount(val)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-bold text-slate-900"
                 />
               </div>
@@ -4289,12 +4440,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                   <label className="block font-semibold mb-1">
                     {language === 'bn' ? 'টাকার পরিমাণ (৳) *' : 'Amount (৳) *'}
                   </label>
-                  <input
-                    type="number"
+                  <DigitInput
                     required
                     min={1}
+                    emptyWhenZero
                     value={expenseAmount || ''}
-                    onChange={(e) => setExpenseAmount(Number(e.target.value))}
+                    onValueChange={(val) => setExpenseAmount(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-bold"
                   />
                 </div>
@@ -4356,7 +4507,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       )}
 
       {/* EDIT RECEIPT MODAL */}
-      {showEditReceiptModal && editingReceipt && (
+      {showEditReceiptModal && editingReceipt && canEditDeleteInvoices && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
           <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-md w-full p-6 text-xs animate-in zoom-in-95">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -4383,12 +4534,11 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                 <label className="block font-semibold mb-1">
                   {language === 'bn' ? 'পরিশোধিত টাকার পরিমাণ (৳) *' : 'Paid Amount (৳) *'}
                 </label>
-                <input
-                  type="number"
+                <DigitInput
                   required
                   min={1}
                   value={editReceiptAmount}
-                  onChange={(e) => setEditReceiptAmount(Number(e.target.value))}
+                  onValueChange={(val) => setEditReceiptAmount(val)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg font-bold text-sm text-slate-900"
                 />
               </div>
@@ -4470,7 +4620,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       )}
 
       {/* EDIT INVOICE / DUE MODAL */}
-      {showEditInvoiceModal && editingInvoice && (
+      {showEditInvoiceModal && editingInvoice && canEditDeleteInvoices && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
           <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-md w-full p-6 text-xs animate-in zoom-in-95">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -4510,12 +4660,11 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                   <label className="block font-semibold mb-1">
                     {language === 'bn' ? 'নিট ফি পরিমাণ (৳) *' : 'Net Fee Amount (৳) *'}
                   </label>
-                  <input
-                    type="number"
+                  <DigitInput
                     required
                     min={0}
                     value={editInvoiceNetAmount}
-                    onChange={(e) => setEditInvoiceNetAmount(Number(e.target.value))}
+                    onValueChange={(val) => setEditInvoiceNetAmount(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-bold"
                   />
                 </div>
@@ -4523,11 +4672,10 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                   <label className="block font-semibold mb-1">
                     {language === 'bn' ? 'ছাড় / ওয়েভার (৳)' : 'Discount / Waiver (৳)'}
                   </label>
-                  <input
-                    type="number"
+                  <DigitInput
                     min={0}
                     value={editInvoiceDiscount}
-                    onChange={(e) => setEditInvoiceDiscount(Number(e.target.value))}
+                    onValueChange={(val) => setEditInvoiceDiscount(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg"
                   />
                 </div>

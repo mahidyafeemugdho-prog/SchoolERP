@@ -12,6 +12,8 @@ import {
   SubscriptionHistoryRecord,
   SubscriptionPlanConfig,
   SubscriptionPlanId,
+  SupportMessageRecord,
+  SupportTicketRecord,
   TransactionContext,
   getDefaultPlatformPaymentChannels,
 } from '../types';
@@ -190,6 +192,8 @@ export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
   public saasUsers = new Map<string, SaaSUserRecord>();
   public tenantSlices = new Map<string, Record<string, any>>();
   public paymentChannels: PlatformPaymentChannels = getDefaultPlatformPaymentChannels();
+  public supportTickets = new Map<string, SupportTicketRecord>();
+  public supportMessages = new Map<string, SupportMessageRecord[]>();
   private schoolSeq = 1;
 
   async isMasterAdminUidOrEmail(_uid: string, email: string): Promise<boolean> {
@@ -263,6 +267,12 @@ export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
       }
     }
     this.subscriptionHistory = this.subscriptionHistory.filter((h) => h.schoolId !== schoolId);
+    for (const [tid, t] of this.supportTickets.entries()) {
+      if (t.schoolId === schoolId) {
+        this.supportTickets.delete(tid);
+        this.supportMessages.delete(tid);
+      }
+    }
   }
 
   async listPaymentRequests(schoolId?: string): Promise<SaaSPaymentRequest[]> {
@@ -337,6 +347,71 @@ export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
     const current = this.tenantSlices.get(schoolId) || {};
     current[sliceName] = { ...(current[sliceName] || {}), ...structuredClone(data), schoolId };
     this.tenantSlices.set(schoolId, current);
+  }
+
+  async listSupportTickets(schoolId?: string): Promise<SupportTicketRecord[]> {
+    const all = Array.from(this.supportTickets.values());
+    return (schoolId ? all.filter((t) => t.schoolId === schoolId) : all)
+      .map((t) => structuredClone(t))
+      .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  }
+
+  async getSupportTicketById(ticketId: string): Promise<SupportTicketRecord | null> {
+    const found = this.supportTickets.get(ticketId);
+    return found ? structuredClone(found) : null;
+  }
+
+  async createSupportTicket(
+    ticket: SupportTicketRecord,
+    initialMessage: SupportMessageRecord
+  ): Promise<{ ticket: SupportTicketRecord; message: SupportMessageRecord }> {
+    const tClone = structuredClone(ticket);
+    const mClone = structuredClone(initialMessage);
+    this.supportTickets.set(tClone.id, tClone);
+    this.supportMessages.set(tClone.id, [mClone]);
+    return { ticket: structuredClone(tClone), message: structuredClone(mClone) };
+  }
+
+  async listSupportMessages(ticketId: string): Promise<SupportMessageRecord[]> {
+    const list = this.supportMessages.get(ticketId) || [];
+    return list
+      .map((m) => structuredClone(m))
+      .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+  }
+
+  async addSupportMessage(
+    ticketId: string,
+    message: SupportMessageRecord,
+    ticketUpdates: Partial<SupportTicketRecord>
+  ): Promise<{ ticket: SupportTicketRecord; message: SupportMessageRecord }> {
+    const existing = this.supportTickets.get(ticketId);
+    if (!existing) {
+      throw new SaaSServiceError('Support ticket not found.', 404, 'TICKET_NOT_FOUND');
+    }
+    const mergedTicket = structuredClone({
+      ...existing,
+      ...ticketUpdates,
+      messageCount: Number(existing.messageCount || 0) + 1,
+    });
+    this.supportTickets.set(ticketId, mergedTicket);
+    const list = this.supportMessages.get(ticketId) || [];
+    const mClone = structuredClone(message);
+    list.push(mClone);
+    this.supportMessages.set(ticketId, list);
+    return { ticket: structuredClone(mergedTicket), message: structuredClone(mClone) };
+  }
+
+  async updateSupportTicket(
+    ticketId: string,
+    updates: Partial<SupportTicketRecord>
+  ): Promise<SupportTicketRecord> {
+    const existing = this.supportTickets.get(ticketId);
+    if (!existing) {
+      throw new SaaSServiceError('Support ticket not found.', 404, 'TICKET_NOT_FOUND');
+    }
+    const merged = structuredClone({ ...existing, ...updates });
+    this.supportTickets.set(ticketId, merged);
+    return structuredClone(merged);
   }
 
   async runInTransaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {

@@ -6,6 +6,7 @@ import { StorageService } from '../../services/storage';
 import { AdmissionEnquiry, ClassLevel, GroupType, Student } from '../../types';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
+import { toEnNumber } from '../../utils/i18n';
 import {
   ModernStudentIDCardFront,
   ModernStudentIDCardBack,
@@ -522,7 +523,7 @@ export const AdmissionsView: React.FC = () => {
                   </span>
                   <p className="text-[11px] text-slate-500">
                     {language === 'bn'
-                      ? 'JPG, PNG বা WebP ফরম্যাট (সর্বোচ্চ ৩ মেগাবাইট)। এটি আইডি কার্ডে প্রিন্ট হবে।'
+                      ? 'JPG, PNG বা WebP ফরম্যাট (সর্বোচ্চ 3 মেগাবাইট)। এটি আইডি কার্ডে প্রিন্ট হবে।'
                       : 'JPG, PNG or WebP format (Max 3MB). Will be printed on Student ID card.'}
                   </p>
                   <div className="flex flex-wrap items-center gap-2 pt-1 justify-center sm:justify-start">
@@ -666,7 +667,7 @@ export const AdmissionsView: React.FC = () => {
                     type="text"
                     required
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(e) => setPhone(toEnNumber(e.target.value))}
                     placeholder="+880 1942529984"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-medium"
                   />
@@ -782,9 +783,9 @@ export const AdmissionsView: React.FC = () => {
                   }}
                   className="w-full px-3 py-2 border border-blue-300 rounded-lg font-bold text-blue-900 bg-white"
                 >
-                  <option value="2027">শিক্ষাবর্ষ ২০২৭ (নতুন ভর্তি / আগামী সেশন)</option>
-                  <option value="2026">শিক্ষাবর্ষ ২০২৬ (চলতি সেশন)</option>
-                  <option value="2028">শিক্ষাবর্ষ ২০২৮</option>
+                  <option value="2027">শিক্ষাবর্ষ 2027 (নতুন ভর্তি / আগামী সেশন)</option>
+                  <option value="2026">শিক্ষাবর্ষ 2026 (চলতি সেশন)</option>
+                  <option value="2028">শিক্ষাবর্ষ 2028</option>
                 </select>
                 <p className="text-[10px] text-blue-700">
                   সেশন অনুযায়ী স্বয়ংক্রিয়ভাবে স্টুডেন্ট আইডি ও ভর্তি ফি নির্ধারিত হবে।
@@ -919,8 +920,8 @@ export const AdmissionsView: React.FC = () => {
                   <input
                     type="text"
                     value={birthCertificateNo}
-                    onChange={(e) => setBirthCertificateNo(e.target.value)}
-                    placeholder="১৭ ডিজিটের জন্ম নিবন্ধন নম্বর..."
+                    onChange={(e) => setBirthCertificateNo(toEnNumber(e.target.value))}
+                    placeholder="17 ডিজিটের জন্ম নিবন্ধন নম্বর..."
                     className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono"
                   />
                   <div className="mt-1 flex items-center space-x-2">

@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { Book, BookIssue } from '../../types';
+import { DigitInput } from '../common/DigitInput';
 import {
   Library as LibraryIcon,
   Search,
@@ -456,21 +457,19 @@ export const LibraryView: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold mb-1">Total Copies (মোট সংখ্যা)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     min={1}
                     value={bookQuantity}
-                    onChange={(e) => setBookQuantity(Number(e.target.value))}
+                    onValueChange={(val) => setBookQuantity(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono font-bold"
                   />
                 </div>
                 <div>
                   <label className="block font-semibold mb-1">Price (মূল্য ৳)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     min={0}
                     value={bookPrice}
-                    onChange={(e) => setBookPrice(Number(e.target.value))}
+                    onValueChange={(val) => setBookPrice(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono"
                   />
                 </div>

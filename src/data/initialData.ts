@@ -61,10 +61,10 @@ export const initialSchoolProfile: SchoolProfile = {
   heroSubtitleEn: 'Building an enlightened and skilled generation through modern education and moral values.',
   mottoBn: 'জ্ঞান • নৈতিকতা • আধুনিক শিক্ষা',
   mottoEn: 'Knowledge • Ethics • Modern Education',
-  statsStudents: '০',
-  statsTeachers: '০',
-  statsClassrooms: '০',
-  statsExperience: '০',
+  statsStudents: '0',
+  statsTeachers: '0',
+  statsClassrooms: '0',
+  statsExperience: '0',
   currencySymbol: '৳',
   timezone: 'Asia/Dhaka',
 };
@@ -72,16 +72,16 @@ export const initialSchoolProfile: SchoolProfile = {
 export const initialClasses: ClassInfo[] = [
   { id: 'c_nursery', name: 'Nursery', nameBn: 'প্লে / নার্সারি', order: 0, sections: ['A'], shifts: ['Morning'], hasGroups: false, isActive: true },
   { id: 'c_kg', name: 'KG', nameBn: 'কেজি (KG)', order: 1, sections: ['A', 'B'], shifts: ['Morning'], hasGroups: false, isActive: true },
-  { id: 'c_1', name: 'Class 1', nameBn: '১ম শ্রেণি', order: 2, sections: ['A', 'B'], shifts: ['Morning', 'Day'], hasGroups: false, isActive: true },
-  { id: 'c_2', name: 'Class 2', nameBn: '২য় শ্রেণি', order: 3, sections: ['A', 'B'], shifts: ['Morning', 'Day'], hasGroups: false, isActive: true },
-  { id: 'c_3', name: 'Class 3', nameBn: '৩য় শ্রেণি', order: 4, sections: ['A', 'B'], shifts: ['Morning', 'Day'], hasGroups: false, isActive: true },
-  { id: 'c_4', name: 'Class 4', nameBn: '৪র্থ শ্রেণি', order: 5, sections: ['A', 'B'], shifts: ['Morning', 'Day'], hasGroups: false, isActive: true },
-  { id: 'c_5', name: 'Class 5', nameBn: '৫ম শ্রেণি', order: 6, sections: ['A', 'B'], shifts: ['Morning', 'Day'], hasGroups: false, isActive: true },
-  { id: 'c_6', name: 'Class 6', nameBn: '৬ষ্ঠ শ্রেণি', order: 7, sections: ['A', 'B', 'C'], shifts: ['Day'], hasGroups: false, isActive: true },
-  { id: 'c_7', name: 'Class 7', nameBn: '৭ম শ্রেণি', order: 8, sections: ['A', 'B', 'C'], shifts: ['Day'], hasGroups: false, isActive: true },
-  { id: 'c_8', name: 'Class 8', nameBn: '৮ম শ্রেণি', order: 9, sections: ['A', 'B', 'C'], shifts: ['Day'], hasGroups: false, isActive: true },
-  { id: 'c_9', name: 'Class 9', nameBn: '৯ম শ্রেণি', order: 10, sections: ['A', 'B', 'C'], shifts: ['Day'], hasGroups: true, isActive: true },
-  { id: 'c_10', name: 'Class 10', nameBn: '১০ম শ্রেণি', order: 11, sections: ['A', 'B', 'C'], shifts: ['Day'], hasGroups: true, isActive: true },
+  { id: 'c_1', name: 'Class 1', nameBn: '1ম শ্রেণি', order: 2, sections: ['A', 'B'], shifts: ['Morning', 'Day'], hasGroups: false, isActive: true },
+  { id: 'c_2', name: 'Class 2', nameBn: '2য় শ্রেণি', order: 3, sections: ['A', 'B'], shifts: ['Morning', 'Day'], hasGroups: false, isActive: true },
+  { id: 'c_3', name: 'Class 3', nameBn: '3য় শ্রেণি', order: 4, sections: ['A', 'B'], shifts: ['Morning', 'Day'], hasGroups: false, isActive: true },
+  { id: 'c_4', name: 'Class 4', nameBn: '4র্থ শ্রেণি', order: 5, sections: ['A', 'B'], shifts: ['Morning', 'Day'], hasGroups: false, isActive: true },
+  { id: 'c_5', name: 'Class 5', nameBn: '5ম শ্রেণি', order: 6, sections: ['A', 'B'], shifts: ['Morning', 'Day'], hasGroups: false, isActive: true },
+  { id: 'c_6', name: 'Class 6', nameBn: '6ষ্ঠ শ্রেণি', order: 7, sections: ['A', 'B', 'C'], shifts: ['Day'], hasGroups: false, isActive: true },
+  { id: 'c_7', name: 'Class 7', nameBn: '7ম শ্রেণি', order: 8, sections: ['A', 'B', 'C'], shifts: ['Day'], hasGroups: false, isActive: true },
+  { id: 'c_8', name: 'Class 8', nameBn: '8ম শ্রেণি', order: 9, sections: ['A', 'B', 'C'], shifts: ['Day'], hasGroups: false, isActive: true },
+  { id: 'c_9', name: 'Class 9', nameBn: '9ম শ্রেণি', order: 10, sections: ['A', 'B', 'C'], shifts: ['Day'], hasGroups: true, isActive: true },
+  { id: 'c_10', name: 'Class 10', nameBn: '10ম শ্রেণি', order: 11, sections: ['A', 'B', 'C'], shifts: ['Day'], hasGroups: true, isActive: true },
 ];
 
 export const initialSubjects: Subject[] = [
@@ -155,8 +155,8 @@ export const initialSubjects: Subject[] = [
   { id: 'sub_8_bgs', code: '085', nameEn: 'Bangladesh & Global Studies', nameBn: 'বাংলাদেশ ও বিশ্বপরিচয়', className: 'Class 8', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
 
   // Class 9 Compulsory & Science
-  { id: 'sub_9_ban', code: '101', nameEn: 'Bangla 1st Paper', nameBn: 'বাংলা ১ম পত্র', className: 'Class 9', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
-  { id: 'sub_9_eng', code: '107', nameEn: 'English 1st Paper', nameBn: 'ইংরেজি ১ম পত্র', className: 'Class 9', fullMarks: 100, passMarks: 33, writtenMarks: 100 },
+  { id: 'sub_9_ban', code: '101', nameEn: 'Bangla 1st Paper', nameBn: 'বাংলা 1ম পত্র', className: 'Class 9', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
+  { id: 'sub_9_eng', code: '107', nameEn: 'English 1st Paper', nameBn: 'ইংরেজি 1ম পত্র', className: 'Class 9', fullMarks: 100, passMarks: 33, writtenMarks: 100 },
   { id: 'sub_9_mat', code: '109', nameEn: 'General Mathematics', nameBn: 'সাধারণ গণিত', className: 'Class 9', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
   { id: 'sub_9_bgs', code: '150', nameEn: 'Bangladesh & Global Studies', nameBn: 'বাংলাদেশ ও বিশ্বপরিচয়', className: 'Class 9', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
   { id: 'sub_9_ict', code: '154', nameEn: 'ICT', nameBn: 'তথ্য ও যোগাযোগ প্রযুক্তি', className: 'Class 9', fullMarks: 50, passMarks: 17, writtenMarks: 25, practicalMarks: 25 },
@@ -174,12 +174,12 @@ export const initialSubjects: Subject[] = [
   { id: 'sub_9_civ', code: '140', nameEn: 'Civics & Citizenship', nameBn: 'পৌরনীতি ও নাগরিকতা', className: 'Class 9', group: 'Humanities', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
   { id: 'sub_9_geo', code: '110', nameEn: 'Geography & Environment', nameBn: 'ভূগোল ও পরিবেশ', className: 'Class 9', group: 'Humanities', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
   // Class 9 Vocational
-  { id: 'sub_9_tr1', code: '191', nameEn: 'Vocational Trade I (Electrical / IT)', nameBn: 'ট্রেড ১ (ইলেকট্রিক্যাল ও আইটি)', className: 'Class 9', group: 'Vocational', fullMarks: 100, passMarks: 33, writtenMarks: 50, mcqMarks: 25, practicalMarks: 25 },
-  { id: 'sub_9_tr2', code: '192', nameEn: 'Vocational Trade II (Computer Tech)', nameBn: 'ট্রেড ২ (কম্পিউটার টেকনোলজি)', className: 'Class 9', group: 'Vocational', fullMarks: 100, passMarks: 33, writtenMarks: 50, mcqMarks: 25, practicalMarks: 25 },
+  { id: 'sub_9_tr1', code: '191', nameEn: 'Vocational Trade I (Electrical / IT)', nameBn: 'ট্রেড 1 (ইলেকট্রিক্যাল ও আইটি)', className: 'Class 9', group: 'Vocational', fullMarks: 100, passMarks: 33, writtenMarks: 50, mcqMarks: 25, practicalMarks: 25 },
+  { id: 'sub_9_tr2', code: '192', nameEn: 'Vocational Trade II (Computer Tech)', nameBn: 'ট্রেড 2 (কম্পিউটার টেকনোলজি)', className: 'Class 9', group: 'Vocational', fullMarks: 100, passMarks: 33, writtenMarks: 50, mcqMarks: 25, practicalMarks: 25 },
 
   // Class 10 Compulsory
-  { id: 'sub_10_ban', code: '101', nameEn: 'Bangla 1st & 2nd', nameBn: 'বাংলা ১ম ও ২য় পত্র', className: 'Class 10', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
-  { id: 'sub_10_eng', code: '107', nameEn: 'English 1st & 2nd', nameBn: 'ইংরেজি ১ম ও ২য় পত্র', className: 'Class 10', fullMarks: 100, passMarks: 33, writtenMarks: 100 },
+  { id: 'sub_10_ban', code: '101', nameEn: 'Bangla 1st & 2nd', nameBn: 'বাংলা 1ম ও 2য় পত্র', className: 'Class 10', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
+  { id: 'sub_10_eng', code: '107', nameEn: 'English 1st & 2nd', nameBn: 'ইংরেজি 1ম ও 2য় পত্র', className: 'Class 10', fullMarks: 100, passMarks: 33, writtenMarks: 100 },
   { id: 'sub_10_mat', code: '109', nameEn: 'General Mathematics', nameBn: 'সাধারণ গণিত', className: 'Class 10', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
   { id: 'sub_10_ict', code: '154', nameEn: 'ICT', nameBn: 'তথ্য ও যোগাযোগ প্রযুক্তি', className: 'Class 10', fullMarks: 50, passMarks: 17, writtenMarks: 25, practicalMarks: 25 },
   { id: 'sub_10_bgs', code: '150', nameEn: 'Bangladesh & Global Studies', nameBn: 'বাংলাদেশ ও বিশ্বপরিচয়', className: 'Class 10', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
@@ -197,8 +197,8 @@ export const initialSubjects: Subject[] = [
   { id: 'sub_10_civ', code: '140', nameEn: 'Civics & Citizenship', nameBn: 'পৌরনীতি ও নাগরিকতা', className: 'Class 10', group: 'Humanities', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
   { id: 'sub_10_geo', code: '110', nameEn: 'Geography & Environment', nameBn: 'ভূগোল ও পরিবেশ', className: 'Class 10', group: 'Humanities', fullMarks: 100, passMarks: 33, writtenMarks: 70, mcqMarks: 30 },
   // Class 10 Vocational
-  { id: 'sub_10_tr1', code: '191', nameEn: 'Vocational Trade I (Electrical / IT)', nameBn: 'ট্রেড ১ (ইলেকট্রিক্যাল ও আইটি)', className: 'Class 10', group: 'Vocational', fullMarks: 100, passMarks: 33, writtenMarks: 50, mcqMarks: 25, practicalMarks: 25 },
-  { id: 'sub_10_tr2', code: '192', nameEn: 'Vocational Trade II (Computer Tech)', nameBn: 'ট্রেড ২ (কম্পিউটার টেকনোলজি)', className: 'Class 10', group: 'Vocational', fullMarks: 100, passMarks: 33, writtenMarks: 50, mcqMarks: 25, practicalMarks: 25 },
+  { id: 'sub_10_tr1', code: '191', nameEn: 'Vocational Trade I (Electrical / IT)', nameBn: 'ট্রেড 1 (ইলেকট্রিক্যাল ও আইটি)', className: 'Class 10', group: 'Vocational', fullMarks: 100, passMarks: 33, writtenMarks: 50, mcqMarks: 25, practicalMarks: 25 },
+  { id: 'sub_10_tr2', code: '192', nameEn: 'Vocational Trade II (Computer Tech)', nameBn: 'ট্রেড 2 (কম্পিউটার টেকনোলজি)', className: 'Class 10', group: 'Vocational', fullMarks: 100, passMarks: 33, writtenMarks: 50, mcqMarks: 25, practicalMarks: 25 },
 ];
 
 export const initialHolidays: SchoolHoliday[] = [];
@@ -324,7 +324,7 @@ export const initialClassFeeConfigs: ClassFeeConfig[] = [
   },
   {
     className: 'Class 1',
-    classNameBn: '১ম শ্রেণি',
+    classNameBn: '1ম শ্রেণি',
     tuitionFee: 500,
     sessionFee: 2000,
     examFee1stModelTest: 250,
@@ -340,7 +340,7 @@ export const initialClassFeeConfigs: ClassFeeConfig[] = [
   },
   {
     className: 'Class 2',
-    classNameBn: '২য় শ্রেণি',
+    classNameBn: '2য় শ্রেণি',
     tuitionFee: 550,
     sessionFee: 2200,
     examFee1stModelTest: 250,
@@ -356,7 +356,7 @@ export const initialClassFeeConfigs: ClassFeeConfig[] = [
   },
   {
     className: 'Class 3',
-    classNameBn: '৩য় শ্রেণি',
+    classNameBn: '3য় শ্রেণি',
     tuitionFee: 600,
     sessionFee: 2500,
     examFee1stModelTest: 250,
@@ -372,7 +372,7 @@ export const initialClassFeeConfigs: ClassFeeConfig[] = [
   },
   {
     className: 'Class 4',
-    classNameBn: '৪র্থ শ্রেণি',
+    classNameBn: '4র্থ শ্রেণি',
     tuitionFee: 650,
     sessionFee: 2800,
     examFee1stModelTest: 300,
@@ -388,7 +388,7 @@ export const initialClassFeeConfigs: ClassFeeConfig[] = [
   },
   {
     className: 'Class 5',
-    classNameBn: '৫ম শ্রেণি',
+    classNameBn: '5ম শ্রেণি',
     tuitionFee: 700,
     sessionFee: 3000,
     examFee1stModelTest: 350,
@@ -404,7 +404,7 @@ export const initialClassFeeConfigs: ClassFeeConfig[] = [
   },
   {
     className: 'Class 6',
-    classNameBn: '৬ষ্ঠ শ্রেণি',
+    classNameBn: '6ষ্ঠ শ্রেণি',
     tuitionFee: 800,
     sessionFee: 3500,
     examFee1stModelTest: 400,
@@ -420,7 +420,7 @@ export const initialClassFeeConfigs: ClassFeeConfig[] = [
   },
   {
     className: 'Class 7',
-    classNameBn: '৭ম শ্রেণি',
+    classNameBn: '7ম শ্রেণি',
     tuitionFee: 900,
     sessionFee: 3500,
     examFee1stModelTest: 450,
@@ -436,7 +436,7 @@ export const initialClassFeeConfigs: ClassFeeConfig[] = [
   },
   {
     className: 'Class 8',
-    classNameBn: '৮ম শ্রেণি',
+    classNameBn: '8ম শ্রেণি',
     tuitionFee: 1000,
     sessionFee: 4000,
     examFee1stModelTest: 500,
@@ -452,7 +452,7 @@ export const initialClassFeeConfigs: ClassFeeConfig[] = [
   },
   {
     className: 'Class 9',
-    classNameBn: '৯ম শ্রেণি',
+    classNameBn: '9ম শ্রেণি',
     tuitionFee: 1100,
     sessionFee: 4500,
     examFee1stModelTest: 600,
@@ -468,7 +468,7 @@ export const initialClassFeeConfigs: ClassFeeConfig[] = [
   },
   {
     className: 'Class 10',
-    classNameBn: '১০ম শ্রেণি',
+    classNameBn: '10ম শ্রেণি',
     tuitionFee: 1200,
     sessionFee: 5000,
     examFee1stModelTest: 700,

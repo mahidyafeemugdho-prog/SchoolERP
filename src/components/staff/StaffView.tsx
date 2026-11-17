@@ -38,6 +38,7 @@ import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { LiveCameraModal } from '../common/LiveCameraModal';
 import { SaaSApi } from '../../services/saasApi';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
+import { DigitInput } from '../common/DigitInput';
 import {
   ModernTeacherIDCardFront,
   ModernTeacherIDCardBack,
@@ -878,46 +879,41 @@ export const StaffView: React.FC = () => {
                 {/* Salary configuration */}
                 <div>
                   <label className="block font-semibold mb-1">Basic Salary (মূল বেতন)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     value={formData.basicSalary || 0}
-                    onChange={(e) => setFormData({ ...formData, basicSalary: Number(e.target.value) })}
+                    onValueChange={(val) => setFormData({ ...formData, basicSalary: val })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg"
                   />
                 </div>
                 <div>
                   <label className="block font-semibold mb-1">House Rent (বাড়ি ভাড়া)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     value={formData.houseRentAllowance || 0}
-                    onChange={(e) => setFormData({ ...formData, houseRentAllowance: Number(e.target.value) })}
+                    onValueChange={(val) => setFormData({ ...formData, houseRentAllowance: val })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg"
                   />
                 </div>
                 <div>
                   <label className="block font-semibold mb-1">Medical Allowance (চিকিৎসা ভাতা)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     value={formData.medicalAllowance || 0}
-                    onChange={(e) => setFormData({ ...formData, medicalAllowance: Number(e.target.value) })}
+                    onValueChange={(val) => setFormData({ ...formData, medicalAllowance: val })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg"
                   />
                 </div>
                 <div>
                   <label className="block font-semibold mb-1">Other Allowance (অন্যান্য ভাতা)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     value={formData.otherAllowance || 0}
-                    onChange={(e) => setFormData({ ...formData, otherAllowance: Number(e.target.value) })}
+                    onValueChange={(val) => setFormData({ ...formData, otherAllowance: val })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg"
                   />
                 </div>
                 <div className="col-span-2">
                   <label className="block font-semibold mb-1">Provident Fund Deduction (প্রভিডেন্ট ফান্ড কর্তন)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     value={formData.providentFundDeduction || 0}
-                    onChange={(e) => setFormData({ ...formData, providentFundDeduction: Number(e.target.value) })}
+                    onValueChange={(val) => setFormData({ ...formData, providentFundDeduction: val })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg"
                   />
                 </div>

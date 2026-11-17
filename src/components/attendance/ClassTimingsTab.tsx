@@ -208,7 +208,7 @@ export const ClassTimingsTab: React.FC<{ onRulesUpdated?: () => void }> = ({ onR
       <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
         <div className="flex items-center space-x-2 text-slate-700 font-bold">
           <Zap className="w-4 h-4 text-amber-500" />
-          <span>১-ক্লিকে শিফট ও সময় প্রিসেট লোড করুন:</span>
+          <span>1-ক্লিকে শিফট ও সময় প্রিসেট লোড করুন:</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -224,13 +224,13 @@ export const ClassTimingsTab: React.FC<{ onRulesUpdated?: () => void }> = ({ onR
             className="px-3 py-1.5 bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 rounded-lg font-bold transition-colors flex items-center space-x-1"
           >
             <Layers className="w-3.5 h-3.5 text-purple-600" />
-            <span>মর্নিং ও ডে শিফট (মর্নিং: ৭:৪৫, ডে: ১১:৪৫)</span>
+            <span>মর্নিং ও ডে শিফট (মর্নিং: 7:45, ডে: 11:45)</span>
           </button>
           <button
             onClick={() => handleApplyPreset('standard_school')}
             className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg font-bold transition-colors"
           >
-            <span>সব শ্রেণি স্ট্যান্ডার্ড (৮:৩০ - ৮:৪৫)</span>
+            <span>সব শ্রেণি স্ট্যান্ডার্ড (8:30 - 8:45)</span>
           </button>
         </div>
       </div>
@@ -356,7 +356,7 @@ export const ClassTimingsTab: React.FC<{ onRulesUpdated?: () => void }> = ({ onR
           <div className="flex items-center space-x-2 text-slate-600">
             <AlertCircle className="w-4 h-4 text-blue-600 shrink-0" />
             <span>
-              কোনো শ্রেণির নিয়ম নিষ্ক্রিয় থাকলে ডিফল্ট স্কুল রুলস <strong>(শুরু: {rules.lateThresholdTime || '০৮:৩০'})</strong> প্রযোজ্য হবে।
+              কোনো শ্রেণির নিয়ম নিষ্ক্রিয় থাকলে ডিফল্ট স্কুল রুলস <strong>(শুরু: {rules.lateThresholdTime || '08:30'})</strong> প্রযোজ্য হবে।
             </span>
           </div>
 

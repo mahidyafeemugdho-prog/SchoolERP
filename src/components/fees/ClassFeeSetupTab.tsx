@@ -4,6 +4,7 @@ import { StorageService } from '../../services/storage';
 import { CloudSyncService } from '../../services/cloudSync';
 import { safeSetLocalStorage } from '../../utils/storageHelper';
 import { ClassFeeConfig, ClassLevel } from '../../types';
+import { DigitInput } from '../common/DigitInput';
 import {
   Save,
   RotateCcw,
@@ -108,12 +109,12 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
   const standardFeeColumnDefs = [
     { id: 'admissionFee', nameEn: 'Admission Fee', nameBn: 'ভর্তি ফি', color: 'teal' },
     { id: 'tuitionFee', nameEn: 'Monthly Tuition', nameBn: 'মাসিক বেতন', color: 'blue' },
-    { id: 'examFee1stModelTest', nameEn: '1st Model Test', nameBn: '১ম মডেল টেস্ট', color: 'amber' },
-    { id: 'examFee1stSemester', nameEn: '1st Semester', nameBn: '১ম সেমিস্টার', color: 'purple' },
-    { id: 'examFee2ndModelTest', nameEn: '2nd Model Test', nameBn: '২য় মডেল টেস্ট', color: 'amber' },
-    { id: 'examFee2ndSemester', nameEn: '2nd Semester', nameBn: '২য় সেমিস্টার', color: 'indigo' },
-    { id: 'examFee3rdModelTest', nameEn: '3rd Model Test', nameBn: '৩য় মডেল টেস্ট', color: 'amber' },
-    { id: 'examFee3rdSemester', nameEn: '3rd Semester', nameBn: '৩য় সেমিস্টার', color: 'emerald' },
+    { id: 'examFee1stModelTest', nameEn: '1st Model Test', nameBn: '1ম মডেল টেস্ট', color: 'amber' },
+    { id: 'examFee1stSemester', nameEn: '1st Semester', nameBn: '1ম সেমিস্টার', color: 'purple' },
+    { id: 'examFee2ndModelTest', nameEn: '2nd Model Test', nameBn: '2য় মডেল টেস্ট', color: 'amber' },
+    { id: 'examFee2ndSemester', nameEn: '2nd Semester', nameBn: '2য় সেমিস্টার', color: 'indigo' },
+    { id: 'examFee3rdModelTest', nameEn: '3rd Model Test', nameBn: '3য় মডেল টেস্ট', color: 'amber' },
+    { id: 'examFee3rdSemester', nameEn: '3rd Semester', nameBn: '3য় সেমিস্টার', color: 'emerald' },
     { id: 'sessionFee', nameEn: 'Session Charge', nameBn: 'সেশন চার্জ', color: 'slate' },
   ];
 
@@ -362,21 +363,21 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
             }}
             className="px-3 py-1.5 bg-blue-50 border border-blue-200 text-blue-800 hover:bg-blue-100 rounded-xl font-bold transition-colors"
           >
-            {language === 'bn' ? '★ স্ট্যান্ডার্ড স্কেল (Nursery ৪০০৳ - Class 10 ১২০০৳)' : '★ Standard Scale (Nursery 400৳ - Class 10 1200৳)'}
+            {language === 'bn' ? '★ স্ট্যান্ডার্ড স্কেল (Nursery 400৳ - Class 10 1200৳)' : '★ Standard Scale (Nursery 400৳ - Class 10 1200৳)'}
           </button>
           <button
             type="button"
             onClick={() => handleApplyQuickScale(500, 100)}
             className="px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl font-semibold transition-colors"
           >
-            {language === 'bn' ? '৫০০৳ থেকে ১০০৳ ধাপে' : '500৳ Base (+100৳ step)'}
+            {language === 'bn' ? '500৳ থেকে 100৳ ধাপে' : '500৳ Base (+100৳ step)'}
           </button>
           <button
             type="button"
             onClick={() => handleApplyQuickScale(600, 150)}
             className="px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl font-semibold transition-colors"
           >
-            {language === 'bn' ? '৬০০৳ থেকে ১৫০৳ ধাপে' : '600৳ Base (+150৳ step)'}
+            {language === 'bn' ? '600৳ থেকে 150৳ ধাপে' : '600৳ Base (+150৳ step)'}
           </button>
         </div>
       </div>
@@ -480,12 +481,12 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                 {!hiddenStandardColumns.includes('examFee1stModelTest') && (
                   <th className="py-3 px-2 text-center text-amber-900 bg-amber-50/70 border-r border-slate-200">
                     <div className="flex items-center justify-center space-x-1">
-                      <span>1st Model Test (১ম মডেল টেস্ট)</span>
+                      <span>1st Model Test (1ম মডেল টেস্ট)</span>
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          requestDeleteStandardColumn('examFee1stModelTest', '১ম মডেল টেস্ট পরীক্ষা ফি');
+                          requestDeleteStandardColumn('examFee1stModelTest', '1ম মডেল টেস্ট পরীক্ষা ফি');
                         }}
                         className="text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 p-1 rounded-md ml-1 inline-flex items-center justify-center transition-all cursor-pointer border border-rose-200/60 shadow-2xs"
                         title="Delete 1st Model Test Exam Fee"
@@ -501,12 +502,12 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                 {!hiddenStandardColumns.includes('examFee1stSemester') && (
                   <th className="py-3 px-2 text-center text-purple-900 bg-purple-50/70 border-r border-slate-200">
                     <div className="flex items-center justify-center space-x-1">
-                      <span>1st Semester (১ম সেমিস্টার)</span>
+                      <span>1st Semester (1ম সেমিস্টার)</span>
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          requestDeleteStandardColumn('examFee1stSemester', '১ম সেমিস্টার পরীক্ষা ফি');
+                          requestDeleteStandardColumn('examFee1stSemester', '1ম সেমিস্টার পরীক্ষা ফি');
                         }}
                         className="text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 p-1 rounded-md ml-1 inline-flex items-center justify-center transition-all cursor-pointer border border-rose-200/60 shadow-2xs"
                         title="Delete 1st Semester Exam Fee"
@@ -522,12 +523,12 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                 {!hiddenStandardColumns.includes('examFee2ndModelTest') && (
                   <th className="py-3 px-2 text-center text-amber-900 bg-amber-50/50 border-r border-slate-200">
                     <div className="flex items-center justify-center space-x-1">
-                      <span>2nd Model Test (২য় মডেল টেস্ট)</span>
+                      <span>2nd Model Test (2য় মডেল টেস্ট)</span>
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          requestDeleteStandardColumn('examFee2ndModelTest', '২য় মডেল টেস্ট পরীক্ষা ফি');
+                          requestDeleteStandardColumn('examFee2ndModelTest', '2য় মডেল টেস্ট পরীক্ষা ফি');
                         }}
                         className="text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 p-1 rounded-md ml-1 inline-flex items-center justify-center transition-all cursor-pointer border border-rose-200/60 shadow-2xs"
                         title="Delete 2nd Model Test Exam Fee"
@@ -543,12 +544,12 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                 {!hiddenStandardColumns.includes('examFee2ndSemester') && (
                   <th className="py-3 px-2 text-center text-indigo-900 bg-indigo-50/60 border-r border-slate-200">
                     <div className="flex items-center justify-center space-x-1">
-                      <span>2nd Semester (২য় সেমিস্টার)</span>
+                      <span>2nd Semester (2য় সেমিস্টার)</span>
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          requestDeleteStandardColumn('examFee2ndSemester', '২য় সেমিস্টার পরীক্ষা ফি');
+                          requestDeleteStandardColumn('examFee2ndSemester', '2য় সেমিস্টার পরীক্ষা ফি');
                         }}
                         className="text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 p-1 rounded-md ml-1 inline-flex items-center justify-center transition-all cursor-pointer border border-rose-200/60 shadow-2xs"
                         title="Delete 2nd Semester Exam Fee"
@@ -564,12 +565,12 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                 {!hiddenStandardColumns.includes('examFee3rdModelTest') && (
                   <th className="py-3 px-2 text-center text-amber-900 bg-amber-50/40 border-r border-slate-200">
                     <div className="flex items-center justify-center space-x-1">
-                      <span>3rd Model Test (৩য় মডেল টেস্ট)</span>
+                      <span>3rd Model Test (3য় মডেল টেস্ট)</span>
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          requestDeleteStandardColumn('examFee3rdModelTest', '৩য় মডেল টেস্ট পরীক্ষা ফি');
+                          requestDeleteStandardColumn('examFee3rdModelTest', '3য় মডেল টেস্ট পরীক্ষা ফি');
                         }}
                         className="text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 p-1 rounded-md ml-1 inline-flex items-center justify-center transition-all cursor-pointer border border-rose-200/60 shadow-2xs"
                         title="Delete 3rd Model Test Exam Fee"
@@ -585,12 +586,12 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                 {!hiddenStandardColumns.includes('examFee3rdSemester') && (
                   <th className="py-3 px-2 text-center text-emerald-900 bg-emerald-50/60 border-r border-slate-200">
                     <div className="flex items-center justify-center space-x-1">
-                      <span>3rd Semester (৩য় সেমিস্টার)</span>
+                      <span>3rd Semester (3য় সেমিস্টার)</span>
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          requestDeleteStandardColumn('examFee3rdSemester', '৩য় সেমিস্টার / বার্ষিক পরীক্ষা ফি');
+                          requestDeleteStandardColumn('examFee3rdSemester', '3য় সেমিস্টার / বার্ষিক পরীক্ষা ফি');
                         }}
                         className="text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 p-1 rounded-md ml-1 inline-flex items-center justify-center transition-all cursor-pointer border border-rose-200/60 shadow-2xs"
                         title="Delete 3rd Semester Exam Fee"
@@ -657,7 +658,7 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                   {/* Class Name */}
                   <td className="py-2.5 px-3">
                     <div className="font-extrabold text-slate-900 text-xs">{config.className}</div>
-                    <div className="text-[10px] text-blue-700 font-semibold">{config.classNameBn}</div>
+                    <div className="text-[10px] text-blue-700 font-semibold">{toBnNumber(config.classNameBn)}</div>
                   </td>
 
                   {/* Admission Fee */}
@@ -665,12 +666,11 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                     <td className="py-2 px-2 text-center bg-teal-50/20 border-x border-slate-100">
                       <div className="inline-flex items-center space-x-1">
                         <span className="font-bold text-slate-400 text-[11px]">৳</span>
-                        <input
-                          type="number"
+                        <DigitInput
                           min={0}
                           required
                           value={config.admissionFee ?? 1500}
-                          onChange={(e) => handleFieldChange(config.className, 'admissionFee', Number(e.target.value))}
+                          onValueChange={(val) => handleFieldChange(config.className, 'admissionFee', val)}
                           className="w-20 px-1.5 py-1 border border-teal-300 rounded-lg text-xs font-black text-teal-900 bg-white text-right focus:ring-2 focus:ring-teal-500 shadow-2xs"
                         />
                       </div>
@@ -682,12 +682,11 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                     <td className="py-2 px-2 text-center bg-blue-50/20 border-r border-slate-100">
                       <div className="inline-flex items-center space-x-1">
                         <span className="font-bold text-slate-400 text-[11px]">৳</span>
-                        <input
-                          type="number"
+                        <DigitInput
                           min={0}
                           required
                           value={config.tuitionFee}
-                          onChange={(e) => handleFieldChange(config.className, 'tuitionFee', Number(e.target.value))}
+                          onValueChange={(val) => handleFieldChange(config.className, 'tuitionFee', val)}
                           className="w-20 px-1.5 py-1 border border-blue-300 rounded-lg text-xs font-black text-blue-900 bg-white text-right focus:ring-2 focus:ring-blue-500 shadow-2xs"
                         />
                       </div>
@@ -699,11 +698,10 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                     <td className="py-2 px-2 text-center bg-amber-50/20 border-r border-slate-100">
                       <div className="inline-flex items-center space-x-1">
                         <span className="font-bold text-slate-400 text-[11px]">৳</span>
-                        <input
-                          type="number"
+                        <DigitInput
                           min={0}
                           value={config.examFee1stModelTest ?? config.examFee1stTest ?? 250}
-                          onChange={(e) => handleFieldChange(config.className, 'examFee1stModelTest', Number(e.target.value))}
+                          onValueChange={(val) => handleFieldChange(config.className, 'examFee1stModelTest', val)}
                           className="w-18 px-1.5 py-1 border border-amber-300 rounded-lg text-xs font-black text-amber-900 bg-white text-right focus:ring-2 focus:ring-amber-500 shadow-2xs"
                         />
                       </div>
@@ -715,11 +713,10 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                     <td className="py-2 px-2 text-center bg-purple-50/20 border-r border-slate-100">
                       <div className="inline-flex items-center space-x-1">
                         <span className="font-bold text-slate-400 text-[11px]">৳</span>
-                        <input
-                          type="number"
+                        <DigitInput
                           min={0}
                           value={config.examFee1stSemester ?? config.examFeeHalfYearly ?? 350}
-                          onChange={(e) => handleFieldChange(config.className, 'examFee1stSemester', Number(e.target.value))}
+                          onValueChange={(val) => handleFieldChange(config.className, 'examFee1stSemester', val)}
                           className="w-18 px-1.5 py-1 border border-purple-300 rounded-lg text-xs font-black text-purple-900 bg-white text-right focus:ring-2 focus:ring-purple-500"
                         />
                       </div>
@@ -731,11 +728,10 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                     <td className="py-2 px-2 text-center bg-amber-50/10 border-r border-slate-100">
                       <div className="inline-flex items-center space-x-1">
                         <span className="font-bold text-slate-400 text-[11px]">৳</span>
-                        <input
-                          type="number"
+                        <DigitInput
                           min={0}
                           value={config.examFee2ndModelTest ?? config.examFeeModelTest ?? 250}
-                          onChange={(e) => handleFieldChange(config.className, 'examFee2ndModelTest', Number(e.target.value))}
+                          onValueChange={(val) => handleFieldChange(config.className, 'examFee2ndModelTest', val)}
                           className="w-18 px-1.5 py-1 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 bg-white text-right focus:ring-2 focus:ring-amber-500"
                         />
                       </div>
@@ -747,11 +743,10 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                     <td className="py-2 px-2 text-center bg-indigo-50/20 border-r border-slate-100">
                       <div className="inline-flex items-center space-x-1">
                         <span className="font-bold text-slate-400 text-[11px]">৳</span>
-                        <input
-                          type="number"
+                        <DigitInput
                           min={0}
                           value={config.examFee2ndSemester ?? config.examFeeHalfYearly ?? 350}
-                          onChange={(e) => handleFieldChange(config.className, 'examFee2ndSemester', Number(e.target.value))}
+                          onValueChange={(val) => handleFieldChange(config.className, 'examFee2ndSemester', val)}
                           className="w-18 px-1.5 py-1 border border-indigo-200 rounded-lg text-xs font-bold text-indigo-900 bg-white text-right focus:ring-2 focus:ring-indigo-500"
                         />
                       </div>
@@ -763,11 +758,10 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                     <td className="py-2 px-2 text-center bg-amber-50/10 border-r border-slate-100">
                       <div className="inline-flex items-center space-x-1">
                         <span className="font-bold text-slate-400 text-[11px]">৳</span>
-                        <input
-                          type="number"
+                        <DigitInput
                           min={0}
                           value={config.examFee3rdModelTest ?? config.examFeeModelTest ?? 250}
-                          onChange={(e) => handleFieldChange(config.className, 'examFee3rdModelTest', Number(e.target.value))}
+                          onValueChange={(val) => handleFieldChange(config.className, 'examFee3rdModelTest', val)}
                           className="w-18 px-1.5 py-1 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 bg-white text-right focus:ring-2 focus:ring-amber-500"
                         />
                       </div>
@@ -779,11 +773,10 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                     <td className="py-2 px-2 text-center bg-emerald-50/20 border-r border-slate-100">
                       <div className="inline-flex items-center space-x-1">
                         <span className="font-bold text-slate-400 text-[11px]">৳</span>
-                        <input
-                          type="number"
+                        <DigitInput
                           min={0}
                           value={config.examFee3rdSemester ?? config.examFeeAnnual ?? 400}
-                          onChange={(e) => handleFieldChange(config.className, 'examFee3rdSemester', Number(e.target.value))}
+                          onValueChange={(val) => handleFieldChange(config.className, 'examFee3rdSemester', val)}
                           className="w-18 px-1.5 py-1 border border-emerald-300 rounded-lg text-xs font-bold text-emerald-900 bg-white text-right focus:ring-2 focus:ring-emerald-500"
                         />
                       </div>
@@ -795,11 +788,10 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                     <td className="py-2 px-2 text-center bg-slate-50 border-r border-slate-100">
                       <div className="inline-flex items-center space-x-1">
                         <span className="font-bold text-slate-400 text-[11px]">৳</span>
-                        <input
-                          type="number"
+                        <DigitInput
                           min={0}
                           value={config.sessionFee}
-                          onChange={(e) => handleFieldChange(config.className, 'sessionFee', Number(e.target.value))}
+                          onValueChange={(val) => handleFieldChange(config.className, 'sessionFee', val)}
                           className="w-20 px-1.5 py-1 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 bg-white text-right focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
@@ -811,11 +803,10 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                     <td key={col.id} className="py-2 px-2 text-center bg-violet-50/20 border-r border-slate-100">
                       <div className="inline-flex items-center space-x-1">
                         <span className="font-bold text-slate-400 text-[11px]">৳</span>
-                        <input
-                          type="number"
+                        <DigitInput
                           min={0}
                           value={config.customFees?.[col.id] ?? col.defaultAmount}
-                          onChange={(e) => handleCustomFieldChange(config.className, col.id, Number(e.target.value))}
+                          onValueChange={(val) => handleCustomFieldChange(config.className, col.id, val)}
                           className="w-20 px-1.5 py-1 border border-violet-200 rounded-lg text-xs font-bold text-violet-900 bg-white text-right focus:ring-2 focus:ring-violet-500 shadow-2xs"
                         />
                       </div>
@@ -900,12 +891,11 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                 <label className="block font-bold text-slate-700 mb-1">
                   {language === 'bn' ? 'ডিফল্ট ফি এর পরিমাণ (৳) *' : 'Default Amount (৳) *'}
                 </label>
-                <input
-                  type="number"
+                <DigitInput
                   min={0}
                   required
                   value={newFeeDefaultAmount}
-                  onChange={(e) => setNewFeeDefaultAmount(Number(e.target.value))}
+                  onValueChange={(val) => setNewFeeDefaultAmount(val)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 font-bold"
                 />
                 <p className="text-[10px] text-slate-500 mt-1">
@@ -962,12 +952,12 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
                   <span>{language === 'bn' ? 'বিলম্ব ফি / জরিমানা (৳ - ঐচ্ছিক)' : 'Late Fee / Fine (৳ - Optional)'}</span>
                   <span className="text-[10px] text-slate-400 font-normal">শেষ তারিখ পার হলে কার্যকর</span>
                 </label>
-                <input
-                  type="number"
+                <DigitInput
                   min={0}
+                  emptyWhenZero
                   placeholder="0"
                   value={newFeeLateFee || ''}
-                  onChange={(e) => setNewFeeLateFee(Number(e.target.value))}
+                  onValueChange={(val) => setNewFeeLateFee(val)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium"
                 />
               </div>

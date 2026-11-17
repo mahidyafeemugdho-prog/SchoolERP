@@ -375,7 +375,7 @@ export const StudentPerformanceAnalyticsView: React.FC = () => {
                   <ShieldAlert className="w-4 h-4 text-amber-600" />
                   <span>উপস্থিতি ও হোমওয়ার্ক সতর্কবার্তা তালিকা</span>
                 </h3>
-                <span className="text-[10px] text-slate-400">৮০% এর নিচে উপস্থিতি</span>
+                <span className="text-[10px] text-slate-400">80% এর নিচে উপস্থিতি</span>
               </div>
 
               <div className="max-h-56 overflow-y-auto space-y-2 text-xs pr-1">
@@ -592,7 +592,7 @@ export const StudentPerformanceAnalyticsView: React.FC = () => {
                 <BarChart3 className="w-4 h-4 text-blue-600" />
                 <span>বিষয়ভিত্তিক ফলাফল ও দক্ষতার অগ্রগতি (Subject-Wise Performance)</span>
               </span>
-              <span className="text-xs text-slate-400 font-normal">পূর্ণমান ১০০-এর ভিত্তিতে</span>
+              <span className="text-xs text-slate-400 font-normal">পূর্ণমান 100-এর ভিত্তিতে</span>
             </h3>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

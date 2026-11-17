@@ -623,6 +623,7 @@ export function createTenantService(deps: TenantServiceDeps) {
       email: string;
       displayName: string;
       phone?: string;
+      avatarUrl?: string;
       schoolId: string | null;
       schoolRole: string | null;
       isMasterAdmin: boolean;
@@ -631,6 +632,7 @@ export function createTenantService(deps: TenantServiceDeps) {
       const nextEmail = input.email !== undefined ? input.email.trim().toLowerCase() : undefined;
       const nextPassword = input.password !== undefined ? input.password : undefined;
       const nextPhone = input.phone !== undefined ? input.phone.trim() : undefined;
+      const nextAvatarUrl = input.avatarUrl !== undefined ? String(input.avatarUrl).trim() : undefined;
 
       if (nextDisplayName !== undefined && !nextDisplayName) {
         throw new SaaSServiceError('Display name cannot be empty.', 400, 'VALIDATION_ERROR');
@@ -638,6 +640,22 @@ export function createTenantService(deps: TenantServiceDeps) {
 
       if (nextPassword !== undefined && nextPassword.length > 0 && nextPassword.length < 6) {
         throw new SaaSServiceError('Password must be at least 6 characters.', 400, 'WEAK_PASSWORD');
+      }
+
+      if (nextAvatarUrl !== undefined && nextAvatarUrl.length > 0) {
+        if (nextAvatarUrl.length > 180_000) {
+          throw new SaaSServiceError(
+            'Profile photo is too large. Please choose a smaller image.',
+            400,
+            'IMAGE_TOO_LARGE'
+          );
+        }
+        if (
+          !/^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(nextAvatarUrl) &&
+          !/^https?:\/\//i.test(nextAvatarUrl)
+        ) {
+          throw new SaaSServiceError('Invalid profile image format.', 400, 'INVALID_IMAGE_FORMAT');
+        }
       }
 
       const emailChanged = Boolean(nextEmail && nextEmail !== (actor.email || '').toLowerCase());
@@ -697,6 +715,7 @@ export function createTenantService(deps: TenantServiceDeps) {
           email: finalEmail,
           displayName: finalName,
           ...(nextPhone !== undefined ? { phone: nextPhone } : {}),
+          ...(nextAvatarUrl !== undefined ? { avatarUrl: nextAvatarUrl } : {}),
           updatedAt: nowIso,
         });
       } else if (actor.schoolId) {
@@ -707,6 +726,7 @@ export function createTenantService(deps: TenantServiceDeps) {
           schoolId: actor.schoolId,
           schoolRole: actor.schoolRole || 'teacher',
           ...(nextPhone !== undefined ? { phone: nextPhone } : {}),
+          ...(nextAvatarUrl !== undefined ? { avatarUrl: nextAvatarUrl } : {}),
           status: 'active',
           createdAt: nowIso,
           createdBy: actor.email || actor.uid,
@@ -730,6 +750,7 @@ export function createTenantService(deps: TenantServiceDeps) {
         email: finalEmail,
         displayName: finalName,
         phone: nextPhone !== undefined ? nextPhone : existingSaasUser?.phone,
+        avatarUrl: nextAvatarUrl !== undefined ? nextAvatarUrl : existingSaasUser?.avatarUrl,
         schoolId: actor.schoolId,
         schoolRole: actor.schoolRole,
         isMasterAdmin: actor.isMasterAdmin,

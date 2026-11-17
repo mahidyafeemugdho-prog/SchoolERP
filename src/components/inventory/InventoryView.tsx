@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { InventoryItem } from '../../types';
+import { DigitInput } from '../common/DigitInput';
 import {
   Package,
   Search,
@@ -318,11 +319,10 @@ export const InventoryView: React.FC = () => {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block font-semibold mb-1">Quantity (পরিমাণ)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     min={1}
                     value={itemQty}
-                    onChange={(e) => setItemQty(Number(e.target.value))}
+                    onValueChange={(val) => setItemQty(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono font-bold"
                   />
                 </div>
@@ -338,11 +338,10 @@ export const InventoryView: React.FC = () => {
                 </div>
                 <div>
                   <label className="block font-semibold mb-1">Cost (মূল্য ৳)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     min={0}
                     value={itemCost}
-                    onChange={(e) => setItemCost(Number(e.target.value))}
+                    onValueChange={(val) => setItemCost(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono font-bold"
                   />
                 </div>

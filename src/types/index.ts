@@ -55,6 +55,7 @@ export interface SchoolProfile {
   establishedYear: string;
   currentSession: string;
   logoUrl?: string;
+  superAdminAvatarUrl?: string;
   heroImageUrl?: string;
   aboutImageUrl?: string;
   heroTaglineBn?: string;

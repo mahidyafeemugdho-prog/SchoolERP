@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { TransportRoute } from '../../types';
+import { DigitInput } from '../common/DigitInput';
 import {
   Bus,
   Search,
@@ -262,10 +263,9 @@ export const TransportView: React.FC = () => {
                 </div>
                 <div>
                   <label className="block font-semibold mb-1">Monthly Fare (৳)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     value={monthlyFare}
-                    onChange={(e) => setMonthlyFare(Number(e.target.value))}
+                    onValueChange={(val) => setMonthlyFare(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg"
                   />
                 </div>

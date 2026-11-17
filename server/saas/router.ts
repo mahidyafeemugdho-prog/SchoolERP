@@ -7,6 +7,10 @@ import {
   SaaSServiceError,
   SubscriptionPlanConfig,
   SubscriptionPlanId,
+  SupportCategory,
+  SupportMessageRecord,
+  SupportTicketRecord,
+  SupportTicketStatus,
   getDefaultPlatformPaymentChannels,
 } from './types';
 import { createSaaSMiddleware, AuthenticatedRequest } from './middleware';
@@ -122,14 +126,22 @@ export function createSaasRouter(deps: SaasRouterDeps) {
    */
   router.get('/me', mw.requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const principal = req.principal!;
+      const basePrincipal = req.principal!;
       const now = nowProvider();
-      const [channels, school] = await Promise.all([
+      const [channels, school, userRecord] = await Promise.all([
         loadPaymentChannelsSafe(),
-        !principal.isMasterAdmin && principal.schoolId
-          ? deps.db.getSchoolById(principal.schoolId)
+        !basePrincipal.isMasterAdmin && basePrincipal.schoolId
+          ? deps.db.getSchoolById(basePrincipal.schoolId)
           : Promise.resolve(null),
+        deps.db.getSaaSUserByUid(basePrincipal.uid).catch(() => null),
       ]);
+      const principal = {
+        ...basePrincipal,
+        displayName: userRecord?.displayName || basePrincipal.displayName,
+        phone: userRecord?.phone || basePrincipal.phone,
+        avatarUrl:
+          userRecord?.avatarUrl !== undefined ? userRecord.avatarUrl : basePrincipal.avatarUrl,
+      };
       const platformSupportContact = {
         phone: channels.supportPhone,
         email: channels.supportEmail,
@@ -1151,6 +1163,346 @@ export function createSaasRouter(deps: SaasRouterDeps) {
           submission: savedSubmission,
           submissions: updatedList,
         });
+      } catch (err) {
+        handleRouteError(res, err);
+      }
+    }
+  );
+
+  // =========================================================================
+  // SUPPORT TEAM TWO-WAY CHAT & SCREENSHOT FEEDBACK (School <-> Master Admin)
+  // Uses mw.requireAuth so even pending/expired schools can contact Support.
+  // =========================================================================
+
+  const sanitizeSupportImages = (raw: unknown): string[] => {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      .map((item) => item.trim())
+      .filter((item) => item.length <= 650_000)
+      .slice(0, 3);
+  };
+
+  const buildSupportPreview = (text: string, imageCount: number): string => {
+    const clean = text.replace(/\s+/g, ' ').trim();
+    if (clean) {
+      return clean.length > 160 ? `${clean.slice(0, 157)}...` : clean;
+    }
+    return imageCount > 1 ? `[${imageCount}টি ছবি সংযুক্ত]` : '[ছবি সংযুক্ত]';
+  };
+
+  router.get('/support/tickets', mw.requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const principal = req.principal!;
+      const statusFilter = typeof req.query.status === 'string' ? req.query.status : undefined;
+      const requestedSchoolId =
+        typeof req.query.schoolId === 'string' ? req.query.schoolId.trim() : undefined;
+
+      let tickets: SupportTicketRecord[];
+      if (principal.isMasterAdmin) {
+        tickets = await deps.db.listSupportTickets(requestedSchoolId || undefined);
+      } else if (principal.schoolId) {
+        tickets = await deps.db.listSupportTickets(principal.schoolId);
+      } else {
+        const all = await deps.db.listSupportTickets();
+        tickets = all.filter((t) => t.createdByUid === principal.uid);
+      }
+
+      if (statusFilter && statusFilter !== 'all') {
+        tickets = tickets.filter((t) => t.status === statusFilter);
+      }
+
+      return res.json({ success: true, tickets });
+    } catch (err) {
+      handleRouteError(res, err);
+    }
+  });
+
+  router.post('/support/tickets', mw.requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const principal = req.principal!;
+      const body = req.body || {};
+      const subject = String(body.subject || '').trim().slice(0, 240);
+      const rawCategory = String(body.category || 'technical').trim();
+      const validCategories = new Set<SupportCategory>([
+        'technical',
+        'billing',
+        'training',
+        'data',
+        'other',
+      ]);
+      const category: SupportCategory = validCategories.has(rawCategory as SupportCategory)
+        ? (rawCategory as SupportCategory)
+        : 'technical';
+      const text = String(body.text || body.message || '').trim().slice(0, 3500);
+      const imageUrls = sanitizeSupportImages(body.imageUrls);
+
+      if (!subject) {
+        return res.status(400).json({
+          success: false,
+          code: 'MISSING_SUBJECT',
+          error: 'সমস্যার বিষয় (Subject) লিখুন।',
+        });
+      }
+      if (!text && imageUrls.length === 0) {
+        return res.status(400).json({
+          success: false,
+          code: 'EMPTY_MESSAGE',
+          error: 'অনুগ্রহ করে সমস্যার বিবরণ লিখুন অথবা স্ক্রিনশট/ছবি আপলোড করুন।',
+        });
+      }
+
+      const targetSchoolId = principal.isMasterAdmin
+        ? String(body.schoolId || 'PLATFORM').trim()
+        : principal.schoolId || principal.uid;
+
+      const school =
+        targetSchoolId && targetSchoolId !== 'PLATFORM'
+          ? await deps.db.getSchoolById(targetSchoolId).catch(() => null)
+          : null;
+
+      const schoolName =
+        school?.schoolName ||
+        (typeof body.schoolName === 'string' && body.schoolName.trim()) ||
+        (targetSchoolId === 'PLATFORM' ? 'Platform Direct' : targetSchoolId);
+      const schoolCode =
+        school?.schoolCode ||
+        (typeof body.schoolCode === 'string' && body.schoolCode.trim()) ||
+        undefined;
+
+      const nowIso = nowProvider().toISOString();
+      const rand = Math.random().toString(36).slice(2, 7);
+      const ticketId = `tkt_${Date.now()}_${rand}`;
+      const messageId = `msg_${Date.now()}_${rand}`;
+      const senderRole = principal.isMasterAdmin ? 'master_admin' : 'school';
+
+      const ticket: SupportTicketRecord = {
+        id: ticketId,
+        schoolId: targetSchoolId,
+        schoolName,
+        ...(schoolCode ? { schoolCode } : {}),
+        createdByUid: principal.uid,
+        createdByName: principal.displayName || principal.email || 'School User',
+        createdByEmail: principal.email || '',
+        createdByRole: principal.schoolRole || (principal.isMasterAdmin ? 'master_admin' : 'admin'),
+        subject,
+        category,
+        status: principal.isMasterAdmin ? 'replied' : 'open',
+        lastMessagePreview: buildSupportPreview(text, imageUrls.length),
+        lastSenderRole: senderRole,
+        unreadByMaster: !principal.isMasterAdmin,
+        unreadBySchool: principal.isMasterAdmin,
+        messageCount: 1,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      const initialMessage: SupportMessageRecord = {
+        id: messageId,
+        ticketId,
+        schoolId: targetSchoolId,
+        ticketCreatorUid: principal.uid,
+        senderUid: principal.uid,
+        senderName:
+          principal.displayName ||
+          (principal.isMasterAdmin ? 'Master Admin' : principal.email || 'School User'),
+        senderEmail: principal.email || '',
+        senderRole,
+        senderSchoolRole: principal.schoolRole || (principal.isMasterAdmin ? 'master_admin' : 'admin'),
+        text,
+        imageUrls,
+        createdAt: nowIso,
+      };
+
+      const created = await deps.db.createSupportTicket(ticket, initialMessage);
+      return res.status(201).json({
+        success: true,
+        ticket: created.ticket,
+        message: created.message,
+      });
+    } catch (err) {
+      handleRouteError(res, err);
+    }
+  });
+
+  router.get(
+    '/support/tickets/:ticketId/messages',
+    mw.requireAuth,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const principal = req.principal!;
+        const ticketId = String(req.params.ticketId || '').trim();
+        let ticket = await deps.db.getSupportTicketById(ticketId);
+        if (!ticket) {
+          return res.status(404).json({
+            success: false,
+            code: 'TICKET_NOT_FOUND',
+            error: 'Support ticket not found.',
+          });
+        }
+        if (
+          !principal.isMasterAdmin &&
+          ticket.schoolId !== principal.schoolId &&
+          ticket.createdByUid !== principal.uid
+        ) {
+          return res.status(403).json({
+            success: false,
+            code: 'CROSS_TENANT_FORBIDDEN',
+            error: 'Cross-school support ticket access is strictly prohibited.',
+          });
+        }
+
+        if (principal.isMasterAdmin && ticket.unreadByMaster) {
+          ticket = await deps.db.updateSupportTicket(ticketId, { unreadByMaster: false });
+        } else if (!principal.isMasterAdmin && ticket.unreadBySchool) {
+          ticket = await deps.db.updateSupportTicket(ticketId, { unreadBySchool: false });
+        }
+
+        const messages = await deps.db.listSupportMessages(ticketId);
+        return res.json({ success: true, ticket, messages });
+      } catch (err) {
+        handleRouteError(res, err);
+      }
+    }
+  );
+
+  router.post(
+    '/support/tickets/:ticketId/messages',
+    mw.requireAuth,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const principal = req.principal!;
+        const ticketId = String(req.params.ticketId || '').trim();
+        const existing = await deps.db.getSupportTicketById(ticketId);
+        if (!existing) {
+          return res.status(404).json({
+            success: false,
+            code: 'TICKET_NOT_FOUND',
+            error: 'Support ticket not found.',
+          });
+        }
+        if (
+          !principal.isMasterAdmin &&
+          existing.schoolId !== principal.schoolId &&
+          existing.createdByUid !== principal.uid
+        ) {
+          return res.status(403).json({
+            success: false,
+            code: 'CROSS_TENANT_FORBIDDEN',
+            error: 'Cannot post to another school support ticket.',
+          });
+        }
+
+        const body = req.body || {};
+        const text = String(body.text || body.message || '').trim().slice(0, 3500);
+        const imageUrls = sanitizeSupportImages(body.imageUrls);
+
+        if (!text && imageUrls.length === 0) {
+          return res.status(400).json({
+            success: false,
+            code: 'EMPTY_MESSAGE',
+            error: 'অনুগ্রহ করে বার্তা লিখুন অথবা অন্তত ১টি ছবি সংযুক্ত করুন।',
+          });
+        }
+
+        const nowIso = nowProvider().toISOString();
+        const rand = Math.random().toString(36).slice(2, 7);
+        const senderRole = principal.isMasterAdmin ? 'master_admin' : 'school';
+
+        const msg: SupportMessageRecord = {
+          id: `msg_${Date.now()}_${rand}`,
+          ticketId,
+          schoolId: existing.schoolId,
+          ticketCreatorUid: existing.createdByUid,
+          senderUid: principal.uid,
+          senderName:
+            principal.displayName ||
+            (principal.isMasterAdmin ? 'Master Admin' : principal.email || 'School User'),
+          senderEmail: principal.email || '',
+          senderRole,
+          senderSchoolRole: principal.schoolRole || (principal.isMasterAdmin ? 'master_admin' : 'admin'),
+          text,
+          imageUrls,
+          createdAt: nowIso,
+        };
+
+        const result = await deps.db.addSupportMessage(ticketId, msg, {
+          status: principal.isMasterAdmin ? 'replied' : 'open',
+          lastSenderRole: senderRole,
+          lastMessagePreview: buildSupportPreview(text, imageUrls.length),
+          unreadByMaster: !principal.isMasterAdmin,
+          unreadBySchool: principal.isMasterAdmin,
+          updatedAt: nowIso,
+        });
+
+        return res.status(201).json({
+          success: true,
+          ticket: result.ticket,
+          message: result.message,
+        });
+      } catch (err) {
+        handleRouteError(res, err);
+      }
+    }
+  );
+
+  router.patch(
+    '/support/tickets/:ticketId/status',
+    mw.requireAuth,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const principal = req.principal!;
+        const ticketId = String(req.params.ticketId || '').trim();
+        const existing = await deps.db.getSupportTicketById(ticketId);
+        if (!existing) {
+          return res.status(404).json({
+            success: false,
+            code: 'TICKET_NOT_FOUND',
+            error: 'Support ticket not found.',
+          });
+        }
+        if (
+          !principal.isMasterAdmin &&
+          existing.schoolId !== principal.schoolId &&
+          existing.createdByUid !== principal.uid
+        ) {
+          return res.status(403).json({
+            success: false,
+            code: 'CROSS_TENANT_FORBIDDEN',
+            error: 'Cannot update another school support ticket.',
+          });
+        }
+
+        const updates: Partial<SupportTicketRecord> = {
+          updatedAt: nowProvider().toISOString(),
+        };
+
+        if (req.body?.markRead) {
+          if (principal.isMasterAdmin) updates.unreadByMaster = false;
+          else updates.unreadBySchool = false;
+        }
+
+        if (typeof req.body?.status === 'string') {
+          const requestedStatus = req.body.status.trim() as SupportTicketStatus;
+          if (!['open', 'replied', 'resolved'].includes(requestedStatus)) {
+            return res.status(400).json({
+              success: false,
+              code: 'INVALID_STATUS',
+              error: 'Invalid support ticket status.',
+            });
+          }
+          if (requestedStatus === 'replied' && !principal.isMasterAdmin) {
+            return res.status(403).json({
+              success: false,
+              code: 'FORBIDDEN_STATUS',
+              error: 'Only Master Admin can set status to replied.',
+            });
+          }
+          updates.status = requestedStatus;
+        }
+
+        const updated = await deps.db.updateSupportTicket(ticketId, updates);
+        return res.json({ success: true, ticket: updated });
       } catch (err) {
         handleRouteError(res, err);
       }

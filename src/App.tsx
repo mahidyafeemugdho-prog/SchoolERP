@@ -32,6 +32,7 @@ import { StudentPerformanceAnalyticsView } from './components/analytics/StudentP
 import { SettingsView } from './components/settings/SettingsView';
 import { SaaSAccessGate } from './components/saas/SaaSAccessGate';
 import { SubscriptionBillingView } from './components/saas/SubscriptionBillingView';
+import { SupportTeamView } from './components/support/SupportTeamView';
 import {
   hasPasswordProvider,
   reauthenticateWithCurrentPassword,
@@ -554,6 +555,8 @@ function AppContent() {
         return <SubscriptionBillingView />;
       case 'settings':
         return <SettingsView />;
+      case 'support':
+        return <SupportTeamView />;
       default:
         return <DashboardView onNavigate={handleNavigate} />;
     }

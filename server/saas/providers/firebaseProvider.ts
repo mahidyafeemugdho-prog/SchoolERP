@@ -20,6 +20,8 @@ import {
   SubscriptionHistoryRecord,
   SubscriptionPlanConfig,
   SubscriptionPlanId,
+  SupportMessageRecord,
+  SupportTicketRecord,
   TransactionContext,
   getDefaultPlatformPaymentChannels,
 } from '../types';
@@ -796,12 +798,14 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
       historySnap,
       legacySyncBySchoolSnap,
       legacySyncByTenantSnap,
+      supportTicketsSnap,
     ] = await Promise.all([
       db.collection('saas_users').where('schoolId', '==', schoolId).get(),
       db.collection('payment_requests').where('schoolId', '==', schoolId).get(),
       db.collection('subscription_history').where('schoolId', '==', schoolId).get(),
       db.collection('school_sync').where('schoolId', '==', schoolId).get().catch(() => null),
       db.collection('school_sync').where('tenantId', '==', schoolId).get().catch(() => null),
+      db.collection('support_tickets').where('schoolId', '==', schoolId).get().catch(() => null),
     ]);
 
     const refsToDelete = new Map<string, FirebaseFirestore.DocumentReference>();
@@ -821,6 +825,13 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
     legacySyncBySchoolSnap?.docs.forEach((d) => addRef(d.ref));
     legacySyncByTenantSnap?.docs.forEach((d) => addRef(d.ref));
     addRef(db.collection('school_sync').doc(schoolId));
+    if (supportTicketsSnap && !supportTicketsSnap.empty) {
+      for (const tDoc of supportTicketsSnap.docs) {
+        const msgSnap = await tDoc.ref.collection('messages').get().catch(() => null);
+        msgSnap?.docs.forEach((mDoc) => addRef(mDoc.ref));
+        addRef(tDoc.ref);
+      }
+    }
 
     // Delete all top-level SaaS / legacy references in batches of 400
     const topLevelRefs = Array.from(refsToDelete.values());
@@ -994,6 +1005,101 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
         }),
         { merge: true }
       );
+  }
+
+  async listSupportTickets(schoolId?: string): Promise<SupportTicketRecord[]> {
+    const db = this.getDb();
+    let q: FirebaseFirestore.Query = db.collection('support_tickets');
+    if (schoolId) {
+      q = q.where('schoolId', '==', schoolId);
+    }
+    const snap = await q.get();
+    return snap.docs
+      .map((d) => d.data() as SupportTicketRecord)
+      .filter((t) => Boolean(t?.id))
+      .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  }
+
+  async getSupportTicketById(ticketId: string): Promise<SupportTicketRecord | null> {
+    const db = this.getDb();
+    const snap = await db.collection('support_tickets').doc(ticketId).get();
+    return snap.exists ? (snap.data() as SupportTicketRecord) : null;
+  }
+
+  async createSupportTicket(
+    ticket: SupportTicketRecord,
+    initialMessage: SupportMessageRecord
+  ): Promise<{ ticket: SupportTicketRecord; message: SupportMessageRecord }> {
+    const db = this.getDb();
+    const cleanTicket = stripUndefined(ticket);
+    const cleanMessage = stripUndefined(initialMessage);
+    const batch = db.batch();
+    const ticketRef = db.collection('support_tickets').doc(cleanTicket.id);
+    const msgRef = ticketRef.collection('messages').doc(cleanMessage.id);
+    batch.set(ticketRef, cleanTicket);
+    batch.set(msgRef, cleanMessage);
+    await batch.commit();
+    return { ticket: cleanTicket, message: cleanMessage };
+  }
+
+  async listSupportMessages(ticketId: string): Promise<SupportMessageRecord[]> {
+    const db = this.getDb();
+    const snap = await db
+      .collection('support_tickets')
+      .doc(ticketId)
+      .collection('messages')
+      .orderBy('createdAt', 'asc')
+      .get();
+    return snap.docs
+      .map((d) => d.data() as SupportMessageRecord)
+      .filter((m) => Boolean(m?.id));
+  }
+
+  async addSupportMessage(
+    ticketId: string,
+    message: SupportMessageRecord,
+    ticketUpdates: Partial<SupportTicketRecord>
+  ): Promise<{ ticket: SupportTicketRecord; message: SupportMessageRecord }> {
+    const db = this.getDb();
+    const ticketRef = db.collection('support_tickets').doc(ticketId);
+    const msgRef = ticketRef.collection('messages').doc(message.id);
+    const cleanMessage = stripUndefined(message);
+
+    const updatedTicket = await db.runTransaction(async (tx) => {
+      const ticketSnap = await tx.get(ticketRef);
+      if (!ticketSnap.exists) {
+        throw new SaaSServiceError('Support ticket not found.', 404, 'TICKET_NOT_FOUND');
+      }
+      const existing = ticketSnap.data() as SupportTicketRecord;
+      const merged = stripUndefined({
+        ...existing,
+        ...ticketUpdates,
+        messageCount: Number(existing.messageCount || 0) + 1,
+      }) as SupportTicketRecord;
+      tx.set(ticketRef, merged);
+      tx.set(msgRef, cleanMessage);
+      return merged;
+    });
+
+    return { ticket: updatedTicket, message: cleanMessage };
+  }
+
+  async updateSupportTicket(
+    ticketId: string,
+    updates: Partial<SupportTicketRecord>
+  ): Promise<SupportTicketRecord> {
+    const db = this.getDb();
+    const ref = db.collection('support_tickets').doc(ticketId);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      throw new SaaSServiceError('Support ticket not found.', 404, 'TICKET_NOT_FOUND');
+    }
+    const merged = stripUndefined({
+      ...(snap.data() as SupportTicketRecord),
+      ...updates,
+    }) as SupportTicketRecord;
+    await ref.set(merged);
+    return merged;
   }
 
   async runInTransaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {

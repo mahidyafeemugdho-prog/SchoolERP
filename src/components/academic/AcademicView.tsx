@@ -24,6 +24,7 @@ import {
   Info,
 } from 'lucide-react';
 import { SaturdayOffToggle } from '../common/SaturdayOffToggle';
+import { DigitInput } from '../common/DigitInput';
 
 export const AcademicView: React.FC = () => {
   const { activeRole } = useAuth();
@@ -429,7 +430,7 @@ export const AcademicView: React.FC = () => {
           </h2>
           <p className="text-xs text-slate-500">
             {language === 'bn'
-              ? 'প্লে / নার্সারি থেকে যেকোনো শ্রেণি সম্পাদনা, বিষয়সূচি ও ২-২০ দিনের দীর্ঘ ছুটি ব্যবস্থাপনা'
+              ? 'প্লে / নার্সারি থেকে যেকোনো শ্রেণি সম্পাদনা, বিষয়সূচি ও 2-20 দিনের দীর্ঘ ছুটি ব্যবস্থাপনা'
               : 'Edit class names (Play, Nurani, Class 1-10), manage subjects & multi-day holiday vacations'}
           </p>
         </div>
@@ -504,7 +505,7 @@ export const AcademicView: React.FC = () => {
                 className="flex items-center space-x-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
               >
                 <Plus className="w-4 h-4" />
-                <span>{language === 'bn' ? 'দীর্ঘ ছুটি ঘোষণা (২-২০ দিন)' : 'Declare Vacation'}</span>
+                <span>{language === 'bn' ? 'দীর্ঘ ছুটি ঘোষণা (2-20 দিন)' : 'Declare Vacation'}</span>
               </button>
             </div>
           )}
@@ -790,7 +791,7 @@ export const AcademicView: React.FC = () => {
                 </h3>
                 <p className="text-xs text-amber-800/80 mt-0.5">
                   {language === 'bn'
-                    ? 'আগামীকালের ছুটি অথবা একসাথে ২, ৩, ১৫, ২০ দিনের ছুটি (যেমন: ঈদুল ফিতর, গ্রীষ্মকালীন ছুটি) ঘোষণা করুন। ছুটির দিনে হাজিরায় অটোমেটিক "স্কুল ছুটি" দেখানো হবে।'
+                    ? 'আগামীকালের ছুটি অথবা একসাথে 2, 3, 15, 20 দিনের ছুটি (যেমন: ঈদুল ফিতর, গ্রীষ্মকালীন ছুটি) ঘোষণা করুন। ছুটির দিনে হাজিরায় অটোমেটিক "স্কুল ছুটি" দেখানো হবে।'
                     : 'Declare single day (tomorrow) or multi-day holidays (e.g. 2, 3, 15, 20 days vacation). Attendance will automatically reflect school closed on holiday dates.'}
                 </p>
               </div>
@@ -828,12 +829,12 @@ export const AcademicView: React.FC = () => {
                     {language === 'bn' ? 'সাপ্তাহিক শনিবার ছুটি / খোলা নির্ধারণ (Saturday Weekend Status)' : 'Saturday Weekend / Working Day Setting'}
                   </h4>
                   <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black">
-                    {language === 'bn' ? '১-ক্লিক পরিবর্তন' : '1-Click Toggle'}
+                    {language === 'bn' ? '1-ক্লিক পরিবর্তন' : '1-Click Toggle'}
                   </span>
                 </div>
                 <p className="text-xs text-slate-600 mt-1 leading-relaxed max-w-2xl">
                   {language === 'bn'
-                    ? 'সাধারণ স্কুলের জন্য শনিবার সাপ্তাহিক ছুটি (School Weekend OFF)। তবে মাদ্রাসায় শনিবার ছুটি থাকে না বা নিয়মিত ক্লাস হয় — তাই মাদ্রাসার জন্য ১-ক্লিকে শনিবার খোলা রাখা যাবে। পরিবর্তনের সাথে সাথে ক্লাস রুটিন ও দৈনিক হাজিরার ক্যালকুলেশন আপডেট হবে।'
+                    ? 'সাধারণ স্কুলের জন্য শনিবার সাপ্তাহিক ছুটি (School Weekend OFF)। তবে মাদ্রাসায় শনিবার ছুটি থাকে না বা নিয়মিত ক্লাস হয় — তাই মাদ্রাসার জন্য 1-ক্লিকে শনিবার খোলা রাখা যাবে। পরিবর্তনের সাথে সাথে ক্লাস রুটিন ও দৈনিক হাজিরার ক্যালকুলেশন আপডেট হবে।'
                     : 'General schools have Saturday off, while Madrashas keep Saturday open. Click below to toggle Saturday open/off instantly across Routine and Attendance.'}
                 </p>
               </div>
@@ -970,7 +971,7 @@ export const AcademicView: React.FC = () => {
                   required
                   value={classNameBn}
                   onChange={(e) => setClassNameBn(e.target.value)}
-                  placeholder="যেমন: প্লে, নূরানী, ১ম শ্রেণি..."
+                  placeholder="যেমন: প্লে, নূরানী, 1ম শ্রেণি..."
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg"
                 />
               </div>
@@ -993,10 +994,10 @@ export const AcademicView: React.FC = () => {
                   <label className="block font-semibold mb-1 text-slate-800">
                     Display Order (ক্রম)
                   </label>
-                  <input
-                    type="number"
+                  <DigitInput
+                    min={1}
                     value={classOrder}
-                    onChange={(e) => setClassOrder(Number(e.target.value))}
+                    onValueChange={(val) => setClassOrder(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono"
                   />
                 </div>
@@ -1142,7 +1143,7 @@ export const AcademicView: React.FC = () => {
                     }}
                     className="px-2 py-0.5 bg-white border border-amber-300 rounded text-[10px] font-semibold text-amber-900 hover:bg-amber-100"
                   >
-                    আগামীকাল (১ দিন)
+                    আগামীকাল (1 দিন)
                   </button>
                   <button
                     type="button"
@@ -1155,7 +1156,7 @@ export const AcademicView: React.FC = () => {
                     }}
                     className="px-2 py-0.5 bg-white border border-amber-300 rounded text-[10px] font-semibold text-amber-900 hover:bg-amber-100"
                   >
-                    ৩ দিন ছুটি
+                    3 দিন ছুটি
                   </button>
                   <button
                     type="button"
@@ -1168,7 +1169,7 @@ export const AcademicView: React.FC = () => {
                     }}
                     className="px-2 py-0.5 bg-white border border-amber-300 rounded text-[10px] font-semibold text-amber-900 hover:bg-amber-100"
                   >
-                    ১৫ দিন ছুটি (ঈদ)
+                    15 দিন ছুটি (ঈদ)
                   </button>
                   <button
                     type="button"
@@ -1181,7 +1182,7 @@ export const AcademicView: React.FC = () => {
                     }}
                     className="px-2 py-0.5 bg-white border border-amber-300 rounded text-[10px] font-semibold text-amber-900 hover:bg-amber-100"
                   >
-                    ২০ দিন ছুটি (গ্রীষ্মকাল)
+                    20 দিন ছুটি (গ্রীষ্মকাল)
                   </button>
                 </div>
               </div>
@@ -1304,7 +1305,7 @@ export const AcademicView: React.FC = () => {
                   <span>{language === 'bn' ? 'বিভাগ / গ্রুপ (Stream / Group) *' : 'Department / Group *'}</span>
                   {['Class 9', 'Class 10'].includes(subClassName) && (
                     <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300">
-                      {language === 'bn' ? '৯ম-১০ম শ্রেণির বিভাগ' : 'Secondary Stream'}
+                      {language === 'bn' ? '9ম-10ম শ্রেণির বিভাগ' : 'Secondary Stream'}
                     </span>
                   )}
                 </label>
@@ -1342,19 +1343,17 @@ export const AcademicView: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold mb-1">Full Marks</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     value={subFullMarks}
-                    onChange={(e) => setSubFullMarks(Number(e.target.value))}
+                    onValueChange={(val) => setSubFullMarks(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono font-bold"
                   />
                 </div>
                 <div>
                   <label className="block font-semibold mb-1">Pass Marks</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     value={subPassMarks}
-                    onChange={(e) => setSubPassMarks(Number(e.target.value))}
+                    onValueChange={(val) => setSubPassMarks(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono font-bold"
                   />
                 </div>
@@ -1362,28 +1361,25 @@ export const AcademicView: React.FC = () => {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block font-semibold mb-1">Written (CQ)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     value={subWritten}
-                    onChange={(e) => setSubWritten(Number(e.target.value))}
+                    onValueChange={(val) => setSubWritten(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono"
                   />
                 </div>
                 <div>
                   <label className="block font-semibold mb-1">MCQ</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     value={subMcq}
-                    onChange={(e) => setSubMcq(Number(e.target.value))}
+                    onValueChange={(val) => setSubMcq(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono"
                   />
                 </div>
                 <div>
                   <label className="block font-semibold mb-1">Practical</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     value={subPractical}
-                    onChange={(e) => setSubPractical(Number(e.target.value))}
+                    onValueChange={(val) => setSubPractical(val)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono"
                   />
                 </div>

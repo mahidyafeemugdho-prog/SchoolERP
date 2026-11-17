@@ -4,7 +4,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { Student, StudentDocument, ClassLevel, ShiftType, GroupType } from '../../types';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
-import { formatGroupName } from '../../utils/i18n';
+import { formatGroupName, toEnNumber } from '../../utils/i18n';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { compareStudentsByClassAndRoll } from '../../utils/studentSort';
 import { LiveCameraModal } from '../common/LiveCameraModal';
@@ -1350,7 +1350,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                     type="text"
                     required
                     value={formData.roll || ''}
-                    onChange={(e) => setFormData({ ...formData, roll: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, roll: toEnNumber(e.target.value) })}
                     placeholder="e.g. 05"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
@@ -1428,7 +1428,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                     type="text"
                     required
                     value={formData.guardianPhone || ''}
-                    onChange={(e) => setFormData({ ...formData, guardianPhone: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, guardianPhone: toEnNumber(e.target.value) })}
                     placeholder="+880 1711-xxxxxx"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
@@ -1466,7 +1466,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                     type="text"
                     placeholder="জন্ম নিবন্ধন নম্বর (১৭ ডিজিট)"
                     value={formData.birthCertificateNo || ''}
-                    onChange={(e) => setFormData({ ...formData, birthCertificateNo: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, birthCertificateNo: toEnNumber(e.target.value) })}
                     className="w-full px-2.5 py-1.5 border border-slate-200 rounded-md text-xs font-mono"
                   />
                   <label className="flex items-center justify-center space-x-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-md border border-blue-200 text-xs font-bold cursor-pointer transition-colors">
@@ -1494,7 +1494,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                     type="text"
                     placeholder="পিতার NID নম্বর (১০/১৩/১৭ ডিজিট)"
                     value={formData.fatherNid || ''}
-                    onChange={(e) => setFormData({ ...formData, fatherNid: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, fatherNid: toEnNumber(e.target.value) })}
                     className="w-full px-2.5 py-1.5 border border-slate-200 rounded-md text-xs font-mono"
                   />
                   <label className="flex items-center justify-center space-x-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-md border border-indigo-200 text-xs font-bold cursor-pointer transition-colors">

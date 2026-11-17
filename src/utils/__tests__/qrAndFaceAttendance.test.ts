@@ -427,7 +427,7 @@ describe('QR & Face Attendance Storage Pipeline', () => {
     expect(checkOutRes.success).toBe(true);
     expect(checkOutRes.scanType).toBe('out');
     expect(checkOutRes.record?.outTime).toBeTruthy();
-    expect(checkOutRes.record?.stayDuration).toContain('৩ ঘণ্টা');
+    expect(checkOutRes.record?.stayDuration).toContain('3 ঘণ্টা');
 
     // 4. Staff face enrollment update triggers immediate 'staff' cloud push
     vi.clearAllMocks();

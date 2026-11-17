@@ -1,33 +1,91 @@
 export type Language = 'en' | 'bn';
 
-const BN_NUMERALS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+const BN_TO_EN_DIGITS: Record<string, string> = {
+  '০': '0',
+  '১': '1',
+  '২': '2',
+  '৩': '3',
+  '৪': '4',
+  '৫': '5',
+  '৬': '6',
+  '৭': '7',
+  '৮': '8',
+  '৯': '9',
+};
 
-export function toBnNumber(num: number | string | undefined | null): string {
+/**
+ * Converts any Bengali numerals (০-৯) in a string/number into standard English digits (0-9),
+ * preserving all surrounding Bengali or English text intact.
+ */
+export function toEnNumber(num: number | string | undefined | null): string {
   if (num === undefined || num === null) return '';
-  const str = String(num);
-  return str.replace(/[0-9]/g, (digit) => BN_NUMERALS[parseInt(digit, 10)]);
+  return String(num).replace(/[০-৯]/g, (digit) => BN_TO_EN_DIGITS[digit] ?? digit);
 }
 
-export function formatTaka(amount: number, lang: Language = 'en'): string {
-  const formatted = amount.toLocaleString('en-IN');
-  if (lang === 'bn') {
-    return `৳ ${toBnNumber(formatted)}`;
+/**
+ * Normalizes typed/pasted numeric input so both Bengali (০-৯) and English (0-9) digits
+ * are accepted seamlessly and converted to clean English (0-9) digits.
+ */
+export function sanitizeNumericInput(
+  raw: string,
+  options: { allowDecimal?: boolean; allowNegative?: boolean } = {}
+): string {
+  const { allowDecimal = true, allowNegative = false } = options;
+  const converted = toEnNumber(raw).replace(/,/g, '');
+  let out = '';
+  let hasDot = false;
+  for (let i = 0; i < converted.length; i++) {
+    const ch = converted[i];
+    if (ch >= '0' && ch <= '9') {
+      out += ch;
+    } else if (allowDecimal && ch === '.' && !hasDot) {
+      hasDot = true;
+      out += '.';
+    } else if (allowNegative && ch === '-' && out.length === 0) {
+      out += '-';
+    }
   }
+  return out;
+}
+
+/**
+ * Parses numbers entered with either Bengali (০-৯) or English (0-9) digits into a JS number.
+ */
+export function parseLocaleNumber(val: string | number | undefined | null, fallback = 0): number {
+  if (typeof val === 'number') return Number.isFinite(val) ? val : fallback;
+  if (val === undefined || val === null) return fallback;
+  const cleaned = sanitizeNumericInput(String(val), { allowDecimal: true, allowNegative: true });
+  if (!cleaned || cleaned === '-' || cleaned === '.' || cleaned === '-.') return fallback;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+/**
+ * Kept for backwards compatibility across 300+ call sites in Bangla UI mode:
+ * all numbers across the app now render strictly with English digits (0-9).
+ */
+export function toBnNumber(num: number | string | undefined | null): string {
+  return toEnNumber(num);
+}
+
+export function formatTaka(amount: number, _lang: Language = 'en'): string {
+  const safeAmount = Number.isFinite(amount) ? amount : 0;
+  const formatted = safeAmount.toLocaleString('en-IN');
   return `৳ ${formatted}`;
 }
 
-export function formatDate(dateStr: string, lang: Language = 'en'): string {
+export function formatDate(dateStr: string, _lang: Language = 'en'): string {
   if (!dateStr) return '';
   try {
-    const parts = dateStr.split('-');
+    const clean = toEnNumber(dateStr);
+    const parts = clean.split('-');
     if (parts.length === 3) {
       // YYYY-MM-DD to DD/MM/YYYY
-      const formatted = `${parts[2]}/${parts[1]}/${parts[0]}`;
-      return lang === 'bn' ? toBnNumber(formatted) : formatted;
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
     }
-    return lang === 'bn' ? toBnNumber(dateStr) : dateStr;
+    return clean;
   } catch {
-    return dateStr;
+    return toEnNumber(dateStr);
   }
 }
 
@@ -209,6 +267,8 @@ export const translations = {
     analytics: 'AI Student Analytics',
     subscriptionBilling: 'Subscription & Billing',
     settings: 'School Settings',
+    supportTeam: 'Support Team',
+    logout: 'Log out',
 
     // Common Actions
     add: 'Add New',
@@ -346,6 +406,8 @@ export const translations = {
     analytics: 'এআই পারফরম্যান্স বিশ্লেষণ',
     subscriptionBilling: 'সাবস্ক্রিপশন ও বিলিং',
     settings: 'বিদ্যালয় সেটিংস',
+    supportTeam: 'সাপোর্ট টিম',
+    logout: 'লগআউট',
 
     // Common Actions
     add: 'নতুন যোগ করুন',
@@ -376,16 +438,16 @@ export const translations = {
     // Academic & Grading
     nursery: 'প্লে / নার্সারি',
     kg: 'কেজি (KG)',
-    class1: '১ম শ্রেণি',
-    class2: '২য় শ্রেণি',
-    class3: '৩য় শ্রেণি',
-    class4: '৪র্থ শ্রেণি',
-    class5: '৫ম শ্রেণি',
-    class6: '৬ষ্ঠ শ্রেণি',
-    class7: '৭ম শ্রেণি',
-    class8: '৮ম শ্রেণি',
-    class9: '৯ম শ্রেণি',
-    class10: '১০ম শ্রেণি',
+    class1: '1ম শ্রেণি',
+    class2: '2য় শ্রেণি',
+    class3: '3য় শ্রেণি',
+    class4: '4র্থ শ্রেণি',
+    class5: '5ম শ্রেণি',
+    class6: '6ষ্ঠ শ্রেণি',
+    class7: '7ম শ্রেণি',
+    class8: '8ম শ্রেণি',
+    class9: '9ম শ্রেণি',
+    class10: '10ম শ্রেণি',
     morning: 'প্রভাতি শিফট',
     day: 'দিবা শিফট',
     general: 'সাধারণ',

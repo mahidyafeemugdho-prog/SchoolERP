@@ -332,3 +332,79 @@ export async function compressSignatureImage(
   });
 }
 
+/**
+ * Compresses an uploaded screenshot or problem photo for Support Team chat.
+ * Targets max 1080px dimension and ~60-180KB JPEG so up to 3 images fit safely in Firestore.
+ */
+export async function compressSupportScreenshot(
+  imageSource: string | File,
+  maxDimension = 1080
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        let width = img.width || maxDimension;
+        let height = img.height || maxDimension;
+
+        if (width > maxDimension || height > maxDimension) {
+          if (width >= height) {
+            height = Math.max(1, Math.round((height * maxDimension) / width));
+            width = maxDimension;
+          } else {
+            width = Math.max(1, Math.round((width * maxDimension) / height));
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Canvas context unavailable'));
+          return;
+        }
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        let compressed = canvas.toDataURL('image/jpeg', 0.74);
+        if (compressed.length > 260_000) {
+          compressed = canvas.toDataURL('image/jpeg', 0.56);
+        }
+        if (compressed.length > 420_000) {
+          const smallCanvas = document.createElement('canvas');
+          smallCanvas.width = Math.max(1, Math.round(width * 0.7));
+          smallCanvas.height = Math.max(1, Math.round(height * 0.7));
+          const sCtx = smallCanvas.getContext('2d');
+          if (sCtx) {
+            sCtx.fillStyle = '#ffffff';
+            sCtx.fillRect(0, 0, smallCanvas.width, smallCanvas.height);
+            sCtx.drawImage(canvas, 0, 0, smallCanvas.width, smallCanvas.height);
+            compressed = smallCanvas.toDataURL('image/jpeg', 0.55);
+          }
+        }
+        resolve(compressed);
+      };
+
+      img.onerror = () => {
+        reject(new Error('Could not read selected image file.'));
+      };
+
+      if (typeof imageSource === 'string') {
+        img.src = imageSource;
+      } else {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          img.src = (e.target?.result as string) || '';
+        };
+        reader.onerror = () => reject(new Error('Failed to read image file.'));
+        reader.readAsDataURL(imageSource);
+      }
+    } catch (err) {
+      reject(err);
+    }
+  });
+}

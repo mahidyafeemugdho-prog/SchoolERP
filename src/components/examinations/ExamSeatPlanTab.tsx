@@ -11,6 +11,7 @@ import { StorageService } from '../../services/storage';
 import { compareRolls, compareStudentsByClassAndRoll } from '../../utils/studentSort';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
+import { DigitInput } from '../common/DigitInput';
 import {
   Building,
   CheckCircle2,
@@ -1616,12 +1617,11 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
                   <label className="block font-bold mb-1 text-[11px]">
                     {language === 'bn' ? 'সারি / কলাম' : 'Columns'}
                   </label>
-                  <input
-                    type="number"
+                  <DigitInput
                     min={1}
                     max={6}
                     value={columnsInput}
-                    onChange={(e) => setColumnsInput(Number(e.target.value))}
+                    onValueChange={(val) => setColumnsInput(val)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
                   />
                 </div>
@@ -1629,12 +1629,11 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
                   <label className="block font-bold mb-1 text-[11px]">
                     {language === 'bn' ? 'বেঞ্চ / কলাম' : 'Benches / Col'}
                   </label>
-                  <input
-                    type="number"
+                  <DigitInput
                     min={1}
                     max={20}
                     value={benchesInput}
-                    onChange={(e) => setBenchesInput(Number(e.target.value))}
+                    onValueChange={(val) => setBenchesInput(val)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl font-bold"
                   />
                 </div>

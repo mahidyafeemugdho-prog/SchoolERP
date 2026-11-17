@@ -24,6 +24,8 @@ import {
   Globe,
   QrCode,
   CreditCard,
+  Headphones,
+  LogOut,
   X,
 } from 'lucide-react';
 
@@ -31,6 +33,11 @@ import { isTabAuthorized } from '../../utils/permissions';
 import { StorageService } from '../../services/storage';
 import { useSchool } from '../../context/SchoolContext';
 import { resolveSchoolDisplayName } from '../../utils/schoolNameResolver';
+import {
+  SUPPORT_UPDATED_EVENT,
+  subscribeToSupportTickets,
+} from '../../services/supportService';
+import { SupportTicketDTO } from '../../services/saasApi';
 
 interface SidebarProps {
   activeTab: string;
@@ -47,12 +54,16 @@ interface NavItem {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, onClose }) => {
-  const { activeRole, currentUser, saasSession } = useAuth();
+  const { activeRole, currentUser, saasSession, firebaseUser, logout } = useAuth();
   const { t, language, toBnNumber } = useLanguage();
   const { schoolProfile } = useSchool();
   const [pendingOnlineCount, setPendingOnlineCount] = React.useState<number>(() =>
     StorageService.getOnlinePaymentRequests().filter((r) => r.status === 'pending').length
   );
+  const [unreadSupportCount, setUnreadSupportCount] = React.useState<number>(0);
+
+  const isMasterAdminUser =
+    activeRole === 'master_admin' || Boolean(saasSession?.principal?.isMasterAdmin);
 
   React.useEffect(() => {
     const refreshCount = () => {
@@ -70,6 +81,37 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
       window.removeEventListener('storage', refreshCount);
     };
   }, []);
+
+  React.useEffect(() => {
+    if (!firebaseUser?.uid) {
+      setUnreadSupportCount(0);
+      return;
+    }
+    const updateUnread = (list?: SupportTicketDTO[]) => {
+      if (!Array.isArray(list)) return;
+      const count = list.filter((item) =>
+        isMasterAdminUser ? item.unreadByMaster : item.unreadBySchool
+      ).length;
+      setUnreadSupportCount(count);
+    };
+    const unsub = subscribeToSupportTickets({
+      schoolId: isMasterAdminUser
+        ? null
+        : saasSession?.school?.schoolId || currentUser?.schoolId || null,
+      uid: firebaseUser.uid,
+      isMasterAdmin: isMasterAdminUser,
+      onTickets: updateUnread,
+    });
+    const onCustom = (e: Event) => {
+      const detail = (e as CustomEvent<{ tickets?: SupportTicketDTO[] }>).detail;
+      if (detail?.tickets) updateUnread(detail.tickets);
+    };
+    window.addEventListener(SUPPORT_UPDATED_EVENT, onCustom);
+    return () => {
+      unsub();
+      window.removeEventListener(SUPPORT_UPDATED_EVENT, onCustom);
+    };
+  }, [firebaseUser?.uid, isMasterAdminUser, saasSession?.school?.schoolId, currentUser?.schoolId]);
 
   if (activeRole === 'student') {
     return null;
@@ -208,6 +250,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
       icon: Settings,
       roles: ['super_admin', 'admin'],
     },
+    {
+      id: 'support',
+      labelKey: 'supportTeam',
+      icon: Headphones,
+      roles: ['master_admin', 'super_admin', 'admin', 'teacher', 'accountant', 'guardian', 'librarian', 'receptionist'],
+    },
   ];
 
   const visibleItems = navItems.filter((item) => {
@@ -288,6 +336,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
                 activeRole === 'admin' ||
                 activeRole === 'accountant' ||
                 activeRole === 'master_admin');
+            const showSupportBadge = item.id === 'support' && unreadSupportCount > 0;
             return (
               <button
                 key={item.id}
@@ -310,9 +359,28 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
                     {language === 'bn' ? toBnNumber(pendingOnlineCount) : pendingOnlineCount}
                   </span>
                 )}
+                {showSupportBadge && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-500 text-white shrink-0">
+                    {language === 'bn' ? toBnNumber(unreadSupportCount) : unreadSupportCount}
+                  </span>
+                )}
               </button>
             );
           })}
+
+          <div className="pt-2 mt-2 border-t border-slate-800/80">
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                void logout();
+              }}
+              className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-500/15 hover:text-rose-300 transition-colors"
+            >
+              <LogOut className="w-4 h-4 shrink-0" />
+              <span className="truncate">{t('logout')}</span>
+            </button>
+          </div>
         </nav>
 
         {/* Footer Role Info */}

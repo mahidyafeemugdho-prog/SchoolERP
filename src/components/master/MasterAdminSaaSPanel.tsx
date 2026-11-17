@@ -44,10 +44,18 @@ import {
   ShieldCheck,
   Trash2,
   AlertTriangle,
+  Headphones,
 } from 'lucide-react';
 import { AccountCredentialsModal } from '../auth/AccountCredentialsModal';
+import { SupportTeamView } from '../support/SupportTeamView';
+import {
+  SUPPORT_UPDATED_EVENT,
+  subscribeToSupportTickets,
+} from '../../services/supportService';
+import { DigitInput } from '../common/DigitInput';
+import { parseLocaleNumber } from '../../utils/i18n';
 
-type SubTab = 'schools' | 'payments' | 'plans' | 'payment_channels';
+type SubTab = 'schools' | 'payments' | 'plans' | 'payment_channels' | 'support';
 
 function computeExpiryDateStr(startDate: string, durationDays: number): string {
   const base = startDate ? new Date(`${startDate}T00:00:00.000Z`) : new Date();
@@ -68,6 +76,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
   const [analytics, setAnalytics] = useState<SaaSMasterAnalytics | null>(null);
   const [paymentRequests, setPaymentRequests] = useState<SaaSPaymentRequestDTO[]>([]);
   const [plans, setPlans] = useState<SaaSPlanConfig[]>([]);
+  const [unreadSupportCount, setUnreadSupportCount] = useState(0);
 
   // Filters
   const [schoolSearch, setSchoolSearch] = useState('');
@@ -276,6 +285,27 @@ export const MasterAdminSaaSPanel: React.FC = () => {
 
   useEffect(() => {
     loadAll();
+  }, []);
+
+  useEffect(() => {
+    const unsub = subscribeToSupportTickets({
+      schoolId: null,
+      isMasterAdmin: true,
+      onTickets: (list) => {
+        setUnreadSupportCount(list.filter((t) => t.unreadByMaster).length);
+      },
+    });
+    const onCustom = (e: Event) => {
+      const detail = (e as CustomEvent<{ tickets?: any[] }>).detail;
+      if (Array.isArray(detail?.tickets)) {
+        setUnreadSupportCount(detail.tickets.filter((t) => t?.unreadByMaster).length);
+      }
+    };
+    window.addEventListener(SUPPORT_UPDATED_EVENT, onCustom);
+    return () => {
+      unsub();
+      window.removeEventListener(SUPPORT_UPDATED_EVENT, onCustom);
+    };
   }, []);
 
   const formatMasterWriteError = (err: any, fallbackMsg: string): string => {
@@ -1042,6 +1072,23 @@ export const MasterAdminSaaSPanel: React.FC = () => {
           >
             <Smartphone className="w-4 h-4" />
             <span>{language === 'bn' ? 'বিকাশ / নগদ নম্বর' : 'bKash / Nagad Setup'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('support')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all ${
+              activeSubTab === 'support'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100'
+            }`}
+          >
+            <Headphones className="w-4 h-4" />
+            <span>
+              {language === 'bn' ? 'সাপোর্ট টিম' : 'Support Team'}
+              {unreadSupportCount > 0
+                ? ` (${language === 'bn' ? toBnNumber(unreadSupportCount) : unreadSupportCount})`
+                : ''}
+            </span>
           </button>
         </div>
 
@@ -1824,6 +1871,9 @@ export const MasterAdminSaaSPanel: React.FC = () => {
         </div>
       )}
 
+      {/* TAB 5: SUPPORT TEAM CHAT & SCREENSHOT FEEDBACK */}
+      {activeSubTab === 'support' && <SupportTeamView embedded />}
+
       {/* MODAL: CREATE NEW SCHOOL */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
@@ -2174,12 +2224,11 @@ export const MasterAdminSaaSPanel: React.FC = () => {
               </div>
               <div>
                 <label className="block font-bold mb-1">Days to Add *</label>
-                <input
-                  type="number"
+                <DigitInput
                   min={1}
                   required
-                  value={extendDays}
-                  onChange={(e) => setExtendDays(e.target.value)}
+                  value={extendDays === '' ? '' : parseLocaleNumber(extendDays, 1)}
+                  onValueChange={(val) => setExtendDays(String(val))}
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl font-bold"
                 />
               </div>
@@ -2369,26 +2418,24 @@ export const MasterAdminSaaSPanel: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold mb-1">Price (BDT)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     min={0}
                     required
                     value={editingPlan.priceBdt}
-                    onChange={(e) =>
-                      setEditingPlan({ ...editingPlan, priceBdt: Number(e.target.value) })
+                    onValueChange={(val) =>
+                      setEditingPlan({ ...editingPlan, priceBdt: val })
                     }
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl font-bold"
                   />
                 </div>
                 <div>
                   <label className="block font-bold mb-1">Duration (Days)</label>
-                  <input
-                    type="number"
+                  <DigitInput
                     min={1}
                     required
                     value={editingPlan.durationDays}
-                    onChange={(e) =>
-                      setEditingPlan({ ...editingPlan, durationDays: Number(e.target.value) })
+                    onValueChange={(val) =>
+                      setEditingPlan({ ...editingPlan, durationDays: val })
                     }
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl font-bold"
                   />

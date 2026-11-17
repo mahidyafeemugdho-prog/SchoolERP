@@ -87,9 +87,25 @@ export const isTabAuthorized = (tab: string, role: UserRole, user: UserProfile |
     academic: ['super_admin', 'admin'],
     analytics: ['super_admin', 'admin', 'teacher', 'student', 'guardian'],
     subscription_billing: ['super_admin', 'admin'],
+    support: ['super_admin', 'admin', 'teacher', 'accountant', 'student', 'guardian', 'librarian', 'receptionist'],
     website_preview: ['super_admin', 'admin', 'teacher', 'accountant', 'student', 'guardian', 'librarian', 'receptionist'],
   };
 
   const allowed = baseAllowedRoles[tab];
   return allowed ? allowed.includes(role) : false;
 };
+
+/**
+ * Only Super Admin (or Master Admin) may edit or delete financial records
+ * (fee invoices, payment receipts, and expense vouchers) after creation.
+ * Accountants and other staff can create records and collect fees, but cannot modify or delete existing ones.
+ */
+export const canEditOrDeleteFinanceRecord = (role?: UserRole | null): boolean => {
+  return role === 'super_admin' || role === 'master_admin';
+};
+
+export const canEditOrDeleteInvoice = (role?: UserRole | null): boolean => {
+  return canEditOrDeleteFinanceRecord(role);
+};
+
+

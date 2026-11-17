@@ -321,9 +321,9 @@ export const AIAgentChatModal: React.FC<AIAgentChatModalProps> = ({
   ];
 
   const teacherSuggestions = [
-    '📖 ক্লাস ১০ গণিত (বীজগণিত) ১ ঘণ্টার পাঠ পরিকল্পনা',
-    '✏️ পদার্থবিজ্ঞানের উপর ৩টি সৃজনশীল প্রশ্ন (ক,খ,গ,ঘ) তৈরি করো',
-    '📝 ইংরেজি ১ম পত্র ১০টি বহুনির্বাচনী প্রশ্ন ও উত্তর দাও',
+    '📖 ক্লাস 10 গণিত (বীজগণিত) 1 ঘণ্টার পাঠ পরিকল্পনা',
+    '✏️ পদার্থবিজ্ঞানের উপর 3টি সৃজনশীল প্রশ্ন (ক,খ,গ,ঘ) তৈরি করো',
+    '📝 ইংরেজি 1ম পত্র 10টি বহুনির্বাচনী প্রশ্ন ও উত্তর দাও',
   ];
 
   const activeSuggestions =
@@ -423,7 +423,7 @@ export const AIAgentChatModal: React.FC<AIAgentChatModalProps> = ({
             <div className="flex items-center space-x-1.5">
               <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
               <span>
-                <strong>এক্সিকিউটিভ অ্যাকশন:</strong> যেকোনো নোটিশ ড্রাফট করার নির্দেশ দিলে এআই সরাসরি বোর্ডে প্রকাশের জন্য ১-ক্লিক বাটন প্রদান করবে।
+                <strong>এক্সিকিউটিভ অ্যাকশন:</strong> যেকোনো নোটিশ ড্রাফট করার নির্দেশ দিলে এআই সরাসরি বোর্ডে প্রকাশের জন্য 1-ক্লিক বাটন প্রদান করবে।
               </span>
             </div>
           </div>
@@ -539,7 +539,7 @@ export const AIAgentChatModal: React.FC<AIAgentChatModalProps> = ({
                           className="w-full flex items-center justify-center space-x-2 py-2 px-3 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs rounded-lg shadow-sm transition-transform active:scale-95"
                         >
                           <CheckCircle2 className="w-4 h-4" />
-                          <span>১-ক্লিকে নোটিশ বোর্ডে প্রকাশ করুন (Publish Now)</span>
+                          <span>1-ক্লিকে নোটিশ বোর্ডে প্রকাশ করুন (Publish Now)</span>
                         </button>
                       )}
                     </div>
