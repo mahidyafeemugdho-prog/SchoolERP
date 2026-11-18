@@ -448,6 +448,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const prioritySlices: ('profile' | 'staff' | 'students')[] =
             resolvedRole === 'student' || resolvedRole === 'guardian' || Boolean(me.principal.linkedStudentId)
               ? ['profile', 'students']
+              : resolvedRole === 'gatekeeper'
+              ? ['profile', 'students', 'staff']
               : ['profile', 'staff'];
           await CloudSyncService.setActiveSaaSTenant(me.principal.schoolId, me.accessAllowed, {
             prioritySlices,

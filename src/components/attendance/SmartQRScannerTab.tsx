@@ -1205,7 +1205,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       fCtx.drawImage(video, sx, sy, cropW, cropH, 0, 0, fw, fh);
       fCtx.restore();
 
-      // Quick contrast + skin-chrominance gate across center and upper-center ROI (< 0.3ms)
+      // Quick contrast + skin-chrominance gate across center, upper-center, and lower-center ROI (< 0.4ms)
       const contrastVecCanvas = lumCanvasRef.current || document.createElement('canvas');
       if (!lumCanvasRef.current) {
         contrastVecCanvas.width = 16;
@@ -1218,6 +1218,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
         const probeBoxes: Array<[number, number, number, number]> = [
           [Math.floor(fw * 0.22), Math.floor(fh * 0.14), Math.floor(fw * 0.56), Math.floor(fh * 0.64)],
           [Math.floor(fw * 0.24), Math.floor(fh * 0.06), Math.floor(fw * 0.52), Math.floor(fh * 0.58)],
+          [Math.floor(fw * 0.22), Math.floor(fh * 0.24), Math.floor(fw * 0.56), Math.floor(fh * 0.64)],
         ];
         let anyContrast = false;
         let anySkin = false;
@@ -1235,16 +1236,18 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
         hasFaceLikeRegion = anySkin;
       }
 
-      // Multi-scale + subtle head-position offsets covering normal arm-length selfies & close-ups
+      // Multi-scale + subtle head-position offsets covering normal, upper, and lower portrait framing
       const crops: Array<[number, number, number, number]> = [
         [Math.floor(fw * 0.20), Math.floor(fh * 0.12), Math.floor(fw * 0.60), Math.floor(fh * 0.68)], // standard passport
         [Math.floor(fw * 0.27), Math.floor(fh * 0.15), Math.floor(fw * 0.46), Math.floor(fh * 0.54)], // arm-length distance
         [Math.floor(fw * 0.22), Math.floor(fh * 0.05), Math.floor(fw * 0.56), Math.floor(fh * 0.60)], // higher head framing
+        [Math.floor(fw * 0.20), Math.floor(fh * 0.24), Math.floor(fw * 0.60), Math.floor(fh * 0.66)], // lower-centered portrait (selfie tilt)
+        [Math.floor(fw * 0.22), Math.floor(fh * 0.30), Math.floor(fw * 0.56), Math.floor(fh * 0.62)], // lower compact framing
         [Math.floor(fw * 0.13), Math.floor(fh * 0.08), Math.floor(fw * 0.74), Math.floor(fh * 0.78)], // close-up
+        [Math.floor(fw * 0.16), Math.floor(fh * 0.18), Math.floor(fw * 0.68), Math.floor(fh * 0.72)], // lower close-up
         [Math.floor(fw * 0.16), Math.floor(fh * 0.12), Math.floor(fw * 0.60), Math.floor(fh * 0.68)], // slight left
         [Math.floor(fw * 0.24), Math.floor(fh * 0.12), Math.floor(fw * 0.60), Math.floor(fh * 0.68)], // slight right
         [Math.floor(fw * 0.20), Math.floor(fh * 0.08), Math.floor(fw * 0.60), Math.floor(fh * 0.68)], // slight up
-        [Math.floor(fw * 0.20), Math.floor(fh * 0.16), Math.floor(fw * 0.60), Math.floor(fh * 0.68)], // slight down
       ];
       const vectors: number[][] = [];
       for (const [cx, cy, cw, ch] of crops) {
@@ -1560,29 +1563,20 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
           const validFace = Array.isArray(faces)
             ? faces.find((f: any) => !f?.boundingBox || f.boundingBox.width >= minFaceWidth)
             : null;
-          if (!validFace) {
-            autoFaceStreakRef.current = null;
-            setFaceScanStatus(
-              scannerTypeRef.current === 'auto'
-                ? 'মুখমণ্ডল অথবা QR আইডি কার্ড ক্যামেরার সামনে ধরুন'
-                : 'ক্যামেরার সামনে মুখমণ্ডল ধরুন (অটো ফেস স্ক্যান)'
-            );
-            return;
-          }
-          if (validFace.boundingBox) {
+          if (validFace?.boundingBox) {
             detectedBox = {
               x: validFace.boundingBox.x,
               y: validFace.boundingBox.y,
               width: validFace.boundingBox.width,
               height: validFace.boundingBox.height,
             };
+            setFaceScanStatus('মুখমণ্ডল শনাক্ত হচ্ছে...');
           }
-          setFaceScanStatus('মুখমণ্ডল শনাক্ত হচ্ছে...');
         }
         await executeFaceRecognition(undefined, undefined, {
           silentAuto: true,
           detectedBox,
-          hasNativeFaceDetector: Boolean(nativeDetector),
+          hasNativeFaceDetector: Boolean(detectedBox),
         });
       } catch {
         // Ignore transient frame errors
@@ -1953,7 +1947,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
           isFullscreen
             ? 'fixed inset-0 z-50 rounded-none border-none min-h-screen'
             : effectiveIsGatekeeper
-            ? 'min-h-[85vh] h-[calc(100vh-80px)] cursor-pointer'
+            ? 'min-h-[460px] h-[calc(100dvh-76px)] cursor-pointer'
             : 'min-h-[520px] sm:min-h-[580px] md:min-h-[640px]'
         }`}
       >
@@ -2057,7 +2051,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
           </div>
         </div>
         {/* Live Camera Viewport Area */}
-        <div className="relative flex-1 w-full h-full min-h-[460px] flex items-center justify-center overflow-hidden bg-black">
+        <div className={`relative flex-1 w-full h-full flex items-center justify-center overflow-hidden bg-black ${effectiveIsGatekeeper ? 'min-h-0' : 'min-h-[460px]'}`}>
           {/* Hidden isolated mount node for image-file QR decoding */}
           <div id="qr-file-temp-scanner" className="hidden" />
 
@@ -2074,7 +2068,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
             scannerType === 'auto' ? (
               <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center z-10 p-4">
                 {/* Dual Auto Reticle: Supports both QR ID Cards & Face Simultaneously */}
-                <div className="w-60 h-68 sm:w-72 sm:h-80 md:w-80 md:h-88 border-2 border-emerald-400/60 rounded-3xl relative flex items-center justify-center shadow-[0_0_60px_rgba(16,185,129,0.22)]">
+                <div className="w-64 h-76 sm:w-72 sm:h-84 md:w-80 md:h-88 border-2 border-emerald-400/60 rounded-3xl relative flex items-center justify-center shadow-[0_0_60px_rgba(16,185,129,0.22)]">
                   {/* 4 Corner QR Brackets */}
                   <div className="absolute -top-2 -left-2 w-8 h-8 border-t-4 border-l-4 border-emerald-400 rounded-tl-xl" />
                   <div className="absolute -top-2 -right-2 w-8 h-8 border-t-4 border-r-4 border-emerald-400 rounded-tr-xl" />
@@ -2082,7 +2076,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
                   <div className="absolute -bottom-2 -right-2 w-8 h-8 border-b-4 border-r-4 border-emerald-400 rounded-br-xl" />
 
                   {/* Inner Biometric Face Oval Guide */}
-                  <div className="w-44 h-56 sm:w-52 sm:h-64 border-2 border-dashed border-cyan-400/65 rounded-[50%] flex items-center justify-center">
+                  <div className="w-52 h-68 sm:w-56 sm:h-72 border-2 border-dashed border-cyan-400/75 rounded-[50%] flex items-center justify-center">
                     <div className="w-[82%] h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_20px_#22d3ee] animate-pulse" />
                   </div>
                 </div>
@@ -2594,7 +2588,10 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
               {(scannerType === 'auto' || scannerType === 'face') && (
                 <button
                   type="button"
-                  onClick={() => executeFaceRecognition()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    executeFaceRecognition();
+                  }}
                   className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white text-xs font-black shadow-lg flex items-center gap-1.5 active:scale-95"
                 >
                   <ScanFace className="w-4 h-4" />
@@ -2604,7 +2601,10 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
 
               <button
                 type="button"
-                onClick={stopCamera}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  stopCamera();
+                }}
                 className="px-3 py-1 rounded-xl bg-black/60 hover:bg-rose-900/60 border border-white/10 text-slate-300 hover:text-white text-[11px] font-bold backdrop-blur-md transition-colors"
               >
                 ক্যামেরা সাময়িক বন্ধ
