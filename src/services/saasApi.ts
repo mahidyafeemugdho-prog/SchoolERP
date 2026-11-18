@@ -1,8 +1,17 @@
 import { getFreshIdToken } from './firebase';
 
-export type SaaSPlanId = 'free' | 'monthly' | 'quarterly' | 'half_yearly' | 'yearly' | 'lifetime';
+export type SaaSPlanId = 'free' | 'monthly' | 'quarterly' | 'half_yearly' | 'yearly' | 'lifetime' | (string & {});
 export type SaaSSubscriptionStatus = 'Pending' | 'Active' | 'Expired' | 'Suspended';
 export type SaaSSchoolStatus = 'pending' | 'active' | 'expired' | 'suspended';
+
+export const CORE_PLAN_IDS = new Set<string>([
+  'free',
+  'monthly',
+  'quarterly',
+  'half_yearly',
+  'yearly',
+  'lifetime',
+]);
 
 export interface SaaSPlanConfig {
   id: SaaSPlanId;
@@ -10,10 +19,25 @@ export interface SaaSPlanConfig {
   nameBn: string;
   durationDays: number;
   priceBdt: number;
+  discountPercent?: number;
+  badgeText?: string;
+  features?: string[];
+  sortOrder?: number;
+  isCustom?: boolean;
   description: string;
   descriptionBn: string;
   isActive: boolean;
   updatedAt: string;
+}
+
+export function getEffectivePlanPriceBdt(plan: {
+  priceBdt: number;
+  discountPercent?: number;
+}): number {
+  const base = Math.max(0, Number(plan.priceBdt) || 0);
+  const pct = Math.min(100, Math.max(0, Number(plan.discountPercent) || 0));
+  if (base === 0 || pct === 0) return Math.round(base);
+  return Math.max(0, Math.round(base * (1 - pct / 100)));
 }
 
 export interface SaaSComputedSubscription {
@@ -651,14 +675,53 @@ export const SaaSApi = {
   masterListPlans: () =>
     saasFetch<{ success: boolean; plans: SaaSPlanConfig[] }>('/master/plans'),
 
+  masterCreatePlan: (payload: {
+    id?: string;
+    name: string;
+    nameBn?: string;
+    priceBdt: number;
+    discountPercent?: number;
+    durationDays: number;
+    badgeText?: string;
+    features?: string[];
+    description?: string;
+    descriptionBn?: string;
+    isActive?: boolean;
+  }) =>
+    saasFetch<{ success: boolean; plan: SaaSPlanConfig }>('/master/plans', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   masterUpdatePlan: (
     planId: SaaSPlanId,
-    payload: Partial<Pick<SaaSPlanConfig, 'name' | 'nameBn' | 'priceBdt' | 'durationDays' | 'description' | 'descriptionBn' | 'isActive'>>
+    payload: Partial<
+      Pick<
+        SaaSPlanConfig,
+        | 'name'
+        | 'nameBn'
+        | 'priceBdt'
+        | 'discountPercent'
+        | 'durationDays'
+        | 'badgeText'
+        | 'features'
+        | 'sortOrder'
+        | 'description'
+        | 'descriptionBn'
+        | 'isActive'
+      >
+    >
   ) =>
     saasFetch<{ success: boolean; plan: SaaSPlanConfig }>(`/master/plans/${encodeURIComponent(planId)}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+
+  masterDeletePlan: (planId: SaaSPlanId) =>
+    saasFetch<{ success: boolean; deletedPlanId: string }>(
+      `/master/plans/${encodeURIComponent(planId)}`,
+      { method: 'DELETE' }
+    ),
 
   masterListPaymentRequests: (filters?: { schoolId?: string; status?: string }) => {
     const params = new URLSearchParams();

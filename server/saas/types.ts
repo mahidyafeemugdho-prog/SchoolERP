@@ -4,7 +4,17 @@ export type SubscriptionPlanId =
   | 'quarterly'
   | 'half_yearly'
   | 'yearly'
-  | 'lifetime';
+  | 'lifetime'
+  | (string & {});
+
+export const CORE_SUBSCRIPTION_PLAN_IDS = new Set<string>([
+  'free',
+  'monthly',
+  'quarterly',
+  'half_yearly',
+  'yearly',
+  'lifetime',
+]);
 
 export type SubscriptionStatus = 'Pending' | 'Active' | 'Expired' | 'Suspended';
 
@@ -33,10 +43,25 @@ export interface SubscriptionPlanConfig {
   nameBn: string;
   durationDays: number;
   priceBdt: number;
+  discountPercent?: number;
+  badgeText?: string;
+  features?: string[];
+  sortOrder?: number;
+  isCustom?: boolean;
   description: string;
   descriptionBn: string;
   isActive: boolean;
   updatedAt: string;
+}
+
+export function getEffectivePlanPriceBdt(plan: {
+  priceBdt: number;
+  discountPercent?: number;
+}): number {
+  const base = Math.max(0, Number(plan.priceBdt) || 0);
+  const pct = Math.min(100, Math.max(0, Number(plan.discountPercent) || 0));
+  if (base === 0 || pct === 0) return Math.round(base);
+  return Math.max(0, Math.round(base * (1 - pct / 100)));
 }
 
 export const DEFAULT_SUBSCRIPTION_PLANS: SubscriptionPlanConfig[] = [
@@ -428,6 +453,7 @@ export interface DatabaseProviderInterface {
   getPlans(): Promise<SubscriptionPlanConfig[]>;
   getPlanById(planId: SubscriptionPlanId): Promise<SubscriptionPlanConfig | null>;
   upsertPlan(plan: SubscriptionPlanConfig): Promise<SubscriptionPlanConfig>;
+  deletePlan?(planId: SubscriptionPlanId): Promise<void>;
 
   getPaymentChannels(): Promise<PlatformPaymentChannels>;
   savePaymentChannels(channels: PlatformPaymentChannels): Promise<PlatformPaymentChannels>;

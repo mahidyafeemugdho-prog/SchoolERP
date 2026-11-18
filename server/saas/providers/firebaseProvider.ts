@@ -660,7 +660,9 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
       yearly: 5,
       lifetime: 6,
     };
-    const sorted = plans.sort((a, b) => (order[a.id] || 99) - (order[b.id] || 99));
+    const sorted = plans.sort(
+      (a, b) => (a.sortOrder ?? order[a.id] ?? 100) - (b.sortOrder ?? order[b.id] ?? 100)
+    );
     this.plansCache = { data: sorted, expiresAt: nowMs + FirebaseDatabaseProvider.CONFIG_CACHE_TTL_MS };
     return sorted;
   }
@@ -676,6 +678,12 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
     await db.collection('subscription_plans').doc(plan.id).set(clean, { merge: true });
     this.plansCache = null;
     return clean;
+  }
+
+  async deletePlan(planId: SubscriptionPlanId): Promise<void> {
+    const db = this.getDb();
+    await db.collection('subscription_plans').doc(planId).delete();
+    this.plansCache = null;
   }
 
   async getPaymentChannels(): Promise<PlatformPaymentChannels> {

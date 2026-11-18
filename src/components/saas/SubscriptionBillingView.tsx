@@ -10,6 +10,7 @@ import {
   SaaSPlanId,
   SaaSPlatformPaymentChannels,
   SaaSSubscriptionHistoryDTO,
+  getEffectivePlanPriceBdt,
   isSaaSBackendUnavailableError,
 } from '../../services/saasApi';
 import { auth, db, handleFirestoreError, OperationType } from '../../services/firebase';
@@ -112,7 +113,7 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
         ];
         loadedPlans = merged
           .filter((p) => p.isActive !== false)
-          .sort((a, b) => (order[a.id] || 99) - (order[b.id] || 99));
+          .sort((a, b) => (a.sortOrder ?? order[a.id] ?? 100) - (b.sortOrder ?? order[b.id] ?? 100));
       }
     }
 
@@ -124,7 +125,7 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
       const currentPlan =
         loadedPlans.find((p) => p.id === saasSession?.subscription?.planId) || loadedPlans[0];
       setSelectedPlanId(currentPlan.id);
-      setAmount(String(currentPlan.priceBdt));
+      setAmount(String(getEffectivePlanPriceBdt(currentPlan)));
     }
 
     const schoolId = !previewMode ? saasSession?.school?.schoolId : undefined;
@@ -192,7 +193,7 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
         const currentPlan =
           planRes.plans.find((p) => p.id === saasSession?.subscription?.planId) || planRes.plans[0];
         setSelectedPlanId(currentPlan.id);
-        setAmount(String(currentPlan.priceBdt));
+        setAmount(String(getEffectivePlanPriceBdt(currentPlan)));
       }
       setPaymentRequests(myRes.paymentRequests || []);
       setHistory(myRes.subscriptionHistory || []);
@@ -217,7 +218,7 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
     setSelectedPlanId(planId);
     const plan = plans.find((p) => p.id === planId);
     if (plan) {
-      setAmount(String(plan.priceBdt));
+      setAmount(String(getEffectivePlanPriceBdt(plan)));
     }
   };
 
@@ -597,37 +598,76 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
               {plans.map((p) => {
                 const selected = selectedPlanId === p.id;
                 const isLifetime = p.id === 'lifetime' || p.durationDays >= 36500;
-                const isFree = p.priceBdt === 0;
+                const effPrice = getEffectivePlanPriceBdt(p);
+                const discPct = Math.min(100, Math.max(0, Number(p.discountPercent) || 0));
+                const hasDiscount = discPct > 0 && p.priceBdt > 0;
+                const isFree = effPrice === 0;
                 return (
                   <button
                     key={p.id}
                     type="button"
                     onClick={() => handlePlanChange(p.id)}
-                    className={`p-3 rounded-xl border text-left transition-all ${
+                    className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
                       selected
                         ? 'border-blue-600 bg-blue-50/70 ring-1 ring-blue-600'
+                        : hasDiscount
+                        ? 'border-rose-200 hover:border-rose-300 bg-white'
                         : 'border-slate-200 hover:border-slate-300 bg-white'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="text-xs font-bold text-slate-900">
-                        {language === 'bn' ? p.nameBn : p.name}
-                      </span>
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 shrink-0">
-                        {isLifetime
-                          ? language === 'bn'
-                            ? 'আজীবন'
-                            : 'Lifetime'
-                          : `${p.durationDays}d`}
-                      </span>
+                    <div>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-xs font-bold text-slate-900">
+                          {language === 'bn' ? p.nameBn || p.name : p.name}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {hasDiscount && (
+                            <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-rose-600 text-white">
+                              -{discPct}%
+                            </span>
+                          )}
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                            {isLifetime
+                              ? language === 'bn'
+                                ? 'আজীবন'
+                                : 'Lifetime'
+                              : `${p.durationDays}d`}
+                          </span>
+                        </div>
+                      </div>
+                      {p.badgeText && (
+                        <div className="mt-1">
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900">
+                            {p.badgeText}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex items-baseline gap-1.5 mt-1.5">
+                        <span className={`text-sm font-black ${hasDiscount ? 'text-rose-600' : 'text-blue-700'}`}>
+                          {isFree
+                            ? language === 'bn'
+                              ? `${formatTaka(0)} (ফ্রি)`
+                              : `${formatTaka(0)} (Free)`
+                            : formatTaka(effPrice)}
+                        </span>
+                        {hasDiscount && (
+                          <span className="text-[11px] font-semibold text-slate-400 line-through">
+                            {formatTaka(p.priceBdt)}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-sm font-black text-blue-700 mt-1">
-                      {isFree
-                        ? language === 'bn'
-                          ? `${formatTaka(0)} (ফ্রি)`
-                          : `${formatTaka(0)} (Free)`
-                        : formatTaka(p.priceBdt)}
-                    </div>
+
+                    {Array.isArray(p.features) && p.features.length > 0 && (
+                      <ul className="mt-2 pt-1.5 border-t border-slate-100 space-y-0.5">
+                        {p.features.slice(0, 4).map((feat, idx) => (
+                          <li key={idx} className="text-[10px] text-slate-600 flex items-center gap-1">
+                            <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                            <span className="truncate">{feat}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </button>
                 );
               })}
@@ -674,15 +714,19 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
                   onChange={(e) => handlePlanChange(e.target.value as SaaSPlanId)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 >
-                  {plans.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} (
-                      {p.id === 'lifetime' || p.durationDays >= 36500
-                        ? 'Lifetime'
-                        : `${p.durationDays} Days`}
-                      ) — ৳{p.priceBdt}
-                    </option>
-                  ))}
+                  {plans.map((p) => {
+                    const effPrice = getEffectivePlanPriceBdt(p);
+                    const discPct = Number(p.discountPercent) || 0;
+                    return (
+                      <option key={p.id} value={p.id}>
+                        {p.name} (
+                        {p.id === 'lifetime' || p.durationDays >= 36500
+                          ? 'Lifetime'
+                          : `${p.durationDays} Days`}
+                        ) — ৳{effPrice}{discPct > 0 ? ` (${discPct}% OFF)` : ''}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 
@@ -691,7 +735,7 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
                   {language === 'bn' ? 'টাকার পরিমাণ (BDT) *' : 'Amount (BDT) *'}
                 </label>
                 <DigitInput
-                  min={selectedPlan?.priceBdt === 0 ? 0 : 1}
+                  min={selectedPlan && getEffectivePlanPriceBdt(selectedPlan) === 0 ? 0 : 1}
                   required
                   value={amount === '' ? '' : parseLocaleNumber(amount, 0)}
                   onValueChange={(val) => setAmount(String(val))}

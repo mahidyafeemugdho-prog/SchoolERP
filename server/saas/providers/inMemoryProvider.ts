@@ -201,7 +201,17 @@ export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
   }
 
   async getPlans(): Promise<SubscriptionPlanConfig[]> {
-    return Array.from(this.plans.values());
+    const order: Record<string, number> = {
+      free: 1,
+      monthly: 2,
+      quarterly: 3,
+      half_yearly: 4,
+      yearly: 5,
+      lifetime: 6,
+    };
+    return Array.from(this.plans.values()).sort(
+      (a, b) => (a.sortOrder ?? order[a.id] ?? 100) - (b.sortOrder ?? order[b.id] ?? 100)
+    );
   }
 
   async getPlanById(planId: SubscriptionPlanId): Promise<SubscriptionPlanConfig | null> {
@@ -211,6 +221,10 @@ export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
   async upsertPlan(plan: SubscriptionPlanConfig): Promise<SubscriptionPlanConfig> {
     this.plans.set(plan.id, { ...plan });
     return plan;
+  }
+
+  async deletePlan(planId: SubscriptionPlanId): Promise<void> {
+    this.plans.delete(planId);
   }
 
   async getPaymentChannels(): Promise<PlatformPaymentChannels> {

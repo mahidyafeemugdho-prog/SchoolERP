@@ -1263,4 +1263,65 @@ describe('SmartSchoolBD Multi-Tenant SaaS Platform API & Security Tests', () => 
     expect(meAfterRemove.status).toBe(200);
     expect(meAfterRemove.body.principal.avatarUrl).toBe('');
   });
+
+  it('27. Master Admin can create custom plan items with Discount %, features, assign to schools, and delete custom plans', async () => {
+    const createRes = await request(ctx.app)
+      .post('/api/saas/master/plans')
+      .set('Authorization', `Bearer ${ctx.masterToken}`)
+      .send({
+        id: 'eid_bundle',
+        name: 'Eid Special Bundle',
+        nameBn: 'ঈদ স্পেশাল প্যাকেজ',
+        priceBdt: 10000,
+        discountPercent: 25,
+        durationDays: 365,
+        badgeText: '২৫% ঈদ ছাড়',
+        features: ['সব মডিউল এক্সেস', 'স্মার্ট QR ও ফেস হাজিরা'],
+      });
+    expect(createRes.status).toBe(201);
+    expect(createRes.body.plan.id).toBe('eid_bundle');
+    expect(createRes.body.plan.discountPercent).toBe(25);
+    expect(createRes.body.plan.features).toHaveLength(2);
+    expect(createRes.body.plan.isCustom).toBe(true);
+
+    // Public catalog lists the custom plan
+    const publicPlans = await request(ctx.app).get('/api/saas/plans');
+    expect(publicPlans.status).toBe(200);
+    const createdPublic = publicPlans.body.plans.find((p: any) => p.id === 'eid_bundle');
+    expect(createdPublic).toBeTruthy();
+    expect(createdPublic.discountPercent).toBe(25);
+
+    // Assigning custom discounted plan stores discounted amountBdt (10000 * 0.75 = 7500)
+    const schoolRes = await createTestSchool({
+      schoolName: 'Eid Offer School',
+      schoolCode: 'EID01',
+      adminEmail: 'admin@eid.edu.bd',
+      initialPlan: 'eid_bundle',
+    });
+    expect(schoolRes.status).toBe(201);
+    expect(schoolRes.body.school.subscription.planId).toBe('eid_bundle');
+    expect(schoolRes.body.school.subscription.amountBdt).toBe(7500);
+
+    // Core plans cannot be deleted
+    const delCore = await request(ctx.app)
+      .delete('/api/saas/master/plans/monthly')
+      .set('Authorization', `Bearer ${ctx.masterToken}`);
+    expect(delCore.status).toBe(400);
+    expect(delCore.body.code).toBe('CORE_PLAN_PROTECTED');
+
+    // Custom plans can be updated and deleted cleanly
+    const updateRes = await request(ctx.app)
+      .put('/api/saas/master/plans/eid_bundle')
+      .set('Authorization', `Bearer ${ctx.masterToken}`)
+      .send({ discountPercent: 30, features: ['সব মডিউল', 'অগ্রাধিকার সাপোর্ট', 'ফ্রি ব্যাকআপ'] });
+    expect(updateRes.status).toBe(200);
+    expect(updateRes.body.plan.discountPercent).toBe(30);
+    expect(updateRes.body.plan.features).toHaveLength(3);
+
+    const delCustom = await request(ctx.app)
+      .delete('/api/saas/master/plans/eid_bundle')
+      .set('Authorization', `Bearer ${ctx.masterToken}`);
+    expect(delCustom.status).toBe(200);
+    expect(delCustom.body.deletedPlanId).toBe('eid_bundle');
+  });
 });

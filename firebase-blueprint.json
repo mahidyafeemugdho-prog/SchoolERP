@@ -24,10 +24,16 @@
       "description": "Platform SaaS subscription plan catalog",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "enum": ["free", "monthly", "quarterly", "half_yearly", "yearly", "lifetime"] },
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
         "name": { "type": "string" },
+        "nameBn": { "type": "string" },
         "durationDays": { "type": "number" },
         "priceBdt": { "type": "number" },
+        "discountPercent": { "type": "number" },
+        "badgeText": { "type": "string" },
+        "features": { "type": "array" },
+        "sortOrder": { "type": "number" },
+        "isCustom": { "type": "boolean" },
         "isActive": { "type": "boolean" }
       },
       "required": ["id", "name", "durationDays", "priceBdt"]

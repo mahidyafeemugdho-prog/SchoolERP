@@ -1,6 +1,7 @@
 import express, { Response } from 'express';
 import {
   AuthProviderInterface,
+  CORE_SUBSCRIPTION_PLAN_IDS,
   DEFAULT_SUBSCRIPTION_PLANS,
   DatabaseProviderInterface,
   PlatformPaymentChannels,
@@ -381,6 +382,89 @@ export function createSaasRouter(deps: SaasRouterDeps) {
     }
   });
 
+  const sanitizePlanFeatures = (raw: any): string[] | undefined => {
+    if (!Array.isArray(raw)) return undefined;
+    return raw
+      .map((item) => (typeof item === 'string' ? item.trim() : ''))
+      .filter((item) => item.length > 0)
+      .slice(0, 20);
+  };
+
+  const clampDiscountPercent = (raw: any): number | undefined => {
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    const num = Number(raw);
+    if (!Number.isFinite(num)) return undefined;
+    return Math.min(100, Math.max(0, Math.round(num * 100) / 100));
+  };
+
+  router.post('/master/plans', mw.requireAuth, mw.requireMasterAdmin, async (req, res) => {
+    try {
+      const body = req.body || {};
+      const name = String(body.name || '').trim();
+      const nameBn = String(body.nameBn || name).trim();
+      if (!name) {
+        return res.status(400).json({ success: false, code: 'INVALID_PLAN', error: 'Plan name is required.' });
+      }
+      const rawId = String(body.id || name)
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 48);
+      if (!rawId || !/^[a-zA-Z0-9_-]{2,64}$/.test(rawId)) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_PLAN_ID',
+          error: 'Plan ID must contain at least 2 letters, digits, underscores, or hyphens.',
+        });
+      }
+      const existing = await deps.db.getPlanById(rawId);
+      if (existing) {
+        return res.status(409).json({
+          success: false,
+          code: 'PLAN_ALREADY_EXISTS',
+          error: `A subscription plan with ID "${rawId}" already exists.`,
+        });
+      }
+
+      const parsedPrice = Number(body.priceBdt ?? 0);
+      const parsedDuration = Number(body.durationDays ?? 30);
+      if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+        return res.status(400).json({ success: false, code: 'INVALID_PRICE', error: 'Price must be 0 or greater.' });
+      }
+      if (!Number.isFinite(parsedDuration) || parsedDuration <= 0) {
+        return res.status(400).json({ success: false, code: 'INVALID_DURATION', error: 'Duration must be greater than 0 days.' });
+      }
+
+      const discountPercent = clampDiscountPercent(body.discountPercent) ?? 0;
+      const features = sanitizePlanFeatures(body.features) ?? [];
+      const currentPlans = await deps.db.getPlans();
+      const sortOrder =
+        Number.isFinite(Number(body.sortOrder)) ? Number(body.sortOrder) : currentPlans.length + 10;
+
+      const created = await deps.db.upsertPlan({
+        id: rawId,
+        name,
+        nameBn: nameBn || name,
+        priceBdt: parsedPrice,
+        discountPercent,
+        durationDays: Math.round(parsedDuration),
+        badgeText: typeof body.badgeText === 'string' ? body.badgeText.trim() : '',
+        features,
+        sortOrder,
+        isCustom: !CORE_SUBSCRIPTION_PLAN_IDS.has(rawId),
+        description: typeof body.description === 'string' ? body.description.trim() : '',
+        descriptionBn: typeof body.descriptionBn === 'string' ? body.descriptionBn.trim() : '',
+        isActive: body.isActive !== undefined ? Boolean(body.isActive) : true,
+        updatedAt: nowProvider().toISOString(),
+      });
+
+      res.status(201).json({ success: true, plan: created });
+    } catch (err) {
+      handleRouteError(res, err);
+    }
+  });
+
   router.put('/master/plans/:planId', mw.requireAuth, mw.requireMasterAdmin, async (req, res) => {
     try {
       const planId = String(req.params.planId) as SubscriptionPlanId;
@@ -394,21 +478,55 @@ export function createSaasRouter(deps: SaasRouterDeps) {
       const rawDuration = req.body.durationDays;
       const parsedDuration =
         rawDuration !== undefined && rawDuration !== '' ? Number(rawDuration) : NaN;
+      const nextDiscount = clampDiscountPercent(req.body.discountPercent);
+      const nextFeatures = sanitizePlanFeatures(req.body.features);
+
       const updated = await deps.db.upsertPlan({
         ...existing,
         name: req.body.name?.trim() || existing.name,
         nameBn: req.body.nameBn?.trim() || existing.nameBn,
         priceBdt: Number.isFinite(parsedPrice) && parsedPrice >= 0 ? parsedPrice : existing.priceBdt,
+        discountPercent: nextDiscount !== undefined ? nextDiscount : (existing.discountPercent ?? 0),
         durationDays:
           Number.isFinite(parsedDuration) && parsedDuration > 0
-            ? parsedDuration
+            ? Math.round(parsedDuration)
             : existing.durationDays,
+        badgeText:
+          req.body.badgeText !== undefined ? String(req.body.badgeText || '').trim() : existing.badgeText,
+        features: nextFeatures !== undefined ? nextFeatures : existing.features,
+        sortOrder:
+          req.body.sortOrder !== undefined && Number.isFinite(Number(req.body.sortOrder))
+            ? Number(req.body.sortOrder)
+            : existing.sortOrder,
         description: req.body.description ?? existing.description,
         descriptionBn: req.body.descriptionBn ?? existing.descriptionBn,
         isActive: req.body.isActive !== undefined ? Boolean(req.body.isActive) : existing.isActive,
         updatedAt: nowProvider().toISOString(),
       });
       res.json({ success: true, plan: updated });
+    } catch (err) {
+      handleRouteError(res, err);
+    }
+  });
+
+  router.delete('/master/plans/:planId', mw.requireAuth, mw.requireMasterAdmin, async (req, res) => {
+    try {
+      const planId = String(req.params.planId) as SubscriptionPlanId;
+      if (CORE_SUBSCRIPTION_PLAN_IDS.has(planId)) {
+        return res.status(400).json({
+          success: false,
+          code: 'CORE_PLAN_PROTECTED',
+          error: 'Built-in core plans cannot be deleted. You can deactivate them instead.',
+        });
+      }
+      const existing = await deps.db.getPlanById(planId);
+      if (!existing) {
+        return res.status(404).json({ success: false, code: 'PLAN_NOT_FOUND', error: 'Plan not found.' });
+      }
+      if (deps.db.deletePlan) {
+        await deps.db.deletePlan(planId);
+      }
+      res.json({ success: true, deletedPlanId: planId });
     } catch (err) {
       handleRouteError(res, err);
     }

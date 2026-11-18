@@ -10,6 +10,7 @@ import {
   UpdateOwnCredentialsInput,
   UpdateSchoolInput,
   UpdateTenantUserCredentialsInput,
+  getEffectivePlanPriceBdt,
 } from './types';
 import { addDaysUtc, evaluateSubscriptionState } from './subscriptionService';
 
@@ -163,7 +164,7 @@ export function createTenantService(deps: TenantServiceDeps) {
           expiryDate: expiryDateObj.toISOString(),
           lastPaymentDate: activateNow ? nowIso : null,
           nextRenewalDate: expiryDateObj.toISOString(),
-          amountBdt: plan.priceBdt,
+          amountBdt: getEffectivePlanPriceBdt(plan),
         },
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -299,7 +300,7 @@ export function createTenantService(deps: TenantServiceDeps) {
         }
         nextSubscription.planId = plan.id;
         nextSubscription.planName = plan.name;
-        nextSubscription.amountBdt = plan.priceBdt;
+        nextSubscription.amountBdt = getEffectivePlanPriceBdt(plan);
         eventType = 'plan_changed';
       }
 

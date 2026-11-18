@@ -4,6 +4,7 @@ import {
   DatabaseProviderInterface,
   SaaSPaymentRequest,
   SaaSServiceError,
+  getEffectivePlanPriceBdt,
 } from './types';
 import { calculateRenewedSubscriptionWindow } from './subscriptionService';
 
@@ -61,7 +62,8 @@ export function createPaymentService(deps: PaymentServiceDeps) {
       }
 
       const amount = Number(input.amount);
-      const isFreePlan = Number(plan.priceBdt) === 0;
+      const effectivePrice = getEffectivePlanPriceBdt(plan);
+      const isFreePlan = effectivePrice === 0;
       if (!Number.isFinite(amount) || (isFreePlan ? amount < 0 : amount <= 0)) {
         throw new SaaSServiceError('Payment amount must be greater than zero.', 400, 'INVALID_AMOUNT');
       }

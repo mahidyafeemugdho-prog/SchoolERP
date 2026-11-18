@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
 import {
+  CORE_PLAN_IDS,
   DEFAULT_FALLBACK_CHANNELS,
   DEFAULT_FALLBACK_PLANS,
   SaaSApi,
@@ -14,10 +15,11 @@ import {
   SaaSSubscriptionHistoryDTO,
   SaaSUserDTO,
   computeClientSubscriptionState,
+  getEffectivePlanPriceBdt,
   isSaaSBackendUnavailableError,
 } from '../../services/saasApi';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
-import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import {
   Building2,
   Plus,
@@ -45,6 +47,11 @@ import {
   Trash2,
   AlertTriangle,
   Headphones,
+  Percent,
+  Tag,
+  Check,
+  Sparkles,
+  Power,
 } from 'lucide-react';
 import { AccountCredentialsModal } from '../auth/AccountCredentialsModal';
 import { SupportTeamView } from '../support/SupportTeamView';
@@ -140,8 +147,10 @@ export const MasterAdminSaaSPanel: React.FC = () => {
   const [deletingSchool, setDeletingSchool] = useState<SaaSSchoolRecord | null>(null);
   const [deleteConfirmChecked, setDeleteConfirmChecked] = useState(false);
 
-  // Plans editing state
+  // Plans adding & editing state
   const [editingPlan, setEditingPlan] = useState<SaaSPlanConfig | null>(null);
+  const [isCreatingPlan, setIsCreatingPlan] = useState(false);
+  const [newPlanFeatureInput, setNewPlanFeatureInput] = useState('');
   const [credsModalSchoolId, setCredsModalSchoolId] = useState<string | null>(null);
 
   // Payment channels setup (bKash / Nagad / Rocket / Bank)
@@ -205,7 +214,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
             return [
               ...fsPlans,
               ...DEFAULT_FALLBACK_PLANS.filter((p) => !existingIds.has(p.id)),
-            ].sort((a, b) => (order[a.id] || 99) - (order[b.id] || 99));
+            ].sort((a, b) => (a.sortOrder ?? order[a.id] ?? 100) - (b.sortOrder ?? order[b.id] ?? 100));
           })()
         : DEFAULT_FALLBACK_PLANS;
 
@@ -674,48 +683,237 @@ export const MasterAdminSaaSPanel: React.FC = () => {
     }
   };
 
+  const openAddPlanModal = () => {
+    setIsCreatingPlan(true);
+    setNewPlanFeatureInput('');
+    setEditingPlan({
+      id: '',
+      name: '',
+      nameBn: '',
+      durationDays: 30,
+      priceBdt: 1500,
+      discountPercent: 0,
+      badgeText: '',
+      features: [
+        'সব মডিউল সম্পূর্ণ এক্সেস',
+        'স্মার্ট QR ও ফেস হাজিরা',
+        'ফি, ভাউচার ও একাউন্টস',
+      ],
+      sortOrder: plans.length + 10,
+      isCustom: true,
+      description: '',
+      descriptionBn: '',
+      isActive: true,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const openEditPlanModal = (plan: SaaSPlanConfig) => {
+    setIsCreatingPlan(false);
+    setNewPlanFeatureInput('');
+    setEditingPlan({
+      ...plan,
+      discountPercent: plan.discountPercent ?? 0,
+      badgeText: plan.badgeText || '',
+      features: Array.isArray(plan.features) ? [...plan.features] : [],
+    });
+  };
+
   const handleSavePlan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPlan) return;
-    setBusyActionId(editingPlan.id);
-    const updatedPayload = {
-      id: editingPlan.id,
-      name: editingPlan.name,
-      nameBn: editingPlan.nameBn,
-      priceBdt: Number(editingPlan.priceBdt),
-      durationDays: Number(editingPlan.durationDays),
-      description: editingPlan.description,
-      descriptionBn: editingPlan.descriptionBn,
+
+    const cleanName = editingPlan.name.trim();
+    if (!cleanName) {
+      setFeedback({ type: 'error', message: language === 'bn' ? 'প্ল্যানের নাম লিখুন।' : 'Plan name is required.' });
+      return;
+    }
+
+    const generatedSlug = (editingPlan.id || cleanName)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 48);
+
+    const targetPlanId = isCreatingPlan ? generatedSlug : editingPlan.id;
+    if (!targetPlanId || !/^[a-zA-Z0-9_-]{2,64}$/.test(targetPlanId)) {
+      setFeedback({
+        type: 'error',
+        message:
+          language === 'bn'
+            ? 'প্ল্যান আইডি কমপক্ষে ২ অক্ষরের হতে হবে (ইংরেজি অক্ষর, সংখ্যা, _ বা -)।'
+            : 'Plan ID must be at least 2 characters (letters, digits, _ or -).',
+      });
+      return;
+    }
+
+    const clampedDiscount = Math.min(100, Math.max(0, Math.round((Number(editingPlan.discountPercent) || 0) * 100) / 100));
+    const cleanedFeatures = (editingPlan.features || []).map((f) => f.trim()).filter(Boolean);
+    const updatedPayload: SaaSPlanConfig = {
+      id: targetPlanId,
+      name: cleanName,
+      nameBn: (editingPlan.nameBn || cleanName).trim(),
+      priceBdt: Math.max(0, Number(editingPlan.priceBdt) || 0),
+      discountPercent: clampedDiscount,
+      durationDays: Math.max(1, Math.round(Number(editingPlan.durationDays) || 30)),
+      badgeText: (editingPlan.badgeText || '').trim(),
+      features: cleanedFeatures,
+      sortOrder: editingPlan.sortOrder ?? plans.length + 10,
+      isCustom: isCreatingPlan ? !CORE_PLAN_IDS.has(targetPlanId) : editingPlan.isCustom,
+      description: (editingPlan.description || '').trim(),
+      descriptionBn: (editingPlan.descriptionBn || editingPlan.description || '').trim(),
       isActive: editingPlan.isActive,
       updatedAt: new Date().toISOString(),
     };
+
+    setBusyActionId(targetPlanId);
     try {
-      await SaaSApi.masterUpdatePlan(editingPlan.id, {
-        name: updatedPayload.name,
-        nameBn: updatedPayload.nameBn,
-        priceBdt: updatedPayload.priceBdt,
-        durationDays: updatedPayload.durationDays,
-        description: updatedPayload.description,
-        descriptionBn: updatedPayload.descriptionBn,
-        isActive: updatedPayload.isActive,
-      });
+      if (isCreatingPlan) {
+        await SaaSApi.masterCreatePlan(updatedPayload);
+        setFeedback({
+          type: 'success',
+          message:
+            language === 'bn'
+              ? `নতুন সাবস্ক্রিপশন প্ল্যান "${updatedPayload.nameBn}" (${clampedDiscount > 0 ? `${toBnNumber(clampedDiscount)}% ছাড়ে ` : ''}৳${toBnNumber(getEffectivePlanPriceBdt(updatedPayload))}) সফলভাবে যুক্ত হয়েছে!`
+              : `New subscription plan "${updatedPayload.name}" added!`,
+        });
+      } else {
+        await SaaSApi.masterUpdatePlan(targetPlanId, {
+          name: updatedPayload.name,
+          nameBn: updatedPayload.nameBn,
+          priceBdt: updatedPayload.priceBdt,
+          discountPercent: updatedPayload.discountPercent,
+          durationDays: updatedPayload.durationDays,
+          badgeText: updatedPayload.badgeText,
+          features: updatedPayload.features,
+          sortOrder: updatedPayload.sortOrder,
+          description: updatedPayload.description,
+          descriptionBn: updatedPayload.descriptionBn,
+          isActive: updatedPayload.isActive,
+        });
+        setFeedback({
+          type: 'success',
+          message:
+            language === 'bn'
+              ? `প্ল্যান "${updatedPayload.nameBn}" আপডেট হয়েছে (চূড়ান্ত মূল্য: ${formatTaka(getEffectivePlanPriceBdt(updatedPayload))})।`
+              : `Plan "${updatedPayload.name}" updated.`,
+        });
+      }
       setEditingPlan(null);
-      setFeedback({ type: 'success', message: `Plan ${editingPlan.name} updated.` });
+      setIsCreatingPlan(false);
       await loadAll();
     } catch (err: any) {
       if (isSaaSBackendUnavailableError(err)) {
         try {
-          await setDoc(doc(db, 'subscription_plans', editingPlan.id), updatedPayload, { merge: true });
+          if (isCreatingPlan && plans.some((p) => p.id === targetPlanId)) {
+            setFeedback({
+              type: 'error',
+              message:
+                language === 'bn'
+                  ? `"${targetPlanId}" আইডির একটি প্ল্যান ইতিমধ্যেই রয়েছে। অন্য আইডি দিন।`
+                  : `Plan ID "${targetPlanId}" already exists.`,
+            });
+            return;
+          }
+          await setDoc(doc(db, 'subscription_plans', targetPlanId), updatedPayload, { merge: true });
           setEditingPlan(null);
-          setFeedback({ type: 'success', message: `Plan ${editingPlan.name} updated in Firestore.` });
+          setIsCreatingPlan(false);
+          setFeedback({
+            type: 'success',
+            message:
+              language === 'bn'
+                ? `প্ল্যান "${updatedPayload.nameBn}" সরাসরি ডাটাবেজে সেভ হয়েছে।`
+                : `Plan "${updatedPayload.name}" saved to Firestore.`,
+          });
           await loadAll();
           return;
         } catch (fsErr: any) {
-          setFeedback({ type: 'error', message: fsErr?.message || 'Failed to update plan.' });
+          setFeedback({ type: 'error', message: fsErr?.message || 'Failed to save plan.' });
           return;
         }
       }
-      setFeedback({ type: 'error', message: err?.message || 'Failed to update plan.' });
+      setFeedback({ type: 'error', message: err?.message || 'Failed to save plan.' });
+    } finally {
+      setBusyActionId(null);
+    }
+  };
+
+  const handleTogglePlanActive = async (plan: SaaSPlanConfig) => {
+    const nextActive = !plan.isActive;
+    setBusyActionId(plan.id);
+    try {
+      await SaaSApi.masterUpdatePlan(plan.id, { isActive: nextActive });
+      setFeedback({
+        type: 'success',
+        message:
+          language === 'bn'
+            ? `"${plan.nameBn || plan.name}" ${nextActive ? 'সক্রিয় (Active)' : 'বন্ধ (Inactive)'} করা হয়েছে।`
+            : `${plan.name} is now ${nextActive ? 'Active' : 'Inactive'}.`,
+      });
+      await loadAll();
+    } catch (err: any) {
+      if (isSaaSBackendUnavailableError(err)) {
+        try {
+          await setDoc(
+            doc(db, 'subscription_plans', plan.id),
+            { isActive: nextActive, updatedAt: new Date().toISOString() },
+            { merge: true }
+          );
+          await loadAll();
+          return;
+        } catch (fsErr: any) {
+          setFeedback({ type: 'error', message: fsErr?.message || 'Failed to update plan status.' });
+          return;
+        }
+      }
+      setFeedback({ type: 'error', message: err?.message || 'Failed to update plan status.' });
+    } finally {
+      setBusyActionId(null);
+    }
+  };
+
+  const handleDeletePlan = async (plan: SaaSPlanConfig) => {
+    if (CORE_PLAN_IDS.has(plan.id)) {
+      setFeedback({
+        type: 'error',
+        message:
+          language === 'bn'
+            ? 'মূল ডিফল্ট প্ল্যান ডিলিট করা যাবে না; চাইলে ইনঅ্যাক্টিভ করে রাখতে পারেন।'
+            : 'Built-in core plans cannot be deleted. You can pause/deactivate them instead.',
+      });
+      return;
+    }
+    setBusyActionId(plan.id);
+    try {
+      await SaaSApi.masterDeletePlan(plan.id);
+      setFeedback({
+        type: 'success',
+        message:
+          language === 'bn'
+            ? `কাস্টম প্ল্যান "${plan.nameBn || plan.name}" মুছে ফেলা হয়েছে।`
+            : `Custom plan "${plan.name}" deleted.`,
+      });
+      await loadAll();
+    } catch (err: any) {
+      if (isSaaSBackendUnavailableError(err)) {
+        try {
+          await deleteDoc(doc(db, 'subscription_plans', plan.id));
+          setFeedback({
+            type: 'success',
+            message:
+              language === 'bn'
+                ? `কাস্টম প্ল্যান "${plan.nameBn || plan.name}" ডাটাবেজ থেকে মুছে ফেলা হয়েছে।`
+                : `Custom plan "${plan.name}" deleted from Firestore.`,
+          });
+          await loadAll();
+          return;
+        } catch (fsErr: any) {
+          setFeedback({ type: 'error', message: fsErr?.message || 'Failed to delete plan.' });
+          return;
+        }
+      }
+      setFeedback({ type: 'error', message: err?.message || 'Failed to delete plan.' });
     } finally {
       setBusyActionId(null);
     }
@@ -758,13 +956,33 @@ export const MasterAdminSaaSPanel: React.FC = () => {
     return 'bg-amber-100 text-amber-800 border-amber-200';
   };
 
-  const planLabels: Record<SaaSPlanId, { en: string; bn: string }> = {
-    free: { en: 'Free Plan', bn: 'ফ্রি (Free)' },
-    monthly: { en: 'Monthly', bn: 'মাসিক (Monthly)' },
-    quarterly: { en: 'Quarterly', bn: '৩ মাস (Quarterly)' },
-    half_yearly: { en: 'Half-Yearly', bn: '৬ মাস (Half-Yearly)' },
-    yearly: { en: 'Yearly', bn: '১ বছর (Yearly)' },
-    lifetime: { en: 'Lifetime', bn: 'লাইফটাইম (Lifetime)' },
+  const planCatalogIds = useMemo(() => {
+    const ids: SaaSPlanId[] = [];
+    const seen = new Set<string>();
+    for (const p of plans) {
+      if (!seen.has(p.id)) {
+        seen.add(p.id);
+        ids.push(p.id);
+      }
+    }
+    for (const p of DEFAULT_FALLBACK_PLANS) {
+      if (!seen.has(p.id)) {
+        seen.add(p.id);
+        ids.push(p.id);
+      }
+    }
+    return ids;
+  }, [plans]);
+
+  const getPlanLabel = (planKey: SaaSPlanId): { en: string; bn: string } => {
+    const live = plans.find((p) => p.id === planKey) || DEFAULT_FALLBACK_PLANS.find((p) => p.id === planKey);
+    if (live) {
+      return {
+        en: live.name,
+        bn: live.nameBn || live.name,
+      };
+    }
+    return { en: String(planKey), bn: String(planKey) };
   };
 
   const saasLauncherItems: LauncherTileItem[] = [
@@ -980,9 +1198,10 @@ export const MasterAdminSaaSPanel: React.FC = () => {
             >
               {language === 'bn' ? 'সব প্ল্যান' : 'All Plans'} ({schools.length})
             </button>
-            {(['free', 'monthly', 'quarterly', 'half_yearly', 'yearly', 'lifetime'] as SaaSPlanId[]).map((planKey) => {
+            {planCatalogIds.map((planKey) => {
               const count = analytics.planDistribution?.[planKey] ?? schoolFilterCounts.plans[planKey] ?? 0;
               const isSelected = activeSubTab === 'schools' && schoolPlanFilter === planKey;
+              const lbl = getPlanLabel(planKey);
               return (
                 <button
                   key={planKey}
@@ -997,7 +1216,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                       : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-blue-50 hover:border-blue-300'
                   }`}
                 >
-                  {language === 'bn' ? planLabels[planKey].bn : planLabels[planKey].en}:{' '}
+                  {language === 'bn' ? lbl.bn : lbl.en}:{' '}
                   <strong>{language === 'bn' ? toBnNumber(count) : count}</strong>
                 </button>
               );
@@ -1265,9 +1484,10 @@ export const MasterAdminSaaSPanel: React.FC = () => {
               >
                 {language === 'bn' ? 'সব প্ল্যান' : 'All Plans'} ({language === 'bn' ? toBnNumber(schools.length) : schools.length})
               </button>
-              {(['free', 'monthly', 'quarterly', 'half_yearly', 'yearly', 'lifetime'] as SaaSPlanId[]).map((pid) => {
+              {planCatalogIds.map((pid) => {
                 const count = schoolFilterCounts.plans[pid] || 0;
                 const isActive = schoolPlanFilter === pid;
+                const lbl = getPlanLabel(pid);
                 return (
                   <button
                     key={pid}
@@ -1279,7 +1499,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                         : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-blue-50 hover:border-blue-300'
                     }`}
                   >
-                    {language === 'bn' ? planLabels[pid].bn : planLabels[pid].en} ({language === 'bn' ? toBnNumber(count) : count})
+                    {language === 'bn' ? lbl.bn : lbl.en} ({language === 'bn' ? toBnNumber(count) : count})
                   </button>
                 );
               })}
@@ -1598,73 +1818,213 @@ export const MasterAdminSaaSPanel: React.FC = () => {
 
       {/* TAB 3: SUBSCRIPTION PLANS */}
       {activeSubTab === 'plans' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {plans.map((plan) => {
-            const isFree = plan.id === 'free' || plan.priceBdt === 0;
-            const isLifetime = plan.id === 'lifetime' || plan.durationDays >= 36500;
-            return (
-              <div
-                key={plan.id}
-                className={`p-5 bg-white rounded-2xl border shadow-2xs flex flex-col justify-between space-y-4 ${
-                  isLifetime
-                    ? 'border-indigo-300 ring-1 ring-indigo-100'
-                    : isFree
-                    ? 'border-emerald-300 ring-1 ring-emerald-100'
-                    : 'border-slate-200'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span
-                      className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] uppercase ${
-                        isLifetime
-                          ? 'bg-indigo-50 text-indigo-700'
-                          : isFree
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-blue-50 text-blue-700'
-                      }`}
-                    >
-                      {plan.id}
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        plan.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
-                      }`}
-                    >
-                      {plan.isActive ? 'Active' : 'Inactive'}
-                    </span>
-                  </div>
-                  <h4 className="text-base font-black text-slate-900 mt-2">{plan.name}</h4>
-                  <p className="text-xs text-slate-500">{plan.nameBn}</p>
-                  <div
-                    className={`text-2xl font-black mt-3 ${
-                      isFree ? 'text-emerald-700' : isLifetime ? 'text-indigo-700' : 'text-blue-700'
-                    }`}
-                  >
-                    {isFree
-                      ? `${formatTaka(0)} (${language === 'bn' ? 'ফ্রি' : 'Free'})`
-                      : formatTaka(plan.priceBdt)}
-                  </div>
-                  <div className="text-xs font-semibold text-slate-600">
-                    Duration:{' '}
-                    {isLifetime
-                      ? `${language === 'bn' ? 'আজীবন' : 'Lifetime'} (${plan.durationDays} Days)`
-                      : `${plan.durationDays} Days`}
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-2">{plan.description}</p>
+        <div className="space-y-4">
+          {/* Top Management Toolbar */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-2xs">
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              <div className="flex items-center space-x-2">
+                <div className="p-2 rounded-xl bg-purple-50 text-purple-600 border border-purple-200">
+                  <Sliders className="w-4 h-4" />
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setEditingPlan({ ...plan })}
-                  className="w-full py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-800 flex items-center justify-center space-x-1.5"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                  <span>Edit Plan</span>
-                </button>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">
+                    {language === 'bn' ? 'সাবস্ক্রিপশন প্ল্যান ও ডিসকাউন্ট ব্যবস্থাপনা' : 'Subscription Plans & Discounts'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    {language === 'bn'
+                      ? 'নতুন প্ল্যান আইটেম যুক্ত করুন, ডিসকাউন্ট (%) দিন ও ফিচার তালিকা পরিচালনা করুন।'
+                      : 'Add plan items, apply percentage discounts (%), and customize included features.'}
+                  </p>
+                </div>
               </div>
-            );
-          })}
+              <div className="flex flex-wrap items-center gap-2 sm:ml-4">
+                <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold text-[11px]">
+                  {language === 'bn' ? `মোট: ${toBnNumber(plans.length)}` : `Total: ${plans.length}`}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[11px]">
+                  {language === 'bn'
+                    ? `সক্রিয়: ${toBnNumber(plans.filter((p) => p.isActive).length)}`
+                    : `Active: ${plans.filter((p) => p.isActive).length}`}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 font-bold text-[11px]">
+                  {language === 'bn'
+                    ? `ডিসকাউন্ট অফার: ${toBnNumber(plans.filter((p) => (p.discountPercent || 0) > 0).length)}`
+                    : `Discounted: ${plans.filter((p) => (p.discountPercent || 0) > 0).length}`}
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={openAddPlanModal}
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-black shadow-md flex items-center justify-center space-x-1.5 shrink-0 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>{language === 'bn' ? 'নতুন প্ল্যান যোগ করুন' : 'Add Plan Item'}</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {plans.map((plan) => {
+              const effectivePrice = getEffectivePlanPriceBdt(plan);
+              const discountPct = Math.min(100, Math.max(0, Number(plan.discountPercent) || 0));
+              const hasDiscount = discountPct > 0 && plan.priceBdt > 0;
+              const isFree = effectivePrice === 0;
+              const isLifetime = plan.id === 'lifetime' || plan.durationDays >= 36500;
+              const isCustomPlan = !CORE_PLAN_IDS.has(plan.id);
+              const isBusy = busyActionId === plan.id;
+
+              return (
+                <div
+                  key={plan.id}
+                  className={`p-5 bg-white rounded-2xl border shadow-2xs flex flex-col justify-between space-y-4 transition-all ${
+                    !plan.isActive
+                      ? 'border-slate-200 bg-slate-50/70 opacity-80'
+                      : hasDiscount
+                      ? 'border-rose-300 ring-1 ring-rose-100'
+                      : isLifetime
+                      ? 'border-indigo-300 ring-1 ring-indigo-100'
+                      : isFree
+                      ? 'border-emerald-300 ring-1 ring-emerald-100'
+                      : 'border-slate-200'
+                  }`}
+                >
+                  <div>
+                    <div className="flex flex-wrap items-center justify-between gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] uppercase ${
+                            isLifetime
+                              ? 'bg-indigo-50 text-indigo-700'
+                              : isFree
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : 'bg-blue-50 text-blue-700'
+                          }`}
+                        >
+                          {plan.id}
+                        </span>
+                        {isCustomPlan && (
+                          <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-700 font-bold text-[10px]">
+                            {language === 'bn' ? 'কাস্টম' : 'Custom'}
+                          </span>
+                        )}
+                        {plan.badgeText && (
+                          <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold text-[10px] flex items-center gap-1">
+                            <Sparkles className="w-2.5 h-2.5" />
+                            {plan.badgeText}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        {hasDiscount && (
+                          <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black shadow-2xs">
+                            -{language === 'bn' ? toBnNumber(discountPct) : discountPct}% OFF
+                          </span>
+                        )}
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            plan.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
+                          }`}
+                        >
+                          {plan.isActive ? 'Active' : 'Inactive'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <h4 className="text-base font-black text-slate-900 mt-2.5">{plan.name}</h4>
+                    <p className="text-xs text-slate-500">{plan.nameBn}</p>
+
+                    <div className="mt-3 flex flex-wrap items-baseline gap-2">
+                      <div
+                        className={`text-2xl font-black ${
+                          isFree ? 'text-emerald-700' : hasDiscount ? 'text-rose-600' : isLifetime ? 'text-indigo-700' : 'text-blue-700'
+                        }`}
+                      >
+                        {isFree
+                          ? `${formatTaka(0)} (${language === 'bn' ? 'ফ্রি' : 'Free'})`
+                          : formatTaka(effectivePrice)}
+                      </div>
+                      {hasDiscount && (
+                        <>
+                          <span className="text-xs font-bold text-slate-400 line-through">
+                            {formatTaka(plan.priceBdt)}
+                          </span>
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                            {language === 'bn'
+                              ? `সাশ্রয় ${formatTaka(plan.priceBdt - effectivePrice)}`
+                              : `Save ${formatTaka(plan.priceBdt - effectivePrice)}`}
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="text-xs font-semibold text-slate-600 mt-1">
+                      Duration:{' '}
+                      {isLifetime
+                        ? `${language === 'bn' ? 'আজীবন' : 'Lifetime'} (${plan.durationDays} Days)`
+                        : `${plan.durationDays} Days`}
+                    </div>
+
+                    {(plan.description || plan.descriptionBn) && (
+                      <p className="text-[11px] text-slate-500 mt-2">
+                        {language === 'bn' ? plan.descriptionBn || plan.description : plan.description}
+                      </p>
+                    )}
+
+                    {Array.isArray(plan.features) && plan.features.length > 0 && (
+                      <ul className="mt-3 pt-2.5 border-t border-slate-100 space-y-1">
+                        {plan.features.map((feat, idx) => (
+                          <li key={idx} className="flex items-start gap-1.5 text-[11px] text-slate-700 font-medium">
+                            <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                            <span>{feat}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => openEditPlanModal(plan)}
+                      className="flex-1 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-bold text-slate-800 flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>{language === 'bn' ? 'এডিট / ডিসকাউন্ট' : 'Edit Plan'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => handleTogglePlanActive(plan)}
+                      title={plan.isActive ? 'Deactivate Plan' : 'Activate Plan'}
+                      className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center justify-center cursor-pointer disabled:opacity-50 ${
+                        plan.isActive
+                          ? 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                          : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                      }`}
+                    >
+                      <Power className="w-3.5 h-3.5" />
+                    </button>
+
+                    {isCustomPlan && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => handleDeletePlan(plan)}
+                        title="Delete Custom Plan"
+                        className="px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold flex items-center justify-center cursor-pointer disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -2049,15 +2409,19 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                     }
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white font-semibold"
                   >
-                    {plans.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} (
-                        {p.id === 'lifetime' || p.durationDays >= 36500
-                          ? 'Lifetime'
-                          : `${p.durationDays}d`}{' '}
-                        — ৳{p.priceBdt})
-                      </option>
-                    ))}
+                    {plans.map((p) => {
+                      const effPrice = getEffectivePlanPriceBdt(p);
+                      const hasDisc = (p.discountPercent || 0) > 0 && p.priceBdt > 0;
+                      return (
+                        <option key={p.id} value={p.id}>
+                          {p.name} (
+                          {p.id === 'lifetime' || p.durationDays >= 36500
+                            ? 'Lifetime'
+                            : `${p.durationDays}d`}{' '}
+                          — ৳{effPrice}{hasDisc ? ` [${p.discountPercent}% OFF]` : ''})
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
                 <div className="space-y-1.5">
@@ -2447,27 +2811,91 @@ export const MasterAdminSaaSPanel: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL: EDIT PLAN */}
+      {/* MODAL: ADD / EDIT PLAN (with Discount % & Feature Items) */}
       {editingPlan && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 text-xs">
-            <h3 className="font-black text-slate-900 text-sm mb-3">
-              Edit Plan ({editingPlan.id})
-            </h3>
-            <form onSubmit={handleSavePlan} className="space-y-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 text-xs my-6 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
-                <label className="block font-bold mb-1">Plan Name (EN)</label>
-                <input
-                  type="text"
-                  required
-                  value={editingPlan.name}
-                  onChange={(e) => setEditingPlan({ ...editingPlan, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl"
-                />
+                <h3 className="font-black text-slate-900 text-sm flex items-center gap-2">
+                  <Tag className="w-4 h-4 text-blue-600" />
+                  <span>
+                    {isCreatingPlan
+                      ? language === 'bn'
+                        ? 'নতুন সাবস্ক্রিপশন প্ল্যান তৈরি করুন'
+                        : 'Create New Subscription Plan'
+                      : `Edit Plan (${editingPlan.id})`}
+                  </span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {language === 'bn'
+                    ? 'মূল মূল্য, ডিসকাউন্ট (%) ও অন্তর্ভুক্ত সুবিধাসমূহ সেট করুন — সাথে সাথে সকল স্কুল প্যানেলে আপডেট হবে।'
+                    : 'Set base price, discount %, and included features — immediately visible to all schools.'}
+                </p>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingPlan(null);
+                  setIsCreatingPlan(false);
+                }}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePlan} className="mt-4 space-y-3.5">
+              {isCreatingPlan && (
                 <div>
-                  <label className="block font-bold mb-1">Price (BDT)</label>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    {language === 'bn' ? 'প্ল্যান কোড / ID (ইংরেজি, খালি রাখলে নাম থেকে তৈরি হবে)' : 'Plan ID / Slug (optional)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={editingPlan.id}
+                    onChange={(e) =>
+                      setEditingPlan({
+                        ...editingPlan,
+                        id: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''),
+                      })
+                    }
+                    placeholder="e.g. eid_offer, two_year, pro_bundle"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Plan Name (English) *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingPlan.name}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, name: e.target.value })}
+                    placeholder="e.g. Pro Annual Plan"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">প্ল্যানের নাম (বাংলা)</label>
+                  <input
+                    type="text"
+                    value={editingPlan.nameBn}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, nameBn: e.target.value })}
+                    placeholder="যেমন: প্রো বাৎসরিক প্ল্যান"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-semibold"
+                  />
+                </div>
+              </div>
+
+              {/* Price + Discount % + Duration */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    {language === 'bn' ? 'মূল মূল্য (BDT) *' : 'Original Price (BDT) *'}
+                  </label>
                   <DigitInput
                     min={0}
                     required
@@ -2478,8 +2906,30 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl font-bold"
                   />
                 </div>
+
                 <div>
-                  <label className="block font-bold mb-1">Duration (Days)</label>
+                  <label className="block font-bold text-rose-700 mb-1 flex items-center gap-1">
+                    <Percent className="w-3.5 h-3.5" />
+                    <span>{language === 'bn' ? 'ডিসকাউন্ট (%)' : 'Discount (%)'}</span>
+                  </label>
+                  <DigitInput
+                    min={0}
+                    max={100}
+                    value={editingPlan.discountPercent ?? 0}
+                    onValueChange={(val) =>
+                      setEditingPlan({
+                        ...editingPlan,
+                        discountPercent: Math.min(100, Math.max(0, val)),
+                      })
+                    }
+                    className="w-full px-3 py-2 border border-rose-200 rounded-xl font-black text-rose-700 bg-rose-50/40"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    {language === 'bn' ? 'মেয়াদ (দিন) *' : 'Duration (Days) *'}
+                  </label>
                   <DigitInput
                     min={1}
                     required
@@ -2491,27 +2941,262 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                   />
                 </div>
               </div>
-              <label className="flex items-center space-x-2">
+
+              {/* Quick Discount % & Duration Preset Pills */}
+              <div className="space-y-2 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-slate-600 mr-1">
+                    {language === 'bn' ? 'কুইক ডিসকাউন্ট:' : 'Quick Discount:'}
+                  </span>
+                  {[0, 10, 15, 20, 25, 30, 50].map((pct) => (
+                    <button
+                      key={pct}
+                      type="button"
+                      onClick={() => setEditingPlan({ ...editingPlan, discountPercent: pct })}
+                      className={`px-2 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                        Number(editingPlan.discountPercent || 0) === pct
+                          ? 'bg-rose-600 text-white border-rose-600'
+                          : 'bg-white border-slate-200 text-slate-700 hover:border-rose-300'
+                      }`}
+                    >
+                      {pct === 0 ? '0% (No Disc)' : `${pct}% OFF`}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-slate-600 mr-1">
+                    {language === 'bn' ? 'মেয়াদ প্রিসেট:' : 'Duration:'}
+                  </span>
+                  {[
+                    { days: 30, label: '30d (১ মাস)' },
+                    { days: 90, label: '90d (৩ মাস)' },
+                    { days: 180, label: '180d (৬ মাস)' },
+                    { days: 365, label: '365d (১ বছর)' },
+                    { days: 730, label: '730d (২ বছর)' },
+                    { days: 36500, label: 'আজীবন' },
+                  ].map((d) => (
+                    <button
+                      key={d.days}
+                      type="button"
+                      onClick={() => setEditingPlan({ ...editingPlan, durationDays: d.days })}
+                      className={`px-2 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                        Number(editingPlan.durationDays) === d.days
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white border-slate-200 text-slate-700 hover:border-blue-300'
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Live Calculated Final Price Summary */}
+              {(() => {
+                const eff = getEffectivePlanPriceBdt(editingPlan);
+                const saved = Math.max(0, (Number(editingPlan.priceBdt) || 0) - eff);
+                const disc = Number(editingPlan.discountPercent) || 0;
+                return (
+                  <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-50 to-blue-50 border border-emerald-200 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[11px] font-bold text-slate-600">
+                        {language === 'bn' ? 'স্কুলের জন্য চূড়ান্ত বিক্রয়মূল্য (ডিসকাউন্ট সহ)' : 'Final Payable Price After Discount'}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {disc > 0
+                          ? `মূল ${formatTaka(editingPlan.priceBdt)} থেকে ${disc}% (${formatTaka(saved)}) ছাড়`
+                          : 'কোনো ডিসকাউন্ট প্রযোজ্য নয়'}
+                      </div>
+                    </div>
+                    <div className="text-xl font-black text-emerald-700">
+                      {eff === 0 ? `${formatTaka(0)} (ফ্রি)` : formatTaka(eff)}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    {language === 'bn' ? 'অফার / হাইলাইট ব্যাজ (ঐচ্ছিক)' : 'Promo Badge Tag (optional)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={editingPlan.badgeText || ''}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, badgeText: e.target.value })}
+                    placeholder="যেমন: সেরা অফার, Popular, ঈদ অফার"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    {language === 'bn' ? 'সংক্ষিপ্ত বিবরণ (বাংলা)' : 'Description (BN)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={editingPlan.descriptionBn}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, descriptionBn: e.target.value })}
+                    placeholder="প্ল্যানের সংক্ষিপ্ত বিবরণ লিখুন"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Description (English)</label>
+                <input
+                  type="text"
+                  value={editingPlan.description}
+                  onChange={(e) => setEditingPlan({ ...editingPlan, description: e.target.value })}
+                  placeholder="Short plan description in English"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl"
+                />
+              </div>
+
+              {/* Included Feature Items Builder */}
+              <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-slate-800">
+                    {language === 'bn' ? 'প্ল্যানের সুবিধাসমূহ / আইটেম যুক্ত করুন' : 'Included Plan Items / Features'}
+                  </label>
+                  <span className="text-[11px] font-bold text-slate-500">
+                    {(editingPlan.features || []).length} {language === 'bn' ? 'টি আইটেম' : 'items'}
+                  </span>
+                </div>
+
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newPlanFeatureInput}
+                    onChange={(e) => setNewPlanFeatureInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const val = newPlanFeatureInput.trim();
+                        if (!val) return;
+                        setEditingPlan({
+                          ...editingPlan,
+                          features: [...(editingPlan.features || []), val],
+                        });
+                        setNewPlanFeatureInput('');
+                      }
+                    }}
+                    placeholder={language === 'bn' ? 'নতুন সুবিধা লিখুন (যেমন: আনলিমিটেড শিক্ষার্থী)...' : 'Add a feature item...'}
+                    className="flex-1 px-3 py-2 border border-slate-200 rounded-xl bg-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const val = newPlanFeatureInput.trim();
+                      if (!val) return;
+                      setEditingPlan({
+                        ...editingPlan,
+                        features: [...(editingPlan.features || []), val],
+                      });
+                      setNewPlanFeatureInput('');
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{language === 'bn' ? 'যুক্ত করুন' : 'Add'}</span>
+                  </button>
+                </div>
+
+                {/* Quick Feature Suggestion Chips */}
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    'সব মডিউল সম্পূর্ণ এক্সেস',
+                    'স্মার্ট QR ও ফেস হাজিরা',
+                    'ফি, ভাউচার ও একাউন্টস',
+                    'ক্লাউড অটো ব্যাকআপ',
+                    'অনলাইন ভর্তি ও রেজাল্ট',
+                    '২৪/৭ প্রায়োরিটি সাপোর্ট',
+                  ]
+                    .filter((preset) => !(editingPlan.features || []).includes(preset))
+                    .map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() =>
+                          setEditingPlan({
+                            ...editingPlan,
+                            features: [...(editingPlan.features || []), preset],
+                          })
+                        }
+                        className="px-2 py-1 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-800 text-[10px] font-bold cursor-pointer"
+                      >
+                        + {preset}
+                      </button>
+                    ))}
+                </div>
+
+                {(editingPlan.features || []).length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    {(editingPlan.features || []).map((feat, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-white border border-slate-200"
+                      >
+                        <span className="flex items-center gap-1.5 font-medium text-slate-800">
+                          <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>{feat}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEditingPlan({
+                              ...editingPlan,
+                              features: (editingPlan.features || []).filter((_, i) => i !== idx),
+                            })
+                          }
+                          className="text-rose-500 hover:text-rose-700 p-0.5 cursor-pointer"
+                          title="Remove"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <label className="flex items-center space-x-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={editingPlan.isActive}
                   onChange={(e) => setEditingPlan({ ...editingPlan, isActive: e.target.checked })}
                 />
-                <span className="font-semibold">Plan Active for Schools</span>
+                <span className="font-semibold text-slate-800">
+                  {language === 'bn' ? 'সকল স্কুলের জন্য এই প্ল্যান চালু রাখুন (Active)' : 'Plan Active for Schools'}
+                </span>
               </label>
-              <div className="flex justify-end space-x-2 pt-2">
+
+              <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setEditingPlan(null)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 font-semibold"
+                  onClick={() => {
+                    setEditingPlan(null);
+                    setIsCreatingPlan(false);
+                  }}
+                  className="px-4 py-2 rounded-xl border border-slate-200 font-semibold text-slate-700"
                 >
-                  Cancel
+                  {language === 'bn' ? 'বাতিল' : 'Cancel'}
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-blue-600 text-white font-bold"
+                  disabled={busyActionId === (isCreatingPlan ? editingPlan.id || 'creating' : editingPlan.id)}
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
-                  Save Plan
+                  <Save className="w-4 h-4" />
+                  <span>
+                    {isCreatingPlan
+                      ? language === 'bn'
+                        ? 'নতুন প্ল্যান তৈরি করুন'
+                        : 'Create Plan'
+                      : language === 'bn'
+                      ? 'পরিবর্তন সেভ করুন'
+                      : 'Save Plan'}
+                  </span>
                 </button>
               </div>
             </form>
