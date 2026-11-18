@@ -80,6 +80,7 @@ import {
   isSuperAdminApprover,
   resolveEffectiveApprovalStatus,
 } from '../../utils/approvalWorkflow';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 
 // Helper to get subjects specifically matching a student's class and secondary stream (group)
 export const getSubjectsForStudent = (student: Student, allClassSubjects: Subject[]): Subject[] => {
@@ -907,12 +908,98 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
     return iGroup === sGroup;
   });
 
+  const examLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'exam_routine',
+      label: language === 'bn' ? 'পরীক্ষার রুটিন' : 'Exam Routine',
+      icon: Calendar,
+      color: 'sky',
+      active: activeTab === 'exam_routine',
+      onClick: () => setActiveTab('exam_routine'),
+    },
+    ...(activeRole !== 'teacher'
+      ? [
+          {
+            id: 'admit_cards',
+            label: language === 'bn' ? 'প্রবেশপত্র' : 'Admit Cards',
+            icon: CreditCard,
+            color: 'green' as const,
+            active: activeTab === 'admit_cards',
+            onClick: () => setActiveTab('admit_cards'),
+          },
+        ]
+      : []),
+    ...(activeRole !== 'student'
+      ? [
+          {
+            id: 'seat_plan',
+            label: language === 'bn' ? 'আসন বিন্যাস' : 'Seat Plan',
+            icon: LayoutGrid,
+            color: 'purple' as const,
+            active: activeTab === 'seat_plan',
+            onClick: () => setActiveTab('seat_plan'),
+          },
+        ]
+      : []),
+    {
+      id: 'exams',
+      label: language === 'bn' ? 'পরীক্ষার তালিকা' : 'Exams List',
+      icon: Award,
+      color: 'red',
+      active: activeTab === 'exams',
+      onClick: () => setActiveTab('exams'),
+    },
+    ...(canManage
+      ? [
+          {
+            id: 'marks_entry',
+            label: language === 'bn' ? 'নম্বর এন্ট্রি' : 'Marks Entry',
+            icon: Edit2,
+            color: 'blue' as const,
+            active: activeTab === 'marks_entry',
+            onClick: () => setActiveTab('marks_entry'),
+          },
+        ]
+      : []),
+    {
+      id: 'report_cards',
+      label: language === 'bn' ? 'মার্কশিট' : 'Report Cards',
+      icon: FileCheck,
+      color: 'green',
+      active: activeTab === 'report_cards',
+      onClick: () => setActiveTab('report_cards'),
+    },
+    ...(activeRole !== 'student'
+      ? [
+          {
+            id: 'tabulation',
+            label: language === 'bn' ? 'ট্যাবুলেশন শিট' : 'Tabulation',
+            icon: Table,
+            color: 'teal' as const,
+            active: activeTab === 'tabulation',
+            onClick: () => setActiveTab('tabulation'),
+          },
+          {
+            id: 'merit_list',
+            label: language === 'bn' ? 'মেধা তালিকা' : 'Merit List',
+            icon: Trophy,
+            color: 'amber' as const,
+            active: activeTab === 'merit_list',
+            onClick: () => setActiveTab('merit_list'),
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* Top Header & Tabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
+    <div className="space-y-5">
+      {/* Sub-module Colorful Launcher Grid */}
+      <LauncherIconGrid items={examLauncherItems} columns={5} />
+
+      {/* Clean Compact Header & Contextual Actions */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">
+          <h2 className="text-base sm:text-lg font-bold text-slate-900">
             {language === 'bn' ? 'পরীক্ষা ও ফলাফল ব্যবস্থাপনা' : 'Examinations & Result Management'}
           </h2>
           <p className="text-xs text-slate-500">
@@ -922,105 +1009,21 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {/* Subtabs */}
-          <div className="p-1 bg-slate-100 rounded-lg flex flex-wrap gap-1 text-xs font-semibold">
-            <button
-              onClick={() => setActiveTab('exam_routine')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md transition-colors ${
-                activeTab === 'exam_routine' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Calendar className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'পরীক্ষার রুটিন' : 'Exam Routine'}</span>
-            </button>
-            {activeRole !== 'teacher' && (
-              <button
-                onClick={() => setActiveTab('admit_cards')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md transition-colors ${
-                  activeTab === 'admit_cards' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <CreditCard className="w-3.5 h-3.5" />
-                <span>{language === 'bn' ? 'প্রবেশপত্র (Admit Cards)' : 'Admit Cards'}</span>
-              </button>
-            )}
-            {activeRole !== 'student' && (
-              <button
-                onClick={() => setActiveTab('seat_plan')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md transition-colors ${
-                  activeTab === 'seat_plan' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span>{language === 'bn' ? 'আসন বিন্যাস (Seat Plan)' : 'Seat Plan'}</span>
-              </button>
-            )}
-            <button
-              onClick={() => setActiveTab('exams')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${
-                activeTab === 'exams' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {language === 'bn' ? 'পরীক্ষার তালিকা' : 'Exams'}
-            </button>
-            {canManage && (
-              <button
-                onClick={() => setActiveTab('marks_entry')}
-                className={`px-3 py-1.5 rounded-md transition-colors ${
-                  activeTab === 'marks_entry' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {language === 'bn' ? 'নম্বর এন্ট্রি' : 'Marks Entry'}
-              </button>
-            )}
-            <button
-              onClick={() => setActiveTab('report_cards')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${
-                activeTab === 'report_cards' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {language === 'bn' ? 'মার্কশিট' : 'Report Cards'}
-            </button>
-            {activeRole !== 'student' && (
-              <button
-                onClick={() => setActiveTab('tabulation')}
-                className={`px-3 py-1.5 rounded-md transition-colors ${
-                  activeTab === 'tabulation' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {language === 'bn' ? 'ট্যাবুলেশন শিট' : 'Tabulation'}
-              </button>
-            )}
-            {activeRole !== 'student' && (
-              <button
-                onClick={() => setActiveTab('merit_list')}
-                className={`flex items-center space-x-1 px-3 py-1.5 rounded-md transition-colors ${
-                  activeTab === 'merit_list'
-                    ? 'bg-amber-500 text-white font-bold shadow-xs'
-                    : 'text-slate-700 hover:text-amber-800 hover:bg-amber-50 font-semibold'
-                }`}
-              >
-                <Trophy className="w-3.5 h-3.5 text-amber-500" />
-                <span>{language === 'bn' ? 'মেধা তালিকা' : 'Merit List'}</span>
-              </button>
-            )}
-          </div>
-
           {canManage && activeTab === 'exams' && (
             <button
               onClick={handleOpenAddExam}
-              className="flex items-center space-x-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs"
+              className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs"
             >
               <Plus className="w-4 h-4" />
-              <span>{language === 'bn' ? '+ নতুন পরীক্ষা তৈরি' : '+ New Exam'}</span>
+              <span>{language === 'bn' ? 'নতুন পরীক্ষা তৈরি' : 'New Exam'}</span>
             </button>
           )}
 
           {canManage && activeTab === 'exam_routine' && (
-            <div className="flex items-center space-x-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <button
                 onClick={handleAutoGenerateRoutine}
-                className="flex items-center space-x-1 px-3 py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-semibold"
+                className="flex items-center space-x-1 px-3 py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold"
                 title="Auto generate routine with 2 days gap skipping Fridays"
               >
                 <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
@@ -1028,14 +1031,14 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
               </button>
               <button
                 onClick={handleOpenAddRoutine}
-                className="flex items-center space-x-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs"
+                className="flex items-center space-x-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs"
               >
                 <Plus className="w-4 h-4" />
-                <span>{language === 'bn' ? '+ বিষয় যোগ' : '+ Add Subject'}</span>
+                <span>{language === 'bn' ? 'বিষয় যোগ' : 'Add Subject'}</span>
               </button>
               <button
                 onClick={() => setShowRoutinePrintModal(true)}
-                className="flex items-center space-x-1 px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold shadow-xs active:scale-95 transition-all"
+                className="flex items-center space-x-1 px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 transition-all"
               >
                 <Printer className="w-4 h-4 text-emerald-400" />
                 <span>{language === 'bn' ? 'রুটিন প্রিন্ট' : 'Print Routine'}</span>

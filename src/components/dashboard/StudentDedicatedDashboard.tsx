@@ -76,6 +76,7 @@ import {
   findSubjectForMark,
   getMarksheetRowBreakdown,
 } from '../../utils/marksheetBreakdown';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 
 interface StudentDedicatedDashboardProps {
   onNavigateTab?: (tab: string) => void;
@@ -1112,86 +1113,171 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
     return () => window.removeEventListener('saturday_off_toggled', handleSaturdayToggle);
   }, []);
 
+  const portalLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'overview',
+      label: language === 'bn' ? 'সারসংক্ষেপ' : 'Overview',
+      icon: TrendingUp,
+      color: 'blue',
+      active: activeSubTab === 'overview',
+      onClick: () => setActiveSubTab('overview'),
+    },
+    {
+      id: 'attendance',
+      label: isGuardianView ? 'সন্তানের হাজিরা' : 'আমার হাজিরা',
+      icon: CalendarCheck2,
+      color: 'green',
+      active: activeSubTab === 'attendance',
+      onClick: () => setActiveSubTab('attendance'),
+    },
+    {
+      id: 'homework',
+      label: language === 'bn' ? 'বাড়ির কাজ' : 'Homework',
+      icon: BookOpen,
+      color: 'amber',
+      badge: studentHwAccounting.dueTotal > 0 ? studentHwAccounting.dueTotal : undefined,
+      active: activeSubTab === 'homework',
+      onClick: () => setActiveSubTab('homework'),
+    },
+    {
+      id: 'routine',
+      label: language === 'bn' ? 'ক্লাস রুটিন' : 'Class Routine',
+      icon: CalendarDays,
+      color: 'sky',
+      active: activeSubTab === 'routine',
+      onClick: () => setActiveSubTab('routine'),
+    },
+    {
+      id: 'exam_routine',
+      label: language === 'bn' ? 'পরীক্ষার রুটিন' : 'Exam Routine',
+      icon: Calendar,
+      color: 'teal',
+      badge:
+        studentPublishedExamRoutines.length > 0
+          ? toBnNumber(studentPublishedExamRoutines.length)
+          : studentPublishedSeatPlans.length > 0
+          ? '✓'
+          : undefined,
+      active: activeSubTab === 'exam_routine',
+      onClick: () => setActiveSubTab('exam_routine'),
+    },
+    {
+      id: 'notices',
+      label: language === 'bn' ? 'নোটিশ বোর্ড' : 'Notices',
+      icon: Bell,
+      color: 'red',
+      badge: studentNotices.length > 0 ? studentNotices.length : undefined,
+      active: activeSubTab === 'notices',
+      onClick: () => setActiveSubTab('notices'),
+    },
+    {
+      id: 'exams',
+      label: language === 'bn' ? 'ফলাফল ও মার্কস' : 'Results',
+      icon: Award,
+      color: 'purple',
+      active: activeSubTab === 'exams',
+      onClick: () => setActiveSubTab('exams'),
+    },
+    ...(isGuardianView
+      ? [
+          {
+            id: 'fees',
+            label: language === 'bn' ? 'ফি স্টেটমেন্ট' : 'Fee Statement',
+            icon: Wallet,
+            color: 'green' as const,
+            active: activeSubTab === 'fees',
+            onClick: () => setActiveSubTab('fees'),
+          },
+        ]
+      : []),
+    {
+      id: 'blogs',
+      label: language === 'bn' ? 'স্কুল ব্লগ' : 'School Blogs',
+      icon: Newspaper,
+      color: 'indigo',
+      badge: publishedBlogs.length > 0 ? toBnNumber(publishedBlogs.length) : undefined,
+      active: activeSubTab === 'blogs',
+      onClick: () => setActiveSubTab('blogs'),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* 1. Header Profile Banner */}
-      <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-blue-950 text-white rounded-2xl p-6 shadow-md relative overflow-hidden">
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-5">
-          <div className="flex items-center space-x-4">
-            <div className="w-16 h-20 rounded-xl border-2 border-amber-400 bg-white/10 overflow-hidden shadow-md shrink-0">
+    <div className="space-y-5">
+      {/* 1. Navigation Launcher Grid */}
+      <LauncherIconGrid items={portalLauncherItems} columns={5} />
+
+      {/* 2. Clean White Student / Guardian Profile Bar */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 sm:p-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center space-x-3.5">
+            <div className="w-14 h-16 rounded-xl border border-slate-200 bg-slate-100 overflow-hidden shadow-2xs shrink-0">
               {student.photoUrl ? (
                 <img src={student.photoUrl} alt={student.nameEn || 'Student'} className="w-full h-full object-cover" />
               ) : (
-                <div className="w-full h-full flex items-center justify-center font-black text-2xl text-amber-300">
+                <div className="w-full h-full flex items-center justify-center font-black text-xl text-blue-700 bg-blue-50">
                   {(student.nameEn || student.nameBn || 'S').charAt(0)}
                 </div>
               )}
             </div>
 
             <div>
-              <div className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-white/15 text-[10px] font-bold text-amber-300 mb-1 border border-white/20">
-                <ShieldCheck className="w-3 h-3 text-amber-300" />
+              <div className="text-[11px] font-bold text-blue-700 flex items-center space-x-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
                 <span>
                   {isGuardianView
-                    ? 'অভিভাবক ও শিক্ষার্থী ড্যাশবোর্ড (Guardian & Student Portal)'
-                    : 'ব্যক্তিগত শিক্ষার্থী ড্যাশবোর্ড (Personal Student Portal)'}
+                    ? 'অভিভাবক ও শিক্ষার্থী পোর্টাল'
+                    : 'শিক্ষার্থী পোর্টাল'}
                 </span>
               </div>
-              <h2 className="text-xl sm:text-2xl font-black text-white">
+              <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 mt-0.5">
                 {student.nameBn || student.nameEn}
               </h2>
-              <p className="text-xs text-blue-200 font-semibold">
+              <p className="text-xs text-slate-500 font-medium">
                 {student.nameEn}
                 {isGuardianView && (student.guardianName || student.fatherNameBn)
                   ? ` • অভিভাবক: ${student.guardianName || student.fatherNameBn}`
                   : ''}
               </p>
-              <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">
-                <span className="px-2.5 py-0.5 rounded-md bg-amber-400 text-blue-950 font-black">
-                  স্টুডেন্ট আইডি: {student.studentId}
+              <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[11px]">
+                <span className="px-2 py-0.5 rounded-md bg-blue-50 border border-blue-200 text-blue-800 font-bold">
+                  ID: {student.studentId}
                 </span>
-                <span className="px-2.5 py-0.5 rounded-md bg-blue-800 text-white font-bold">
-                  শ্রেণি: {student.className}
+                <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-700 font-semibold">
+                  {student.className} ({student.section}) • রোল {student.roll}
                 </span>
-                <span className="px-2.5 py-0.5 rounded-md bg-blue-800 text-white font-bold">
-                  শাখা: {student.section}
-                </span>
-                <span className="px-2.5 py-0.5 rounded-md bg-indigo-700 text-white font-bold font-mono">
-                  রোল: {student.roll}
-                </span>
-                <span className="px-2.5 py-0.5 rounded-md bg-emerald-600 text-white font-bold">
-                  মেধা স্থান: {currentStudentRank !== null ? `${toBnNumber(currentStudentRank)}ম স্থান` : 'অপ্রকাশিত'}
+                <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold">
+                  মেধা স্থান: {currentStudentRank !== null ? `${toBnNumber(currentStudentRank)}ম` : 'অপ্রকাশিত'}
                 </span>
                 <button
                   type="button"
                   onClick={() => setShowStudentCredsModal(true)}
-                  className="px-2.5 py-0.5 rounded-md bg-white/20 hover:bg-white/30 text-white font-bold inline-flex items-center space-x-1 border border-white/25 transition-colors"
+                  className="px-2 py-0.5 rounded-md bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold inline-flex items-center space-x-1 border border-purple-200 transition-colors"
                 >
-                  <KeyRound className="w-3 h-3 text-amber-300" />
-                  <span>{language === 'bn' ? 'পাসওয়ার্ড পরিবর্তন' : 'Change Password'}</span>
+                  <KeyRound className="w-3 h-3" />
+                  <span>{language === 'bn' ? 'পাসওয়ার্ড' : 'Password'}</span>
                 </button>
               </div>
             </div>
           </div>
 
           {/* Quick Metrics */}
-          <div className={`grid ${isGuardianView ? 'grid-cols-3' : 'grid-cols-2'} gap-2 text-center bg-white/10 backdrop-blur-xs p-3 rounded-xl border border-white/15`}>
-            <div className="p-2">
-              <span className="text-[10px] text-blue-200 block font-bold">উপস্থিতি হার</span>
-              <span className={`text-lg font-black ${attendanceRate >= 80 ? 'text-emerald-300' : attendanceRate >= 60 ? 'text-amber-300' : 'text-rose-300'}`}>
+          <div className={`grid ${isGuardianView ? 'grid-cols-3' : 'grid-cols-2'} gap-2 text-center bg-slate-50 p-2.5 rounded-xl border border-slate-200/80`}>
+            <div className="px-3 py-1.5">
+              <span className="text-[10px] text-slate-500 block font-semibold">উপস্থিতি</span>
+              <span className={`text-base font-extrabold tabular-nums ${attendanceRate >= 80 ? 'text-emerald-600' : attendanceRate >= 60 ? 'text-amber-600' : 'text-rose-600'}`}>
                 {toBnNumber(attendanceRate)}%
               </span>
             </div>
-            <div className={`p-2 ${isGuardianView ? 'border-x border-white/20' : 'border-l border-white/20'}`}>
-              <span className="text-[10px] text-blue-200 block font-bold">বাড়ির কাজ জমা</span>
-              <span className="text-lg font-black text-amber-300">
+            <div className={`px-3 py-1.5 ${isGuardianView ? 'border-x border-slate-200' : 'border-l border-slate-200'}`}>
+              <span className="text-[10px] text-slate-500 block font-semibold">বাড়ির কাজ</span>
+              <span className="text-base font-extrabold text-slate-900 tabular-nums">
                 {toBnNumber(studentHwAccounting.submitted)}/{toBnNumber(studentHwAccounting.total)}
               </span>
             </div>
             {isGuardianView && (
-              <div className="p-2">
-                <span className="text-[10px] text-blue-200 block font-bold">বকেয়া ফি</span>
-                <span className={`text-lg font-black ${totalFeeDue > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
+              <div className="px-3 py-1.5">
+                <span className="text-[10px] text-slate-500 block font-semibold">বকেয়া ফি</span>
+                <span className={`text-base font-extrabold tabular-nums ${totalFeeDue > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                   {formatTaka(totalFeeDue)}
                 </span>
               </div>
@@ -1201,9 +1287,9 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
 
         {/* Multi-child selector bar when Guardian has 2+ linked children */}
         {matchedChildren.length > 1 && (
-          <div className="relative z-10 mt-4 pt-3 border-t border-white/15 flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-bold text-amber-200">
-              সন্তান নির্বাচন করুন ({toBnNumber(matchedChildren.length)} জন):
+          <div className="mt-3.5 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold text-slate-600">
+              সন্তান নির্বাচন ({toBnNumber(matchedChildren.length)} জন):
             </span>
             {matchedChildren.map((child) => {
               const isSelected = child.id === student.id;
@@ -1214,8 +1300,8 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
                   onClick={() => setSelectedChildId(child.id)}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
                     isSelected
-                      ? 'bg-amber-400 text-blue-950 border-amber-300 shadow-xs'
-                      : 'bg-white/10 text-white border-white/20 hover:bg-white/20'
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
                   }`}
                 >
                   {child.nameBn || child.nameEn} ({child.className} • রোল {child.roll})
@@ -1224,121 +1310,6 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
             })}
           </div>
         )}
-      </div>
-
-      {/* 2. Navigation Tabs (Required 6 Modules) */}
-      <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-200/70 rounded-2xl">
-        <button
-          onClick={() => setActiveSubTab('overview')}
-          className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeSubTab === 'overview' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <TrendingUp className="w-3.5 h-3.5" />
-          <span>সারসংক্ষেপ (Overview)</span>
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('attendance')}
-          className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeSubTab === 'attendance' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <CalendarCheck2 className="w-3.5 h-3.5" />
-          <span>{isGuardianView ? '১. সন্তানের হাজিরা (Attendance)' : '১. আমার হাজিরা (Attendance)'}</span>
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('homework')}
-          className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeSubTab === 'homework' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <BookOpen className="w-3.5 h-3.5" />
-          <span>২. বাড়ির কাজ রিপোর্ট (Homework)</span>
-          {studentHwAccounting.dueTotal > 0 && (
-            <span className="px-1.5 py-0.2 bg-amber-500 text-white rounded-full text-[10px]">
-              {studentHwAccounting.dueTotal}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('routine')}
-          className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeSubTab === 'routine' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <CalendarDays className="w-3.5 h-3.5" />
-          <span>৩. ক্লাস রুটিন (Routine)</span>
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('exam_routine')}
-          className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeSubTab === 'exam_routine' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Calendar className="w-3.5 h-3.5" />
-          <span>{language === 'bn' ? '৪. পরীক্ষার রুটিন ও আসন (Exam Routine)' : '4. Exam Routine & Seat'}</span>
-          {(studentPublishedExamRoutines.length > 0 || studentPublishedSeatPlans.length > 0) && (
-            <span className="px-1.5 py-0.2 bg-emerald-600 text-white rounded-full text-[10px]">
-              {studentPublishedExamRoutines.length > 0 ? toBnNumber(studentPublishedExamRoutines.length) : '✓'}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('notices')}
-          className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeSubTab === 'notices' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Bell className="w-3.5 h-3.5" />
-          <span>৫. নোটিশ বোর্ড (Notices)</span>
-          {studentNotices.length > 0 && (
-            <span className="px-1.5 py-0.2 bg-blue-600 text-white rounded-full text-[10px]">
-              {studentNotices.length}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('exams')}
-          className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeSubTab === 'exams' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Award className="w-3.5 h-3.5" />
-          <span>৬. পরীক্ষার মার্কশিট ও মেধা তালিকা (Results)</span>
-        </button>
-
-        {isGuardianView && (
-          <button
-            onClick={() => setActiveSubTab('fees')}
-            className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-              activeSubTab === 'fees' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Wallet className="w-3.5 h-3.5" />
-            <span>৭. ফি জমার স্টেটমেন্ট (Fees)</span>
-          </button>
-        )}
-
-        <button
-          onClick={() => setActiveSubTab('blogs')}
-          className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeSubTab === 'blogs' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Newspaper className="w-3.5 h-3.5" />
-          <span>{isGuardianView ? '৮. স্কুল ব্লগ (Blogs)' : '৭. স্কুল ব্লগ (Blogs)'}</span>
-          {publishedBlogs.length > 0 && (
-            <span className="px-1.5 py-0.2 bg-indigo-600 text-white rounded-full text-[10px]">
-              {toBnNumber(publishedBlogs.length)}
-            </span>
-          )}
-        </button>
       </div>
 
       {/* ===================================================================== */}

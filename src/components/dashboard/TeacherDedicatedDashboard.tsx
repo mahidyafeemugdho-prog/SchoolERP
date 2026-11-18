@@ -24,6 +24,7 @@ import {
   CheckCircle2,
   RotateCcw,
 } from 'lucide-react';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 
 interface TeacherDedicatedDashboardProps {
   onNavigate: (tab: string) => void;
@@ -512,35 +513,24 @@ export const TeacherDedicatedDashboard: React.FC<TeacherDedicatedDashboardProps>
       </div>
 
       {/* Quick Action Workflow Launcher Grid */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-bold text-slate-900">
-            {language === 'bn' ? 'শিক্ষকের সকল কার্যক্রম' : 'Teacher Workflows & Modules'}
-          </h2>
-          <span className="text-[11px] text-slate-500">
-            {language === 'bn' ? '১ ক্লিকে যেকোনো বিভাগে যান' : 'Direct workspace shortcuts'}
-          </span>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
-          {quickActions.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                onClick={() => onNavigate(item.id)}
-                className="p-3 rounded-xl border border-slate-200 hover:border-blue-300 hover:bg-slate-50/70 text-left transition-colors flex items-start gap-2.5"
-              >
-                <div className={`p-2 rounded-lg shrink-0 ${item.accent}`}>
-                  <Icon className="w-4 h-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-bold text-slate-900 leading-tight">{item.label}</div>
-                  <div className="text-[11px] text-slate-500 mt-0.5 truncate">{item.sub}</div>
-                </div>
-              </button>
-            );
+      <div className="space-y-3">
+        <LauncherIconGrid
+          columns={5}
+          items={quickActions.map((item, idx): LauncherTileItem => {
+            const palette: LauncherTileItem['color'][] = [
+              'red', 'green', 'sky', 'amber', 'purple',
+              'teal', 'green', 'orange', 'blue', 'red',
+            ];
+            return {
+              id: item.id,
+              label: item.label,
+              icon: item.icon,
+              color: palette[idx % palette.length],
+              title: item.sub,
+              onClick: () => onNavigate(item.id),
+            };
           })}
-        </div>
+        />
       </div>
 
       {/* Teacher Drafts & SuperAdmin Approval Status Tracker */}

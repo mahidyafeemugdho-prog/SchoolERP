@@ -4,6 +4,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { TransportRoute } from '../../types';
 import { DigitInput } from '../common/DigitInput';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   Bus,
   Search,
@@ -113,15 +114,41 @@ export const TransportView: React.FC = () => {
     setDriverName('');
   };
 
+  const transportLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'all_routes',
+      label: language === 'bn' ? 'সকল বাস রুট' : 'All Bus Routes',
+      icon: Bus,
+      color: 'teal',
+      active: true,
+      badge: routes.length,
+      onClick: () => {},
+    },
+    ...(canManage
+      ? [
+          {
+            id: 'add_route',
+            label: language === 'bn' ? 'নতুন রুট যোগ' : 'Add New Route',
+            icon: Plus,
+            color: 'green' as const,
+            onClick: handleOpenAddRoute,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* App-Launcher Icon Tile Grid */}
+      <LauncherIconGrid items={transportLauncherItems} columns={4} compact />
+
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">
+          <h2 className="text-lg font-extrabold text-slate-900">
             {language === 'bn' ? 'স্কুল পরিবহন ও বাস সার্ভিস' : 'Transport & Bus Fleet Management'}
           </h2>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500 mt-0.5">
             {language === 'bn'
               ? 'স্কুল বাস রুট, পিক-আপ ও ড্রপ পয়েন্ট, চালক তথ্য ও মাসিক ভাড়া'
               : 'Routes, vehicle fleet, driver contacts, pickup stops & monthly fares'}
@@ -130,7 +157,7 @@ export const TransportView: React.FC = () => {
         {canManage && (
           <button
             onClick={handleOpenAddRoute}
-            className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs"
+            className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs"
           >
             <Plus className="w-4 h-4" />
             <span>{language === 'bn' ? 'নতুন রুট যোগ করুন' : 'Add New Route'}</span>
@@ -143,7 +170,7 @@ export const TransportView: React.FC = () => {
         {routes.map((route) => (
           <div
             key={route.id}
-            className="p-5 bg-white rounded-xl border border-slate-200 shadow-xs hover:border-blue-300 transition-all flex flex-col justify-between text-xs"
+            className="p-5 bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:border-blue-300 transition-all flex flex-col justify-between text-xs"
           >
             <div>
               <div className="flex items-start justify-between">

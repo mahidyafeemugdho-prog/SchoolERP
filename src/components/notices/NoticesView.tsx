@@ -3,8 +3,11 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { Notice } from '../../types';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   Bell,
+  BookOpen,
+  Layers,
   Search,
   Plus,
   Calendar,
@@ -121,14 +124,80 @@ export const NoticesView: React.FC = () => {
     return true;
   });
 
+  const noticeLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'all',
+      label: language === 'bn' ? 'সকল নোটিশ' : 'All Notices',
+      icon: Layers,
+      color: 'blue',
+      active: categoryFilter === 'all',
+      badge: notices.length,
+      onClick: () => setCategoryFilter('all'),
+    },
+    {
+      id: 'General',
+      label: language === 'bn' ? 'সাধারণ' : 'General',
+      icon: Bell,
+      color: 'teal',
+      active: categoryFilter === 'General',
+      onClick: () => setCategoryFilter('General'),
+    },
+    {
+      id: 'Academic',
+      label: language === 'bn' ? 'একাডেমিক' : 'Academic',
+      icon: BookOpen,
+      color: 'indigo',
+      active: categoryFilter === 'Academic',
+      onClick: () => setCategoryFilter('Academic'),
+    },
+    {
+      id: 'Exam',
+      label: language === 'bn' ? 'পরীক্ষা' : 'Exam',
+      icon: Calendar,
+      color: 'purple',
+      active: categoryFilter === 'Exam',
+      onClick: () => setCategoryFilter('Exam'),
+    },
+    {
+      id: 'Holiday',
+      label: language === 'bn' ? 'ছুটি' : 'Holiday',
+      icon: Tag,
+      color: 'amber',
+      active: categoryFilter === 'Holiday',
+      onClick: () => setCategoryFilter('Holiday'),
+    },
+    {
+      id: 'Emergency',
+      label: language === 'bn' ? 'জরুরি' : 'Emergency',
+      icon: AlertCircle,
+      color: 'red',
+      active: categoryFilter === 'Emergency',
+      onClick: () => setCategoryFilter('Emergency'),
+    },
+    ...(canPost
+      ? [
+          {
+            id: 'publish',
+            label: language === 'bn' ? 'নতুন নোটিশ' : 'Publish',
+            icon: Plus,
+            color: 'green' as const,
+            onClick: handleOpenAdd,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="space-y-5">
+      {/* App-Launcher Icon Tile Grid */}
+      <LauncherIconGrid items={noticeLauncherItems} columns={6} compact />
+
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">
+          <h2 className="text-lg font-extrabold text-slate-900">
             {language === 'bn' ? 'বিদ্যালয়ের নোটিশ বোর্ড' : 'School Notice Board & Bulletins'}
           </h2>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500 mt-0.5">
             {language === 'bn'
               ? 'প্রাতিষ্ঠানিক ঘোষণা, ছুটির নোটিশ, পরীক্ষার সময়সূচি ও জরুরি বার্তা'
               : 'Institutional notices, academic schedules, exam dates, and official decrees'}
@@ -137,7 +206,7 @@ export const NoticesView: React.FC = () => {
         {canPost && (
           <button
             onClick={handleOpenAdd}
-            className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs"
+            className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs"
           >
             <Plus className="w-4 h-4" />
             <span>{language === 'bn' ? 'নতুন নোটিশ জারি করুন' : 'Publish Notice'}</span>
@@ -146,7 +215,7 @@ export const NoticesView: React.FC = () => {
       </div>
 
       {/* Filter and Search */}
-      <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-xs flex flex-col sm:flex-row gap-3 text-xs">
+      <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row gap-3 text-xs">
         <div className="relative flex-1">
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
           <input

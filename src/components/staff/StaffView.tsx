@@ -39,6 +39,7 @@ import { LiveCameraModal } from '../common/LiveCameraModal';
 import { SaaSApi } from '../../services/saasApi';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
 import { DigitInput } from '../common/DigitInput';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   ModernTeacherIDCardFront,
   ModernTeacherIDCardBack,
@@ -332,12 +333,60 @@ export const StaffView: React.FC = () => {
     a.click();
   };
 
+  const staffLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'directory',
+      label: language === 'bn' ? 'স্টাফ ডিরেক্টরি' : 'Staff Directory',
+      icon: Users,
+      color: 'green',
+      badge: staffList.length,
+      active: activeSection === 'directory',
+      onClick: () => setActiveSection('directory'),
+    },
+    ...(canViewSalary
+      ? [
+          {
+            id: 'payroll',
+            label: language === 'bn' ? 'বেতন ও বকেয়া' : 'Salary & Payroll',
+            icon: DollarSign,
+            color: 'amber' as const,
+            active: activeSection === 'payroll',
+            onClick: () => setActiveSection('payroll'),
+          },
+        ]
+      : []),
+    ...(canManage
+      ? [
+          {
+            id: 'add_staff',
+            label: language === 'bn' ? 'নতুন স্টাফ যোগ' : 'Add Staff',
+            icon: Plus,
+            color: 'blue' as const,
+            onClick: () => {
+              setActiveSection('directory');
+              handleOpenAdd();
+            },
+          },
+        ]
+      : []),
+    {
+      id: 'print_staff',
+      label: language === 'bn' ? 'তালিকা প্রিন্ট' : 'Print List',
+      icon: Printer,
+      color: 'purple',
+      onClick: () => window.print(),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* Action Header & Section Tabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
+    <div className="space-y-5">
+      {/* Sub-module Colorful Launcher Grid */}
+      <LauncherIconGrid items={staffLauncherItems} columns={4} />
+
+      {/* Clean Action Header */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">
+          <h2 className="text-base sm:text-lg font-bold text-slate-900">
             {language === 'bn' ? 'শিক্ষক ও কর্মচারী ডিরেক্টরি' : 'Teachers & Staff Directory'}
           </h2>
           <p className="text-xs text-slate-500">
@@ -346,38 +395,11 @@ export const StaffView: React.FC = () => {
               : `Total ${staffList.length} faculty and administrative personnel`}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {canViewSalary && (
-            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg border border-slate-200">
-              <button
-                type="button"
-                onClick={() => setActiveSection('directory')}
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                  activeSection === 'directory'
-                    ? 'bg-white text-slate-900 shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {language === 'bn' ? 'স্টাফ ডিরেক্টরি' : 'Staff Directory'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveSection('payroll')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                  activeSection === 'payroll'
-                    ? 'bg-blue-600 text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <DollarSign className="w-3.5 h-3.5" />
-                <span>{language === 'bn' ? 'বেতন ও বকেয়া হিসাব (Payroll)' : 'Salary & Payroll'}</span>
-              </button>
-            </div>
-          )}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {canManage && activeSection === 'directory' && (
             <button
               onClick={handleOpenAdd}
-              className="flex items-center space-x-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-xs whitespace-nowrap shrink-0"
+              className="flex items-center space-x-1.5 px-3.5 py-2 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-xs whitespace-nowrap shrink-0"
             >
               <Plus className="w-4 h-4" />
               <span>{language === 'bn' ? 'নতুন স্টাফ যোগ করুন' : 'Add New Staff'}</span>

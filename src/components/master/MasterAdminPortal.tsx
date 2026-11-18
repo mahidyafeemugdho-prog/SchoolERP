@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { MasterAdminSaaSPanel } from './MasterAdminSaaSPanel';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 
 export const MasterAdminPortal: React.FC = () => {
   const { systemAccessControl, updateSystemAccessControl, activeRole, saasSession } = useAuth();
@@ -310,14 +311,58 @@ export const MasterAdminPortal: React.FC = () => {
     );
   }
 
+  const masterPortalLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'saas_schools',
+      label: language === 'bn' ? 'মাল্টি-স্কুল SaaS' : 'Multi-School SaaS',
+      icon: Building2,
+      color: 'blue',
+      active: portalSection === 'saas_schools',
+      onClick: () => setPortalSection('saas_schools'),
+    },
+    {
+      id: 'system_controls',
+      label: language === 'bn' ? 'ব্যাকআপ ও লক' : 'Backup & Locks',
+      icon: Sliders,
+      color: 'red',
+      active: portalSection === 'system_controls',
+      onClick: () => setPortalSection('system_controls'),
+    },
+    {
+      id: 'enable_all',
+      label: language === 'bn' ? 'সব চালু করুন' : 'Enable All',
+      icon: Unlock,
+      color: 'green',
+      onClick: () => {
+        setPortalSection('system_controls');
+        handleEnableAll();
+      },
+    },
+    {
+      id: 'lock_all',
+      label: language === 'bn' ? 'সব বন্ধ করুন' : 'Lock All',
+      icon: Lock,
+      color: 'amber',
+      onClick: () => {
+        setPortalSection('system_controls');
+        handleDisableAll();
+      },
+    },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* App-Launcher Icon Tile Grid */}
+      <LauncherIconGrid items={masterPortalLauncherItems} columns={4} compact />
+
       {/* Portal Mode Switcher */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
-        <div className="flex items-center space-x-2">
-          <ShieldAlert className="w-5 h-5 text-rose-600" />
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+        <div className="flex items-center space-x-2.5">
+          <div className="p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-600">
+            <ShieldAlert className="w-5 h-5" />
+          </div>
           <div>
-            <div className="text-xs font-black text-slate-900">
+            <div className="text-sm font-extrabold text-slate-900">
               {language === 'bn'
                 ? 'Smart School BD ERP — গ্লোবাল মাস্টার অ্যাডমিন কন্ট্রোল'
                 : 'Smart School BD ERP — Global Master Admin Console'}
@@ -333,7 +378,7 @@ export const MasterAdminPortal: React.FC = () => {
             onClick={() => setPortalSection('saas_schools')}
             className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all ${
               portalSection === 'saas_schools'
-                ? 'bg-blue-600 text-white shadow-sm'
+                ? 'bg-blue-600 text-white shadow-xs'
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
@@ -345,7 +390,7 @@ export const MasterAdminPortal: React.FC = () => {
             onClick={() => setPortalSection('system_controls')}
             className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all ${
               portalSection === 'system_controls'
-                ? 'bg-rose-600 text-white shadow-sm'
+                ? 'bg-rose-600 text-white shadow-xs'
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
@@ -359,27 +404,26 @@ export const MasterAdminPortal: React.FC = () => {
         <MasterAdminSaaSPanel />
       ) : (
         <>
-      {/* Top Banner: Master Admin Identity */}
-      <div className="p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-rose-950 to-slate-900 text-white shadow-xl border border-rose-900/40 relative overflow-hidden">
-        <div className="absolute right-0 top-0 translate-x-12 -translate-y-8 w-64 h-64 bg-rose-600/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* Top Banner: Master Admin Identity (Clean Light Card) */}
+      <div className="p-5 sm:p-6 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-start space-x-3.5">
-            <div className="p-3 bg-rose-600/20 border border-rose-500/40 rounded-xl text-rose-400 shadow-inner">
-              <ShieldAlert className="w-8 h-8" />
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-600 shrink-0">
+              <ShieldAlert className="w-7 h-7" />
             </div>
             <div>
-              <div className="flex items-center space-x-2">
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase bg-rose-500/20 text-rose-300 border border-rose-500/30">
+              <div className="flex items-center flex-wrap gap-2">
+                <span className="px-2.5 py-0.5 rounded-md text-[10px] font-bold tracking-wider uppercase bg-rose-50 text-rose-700 border border-rose-200">
                   Master Control Portal
                 </span>
-                <span className="text-xs text-rose-200/80">
-                  Authorized User: <strong>{saasSession?.principal?.displayName || 'Master Admin'}</strong>
+                <span className="text-xs text-slate-500">
+                  Authorized User: <strong className="text-slate-800">{saasSession?.principal?.displayName || 'Master Admin'}</strong>
                 </span>
               </div>
-              <h2 className="text-xl md:text-2xl font-black tracking-tight mt-1">
+              <h2 className="text-lg md:text-xl font-extrabold text-slate-900 tracking-tight mt-1">
                 {language === 'bn' ? 'মাস্টার অ্যাডমিন এক্সেস কন্ট্রোল ও নোটিশ বোর্ড' : 'Master Admin RBAC Security & Broadcast Center'}
               </h2>
-              <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
+              <p className="text-xs text-slate-600 mt-1 max-w-2xl leading-relaxed">
                 {language === 'bn'
                   ? 'মাস্টার অ্যাডমিন হিসেবে আপনি এখান থেকে যেকোনো রোল বা সমগ্র সিস্টেমের এক্সেস বন্ধ (Disable) বা চালু (Enable) করতে পারবেন। এক্সেস বন্ধ করার কারণ লিখে দিলে সাধারণ ব্যবহারকারী ও সুপার অ্যাডমিন লগইন করার সময় সেই কারণটি দেখতে পাবেন।'
                   : 'As Platform Master Admin, you hold absolute authority to enable or disable access for any role or the entire ERP. The message you write below will be broadcasted to users on their login screen when access is denied.'}
@@ -388,17 +432,17 @@ export const MasterAdminPortal: React.FC = () => {
           </div>
 
           {/* Quick Actions */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               onClick={handleEnableAll}
-              className="px-3.5 py-2 text-xs font-bold rounded-xl bg-emerald-600/90 hover:bg-emerald-600 text-white transition-all shadow-md flex items-center space-x-1.5"
+              className="px-3.5 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-xs flex items-center space-x-1.5"
             >
               <Unlock className="w-3.5 h-3.5" />
               <span>{language === 'bn' ? 'সব চালু করুন' : 'Enable All'}</span>
             </button>
             <button
               onClick={handleDisableAll}
-              className="px-3.5 py-2 text-xs font-bold rounded-xl bg-rose-600/90 hover:bg-rose-600 text-white transition-all shadow-md flex items-center space-x-1.5"
+              className="px-3.5 py-2 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white transition-all shadow-xs flex items-center space-x-1.5"
             >
               <Lock className="w-3.5 h-3.5" />
               <span>{language === 'bn' ? 'সব বন্ধ করুন' : 'Lock All'}</span>

@@ -495,7 +495,7 @@ function AppContent() {
   if (activeRole === 'student' || activeRole === 'guardian') {
     return (
       <SaaSAccessGate>
-        <div className="min-h-screen bg-slate-100 flex flex-col">
+        <div className="min-h-screen bg-[#F1F5F9] flex flex-col">
           <Header
             onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
             activeTab={activeTab}
@@ -564,7 +564,7 @@ function AppContent() {
 
   return (
     <SaaSAccessGate>
-      <div className="flex h-screen bg-slate-100 overflow-hidden antialiased print:h-auto print:overflow-visible print:bg-white">
+      <div className="flex h-screen bg-[#F1F5F9] overflow-hidden antialiased print:h-auto print:overflow-visible print:bg-white">
         {/* Sidebar Navigation */}
         <Sidebar
           activeTab={activeTab}

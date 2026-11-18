@@ -33,6 +33,7 @@ import {
   isPublishedForStudents,
   isSuperAdminApprover,
 } from '../../utils/approvalWorkflow';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 
 interface RoutineViewProps {
   initialViewMode?: 'class' | 'teacher' | 'room';
@@ -447,12 +448,75 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
     return true;
   });
 
+  const routineLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'class',
+      label: language === 'bn' ? 'শ্রেণি অনুযায়ী' : 'By Class',
+      icon: CalendarDays,
+      color: 'blue',
+      active: viewMode === 'class',
+      onClick: () => setViewMode('class'),
+    },
+    {
+      id: 'teacher',
+      label: language === 'bn' ? 'শিক্ষক অনুযায়ী' : 'By Teacher',
+      icon: User,
+      color: 'green',
+      active: viewMode === 'teacher' && !(activeRole === 'teacher' && matchedTeacherStaff && selectedTeacher === matchedTeacherStaff.nameEn),
+      onClick: () => setViewMode('teacher'),
+    },
+    {
+      id: 'room',
+      label: language === 'bn' ? 'রুম অনুযায়ী' : 'By Room',
+      icon: Building,
+      color: 'sky',
+      active: viewMode === 'room',
+      onClick: () => setViewMode('room'),
+    },
+    ...(activeRole === 'teacher' && matchedTeacherStaff
+      ? [
+          {
+            id: 'my_routine',
+            label: language === 'bn' ? 'আমার রুটিন' : 'My Timetable',
+            icon: Clock,
+            color: 'amber' as const,
+            active: viewMode === 'teacher' && selectedTeacher === matchedTeacherStaff.nameEn,
+            onClick: () => {
+              setViewMode('teacher');
+              setSelectedTeacher(matchedTeacherStaff.nameEn);
+            },
+          },
+        ]
+      : []),
+    {
+      id: 'print_routine',
+      label: language === 'bn' ? 'রুটিন প্রিন্ট' : 'Print Routine',
+      icon: Printer,
+      color: 'purple',
+      onClick: () => setShowPrintModal(true),
+    },
+    ...(canEdit
+      ? [
+          {
+            id: 'add_period',
+            label: language === 'bn' ? 'পিরিয়ড যোগ' : 'Add Period',
+            icon: Plus,
+            color: 'red' as const,
+            onClick: handleOpenAddPeriod,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* Top Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="space-y-5">
+      {/* Sub-module Colorful Launcher Grid */}
+      <LauncherIconGrid items={routineLauncherItems} columns={5} />
+
+      {/* Clean Compact Header Bar */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">
+          <h2 className="text-base sm:text-lg font-bold text-slate-900">
             {language === 'bn' ? 'ক্লাস রুটিন ও সাপ্তাহিক সময়সূচি' : 'Class Routine & Weekly Timetable'}
           </h2>
           <p className="text-xs text-slate-500">
@@ -461,66 +525,12 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
               : 'Saturday to Thursday timetable with teacher & room conflict detection'}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {activeRole === 'teacher' && matchedTeacherStaff && (
-            <button
-              onClick={() => {
-                setViewMode('teacher');
-                setSelectedTeacher(matchedTeacherStaff.nameEn);
-              }}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors whitespace-nowrap ${
-                viewMode === 'teacher' && selectedTeacher === matchedTeacherStaff.nameEn
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-              }`}
-            >
-              <User className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'আমার ক্লাস রুটিন' : 'My Timetable'}</span>
-            </button>
-          )}
-          {/* View mode toggle */}
-          <div className="p-1 bg-slate-100 rounded-lg flex space-x-1 text-xs font-semibold">
-            <button
-              onClick={() => setViewMode('class')}
-              className={`px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
-                viewMode === 'class' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600'
-              }`}
-            >
-              {language === 'bn' ? 'শ্রেণি অনুযায়ী' : 'By Class'}
-            </button>
-            <button
-              onClick={() => setViewMode('teacher')}
-              className={`px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
-                viewMode === 'teacher' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600'
-              }`}
-            >
-              {language === 'bn' ? 'শিক্ষক অনুযায়ী' : 'By Teacher'}
-            </button>
-            <button
-              onClick={() => setViewMode('room')}
-              className={`px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
-                viewMode === 'room' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600'
-              }`}
-            >
-              {language === 'bn' ? 'রুম অনুযায়ী' : 'By Room'}
-            </button>
-          </div>
-
-          {/* Saturday Weekend / Working Day 1-Click Toggle */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <SaturdayOffToggle compact={true} />
-
-          <button
-            onClick={() => setShowPrintModal(true)}
-            className="flex items-center space-x-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 shadow-xs active:scale-95 transition-all"
-          >
-            <Printer className="w-4 h-4 text-blue-600" />
-            <span className="hidden sm:inline">{language === 'bn' ? 'রুটিন প্রিন্ট' : 'Print Timetable'}</span>
-          </button>
-
           {canEdit && (
             <button
               onClick={handleOpenAddPeriod}
-              className="flex items-center space-x-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs"
+              className="flex items-center space-x-1 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs"
             >
               <Plus className="w-4 h-4" />
               <span>{language === 'bn' ? 'পিরিয়ড যোগ করুন' : 'Add Period'}</span>

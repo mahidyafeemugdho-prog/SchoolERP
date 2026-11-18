@@ -16,6 +16,7 @@ import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 import { buildPrincipalSignatureHtml } from '../../utils/signatureHelper';
 import { canEditOrDeleteInvoice } from '../../utils/permissions';
 import { DigitInput } from '../common/DigitInput';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   Wallet,
   Search,
@@ -1730,188 +1731,176 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
     URL.revokeObjectURL(url);
   };
 
+  const feeLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'counter',
+      label: language === 'bn' ? 'ফি কাউন্টার' : 'Fee Desk',
+      icon: Wallet,
+      color: 'green',
+      active: activeTab === 'counter',
+      onClick: () => setActiveTab('counter'),
+    },
+    {
+      id: 'statement',
+      label: language === 'bn' ? 'স্টেটমেন্ট' : 'Statement',
+      icon: FileText,
+      color: 'sky',
+      active: activeTab === 'statement',
+      onClick: () => setActiveTab('statement'),
+    },
+    {
+      id: 'class_fees',
+      label: language === 'bn' ? 'শ্রেণিভিত্তিক ফি' : 'Class Rates',
+      icon: Layers,
+      color: 'blue',
+      active: activeTab === 'class_fees',
+      onClick: () => setActiveTab('class_fees'),
+    },
+    {
+      id: 'scheduled_fees',
+      label: language === 'bn' ? 'ফি শিডিউল' : 'Fee Deadlines',
+      icon: Clock,
+      color: 'amber',
+      active: activeTab === 'scheduled_fees',
+      onClick: () => setActiveTab('scheduled_fees'),
+    },
+    {
+      id: 'transport_fees',
+      label: language === 'bn' ? 'পরিবহন ফি' : 'Bus Fees',
+      icon: Bus,
+      color: 'teal',
+      active: activeTab === 'transport_fees',
+      onClick: () => setActiveTab('transport_fees'),
+    },
+    {
+      id: 'online_approvals',
+      label: language === 'bn' ? 'অনলাইন অনুমোদন' : 'Online Approvals',
+      icon: Smartphone,
+      color: 'purple',
+      badge: pendingRequestsCount > 0 ? (language === 'bn' ? toBnNumber(pendingRequestsCount) : pendingRequestsCount) : undefined,
+      active: activeTab === 'online_approvals',
+      onClick: () => setActiveTab('online_approvals'),
+    },
+    {
+      id: 'collection',
+      label: language === 'bn' ? 'ইনভয়েস তালিকা' : 'Invoices',
+      icon: CreditCard,
+      color: 'sky',
+      active: activeTab === 'collection',
+      onClick: () => setActiveTab('collection'),
+    },
+    {
+      id: 'invoices',
+      label: language === 'bn' ? 'রসিদ রেজিস্ট্রি' : 'Receipts',
+      icon: Receipt,
+      color: 'green',
+      active: activeTab === 'invoices',
+      onClick: () => setActiveTab('invoices'),
+    },
+    {
+      id: 'dues',
+      label: language === 'bn' ? 'বকেয়া তালিকা' : 'Due List',
+      icon: AlertCircle,
+      color: 'red',
+      active: activeTab === 'dues',
+      onClick: () => setActiveTab('dues'),
+    },
+    {
+      id: 'expenses',
+      label: language === 'bn' ? 'ব্যয় ও ভাউচার' : 'Expenses',
+      icon: TrendingDown,
+      color: 'red',
+      active: activeTab === 'expenses',
+      onClick: () => setActiveTab('expenses'),
+    },
+    ...(canManage
+      ? [
+          {
+            id: 'payroll',
+            label: language === 'bn' ? 'স্টাফ বেতন' : 'Staff Payroll',
+            icon: DollarSign,
+            color: 'teal' as const,
+            active: activeTab === 'payroll',
+            onClick: () => setActiveTab('payroll'),
+          },
+        ]
+      : []),
+    {
+      id: 'cashbook',
+      label: language === 'bn' ? 'ক্যাশ বুক' : 'Cashbook',
+      icon: BookOpen,
+      color: 'amber',
+      active: activeTab === 'cashbook',
+      onClick: () => setActiveTab('cashbook'),
+    },
+    ...(canManage
+      ? [
+          {
+            id: 'mfs_settings',
+            label: language === 'bn' ? 'বিকাশ ও নগদ' : 'bKash/Nagad',
+            icon: Settings,
+            color: 'orange' as const,
+            onClick: () => setShowMfsModal(true),
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
-        <div>
-          <div className="flex items-center space-x-2">
-            <h2 className="text-xl font-bold text-slate-900">
-              {language === 'bn' ? 'ফি গ্রহণ ও প্রাতিষ্ঠানিক হিসাবরক্ষণ' : 'Fee Collection & Accounts Management'}
-            </h2>
-            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800">
-              {language === 'bn' ? 'মাল্টি-আইটেম ইনভয়েস' : 'Multi-Item Invoicing'}
-            </span>
+    <div className="space-y-5">
+      {/* Sub-module Colorful Launcher Grid */}
+      <LauncherIconGrid items={feeLauncherItems} columns={5} />
+
+      {/* Pending Online Payment Notification Strip */}
+      {pendingRequestsCount > 0 && activeTab !== 'online_approvals' && (
+        <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 bg-amber-100 text-amber-700 rounded-xl shrink-0">
+              <Smartphone className="w-4 h-4" />
+            </div>
+            <div className="text-xs">
+              <p className="font-bold text-amber-950">
+                অভিভাবকদের {toBnNumber(pendingRequestsCount)}টি অনলাইন ফি পেমেন্ট (বিকাশ / নগদ / রকেট) অনুমোদনের অপেক্ষায়!
+              </p>
+              <p className="text-[11px] text-amber-800 mt-0.5">
+                মোট পরিমাণ:{' '}
+                <strong>
+                  {formatTaka(
+                    onlineRequests
+                      .filter((r) => r.status === 'pending')
+                      .reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
+                  )}
+                </strong>{' '}
+                • TrxID যাচাই করে অনুমোদন দিন
+              </p>
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('online_approvals');
+              setOnlineStatusFilter('pending');
+            }}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors shrink-0"
+          >
+            অনলাইন অনুমোদন দেখুন &rarr;
+          </button>
+        </div>
+      )}
+
+      {/* Clean Compact Action Header */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden">
+        <div>
+          <h2 className="text-base sm:text-lg font-bold text-slate-900">
+            {language === 'bn' ? 'ফি গ্রহণ ও প্রাতিষ্ঠানিক হিসাবরক্ষণ' : 'Fee Collection & Accounts Management'}
+          </h2>
           <p className="text-xs text-slate-500 mt-0.5">
             {language === 'bn'
-              ? 'শিক্ষার্থী নির্বাচন করে 2-3 মাসের বেতন, পরীক্ষা ফি, বাসের ভাড়া একসাথে ইনভয়েস তৈরি ও ডুপ্লিকেট মানি রসিদ প্রিন্ট'
-              : 'Search & select students, combine 2-3 months tuition, exam, transport & other fees in 1 invoice with duplicate receipts'}
+              ? 'বহু-আইটেম ইনভয়েস, ডুপ্লিকেট মানি রসিদ, বকেয়া, ব্যয় ভাউচার ও ক্যাশ বুক'
+              : 'Multi-item invoicing, duplicate money receipts, dues, vouchers & cashbook'}
           </p>
         </div>
-
-        {/* Pending Online Payment Notification Banner across Fee sub-tabs */}
-        {pendingRequestsCount > 0 && activeTab !== 'online_approvals' && (
-          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-50 via-orange-50 to-rose-50 border border-amber-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden">
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-amber-500 text-white rounded-xl animate-pulse shrink-0">
-                <Smartphone className="w-4 h-4" />
-              </div>
-              <div className="text-xs">
-                <p className="font-black text-amber-950">
-                  অভিভাবকদের {toBnNumber(pendingRequestsCount)}টি অনলাইন ফি পেমেন্ট (বিকাশ / নগদ / রকেট) অনুমোদনের অপেক্ষায় রয়েছে!
-                </p>
-                <p className="text-[11px] text-amber-800 mt-0.5">
-                  মোট অপেক্ষমাণ পরিমাণ:{' '}
-                  <strong>
-                    {formatTaka(
-                      onlineRequests
-                        .filter((r) => r.status === 'pending')
-                        .reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
-                    )}
-                  </strong>{' '}
-                  • TrxID যাচাই করে অনুমোদন দিন
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('online_approvals');
-                setOnlineStatusFilter('pending');
-              }}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors shrink-0"
-            >
-              অনলাইন পেমেন্ট অনুমোদন দেখুন &rarr;
-            </button>
-          </div>
-        )}
-
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Subtabs */}
-          <div className="p-1 bg-slate-100 rounded-xl flex flex-wrap gap-1 text-xs font-semibold">
-            <button
-              onClick={() => setActiveTab('counter')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                activeTab === 'counter' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Wallet className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'ফি কাউন্টার' : 'Fee Desk'}</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('statement')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                activeTab === 'statement' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5 text-indigo-400" />
-              <span>{language === 'bn' ? 'শিক্ষার্থী স্টেটমেন্ট (জমা ও বকেয়া)' : 'Student Statement'}</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('class_fees')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                activeTab === 'class_fees' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'শ্রেণিভিত্তিক ফি' : 'Class Rates'}</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('scheduled_fees')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                activeTab === 'scheduled_fees' ? 'bg-white text-amber-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Clock className="w-3.5 h-3.5 text-amber-600" />
-              <span>{language === 'bn' ? 'ফি শিডিউল (শেষ তারিখ)' : 'Fee Deadlines'}</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('transport_fees')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                activeTab === 'transport_fees' ? 'bg-white text-emerald-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Bus className="w-3.5 h-3.5 text-emerald-600" />
-              <span>{language === 'bn' ? 'পরিবহন শিক্ষার্থী ও ফি' : 'Bus Users'}</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('online_approvals')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 relative ${
-                activeTab === 'online_approvals' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 bg-white'
-              }`}
-            >
-              <Smartphone className="w-3.5 h-3.5 text-pink-500" />
-              <span>{language === 'bn' ? 'অনলাইন পেমেন্ট অনুমোদন' : 'Online Approvals'}</span>
-              {pendingRequestsCount > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-rose-500 text-white animate-pulse">
-                  {toBnNumber(pendingRequestsCount)}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab('collection')}
-              className={`px-3 py-1.5 rounded-lg transition-colors ${
-                activeTab === 'collection' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {language === 'bn' ? 'ইনভয়েস তালিকা' : 'Invoices'}
-            </button>
-            <button
-              onClick={() => setActiveTab('invoices')}
-              className={`px-3 py-1.5 rounded-lg transition-colors ${
-                activeTab === 'invoices' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {language === 'bn' ? 'রসিদ রেজিস্ট্রি' : 'Receipts'}
-            </button>
-            <button
-              onClick={() => setActiveTab('dues')}
-              className={`px-3 py-1.5 rounded-lg transition-colors ${
-                activeTab === 'dues' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {language === 'bn' ? 'বকেয়া তালিকা' : 'Due List'}
-            </button>
-            <button
-              onClick={() => setActiveTab('expenses')}
-              className={`px-3 py-1.5 rounded-lg transition-colors ${
-                activeTab === 'expenses' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {language === 'bn' ? 'ব্যয় ও ভাউচার' : 'Expenses'}
-            </button>
-            {canManage && (
-              <button
-                onClick={() => setActiveTab('payroll')}
-                className={`px-3 py-1.5 rounded-lg transition-colors ${
-                  activeTab === 'payroll' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {language === 'bn' ? 'স্টাফ বেতন (Payroll)' : 'Staff Payroll'}
-              </button>
-            )}
-            <button
-              onClick={() => setActiveTab('cashbook')}
-              className={`px-3 py-1.5 rounded-lg transition-colors ${
-                activeTab === 'cashbook' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {language === 'bn' ? 'ক্যাশ বুক' : 'Cashbook'}
-            </button>
-          </div>
-
-          {canManage && (
-            <button
-              onClick={() => setShowMfsModal(true)}
-              className="flex items-center space-x-1.5 px-3 py-2 bg-gradient-to-r from-pink-600 to-orange-600 hover:from-pink-700 hover:to-orange-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all"
-              title="Configure school bKash and Nagad payment numbers and accounts"
-            >
-              <Smartphone className="w-4 h-4 text-amber-300" />
-              <span>{language === 'bn' ? 'বিকাশ ও নগদ সেটিংস' : 'bKash/Nagad Settings'}</span>
-            </button>
-          )}
-
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {canManage && (
             <button
               onClick={() => {
@@ -1924,11 +1913,10 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
               <span>{language === 'bn' ? 'ফি গ্রহণ করুন' : 'Collect Fee'}</span>
             </button>
           )}
-
           {canManage && activeTab === 'expenses' && (
             <button
               onClick={() => setShowExpenseModal(true)}
-              className="flex items-center space-x-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs"
+              className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
             >
               <Plus className="w-4 h-4" />
               <span>{language === 'bn' ? 'নতুন ভাউচার' : 'New Voucher'}</span>

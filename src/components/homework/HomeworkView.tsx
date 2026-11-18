@@ -15,6 +15,7 @@ import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { compareStudentsByRoll } from '../../utils/studentSort';
 import { getLocalCalendarDateString } from '../../utils/homeworkPortal';
 import { DigitInput } from '../common/DigitInput';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   FileCheck,
   Search,
@@ -993,101 +994,95 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
   ]);
 
 
+  const pendingReviewCount = submissions.filter(
+    (s) => s.status === 'ai_evaluated' || s.status === 'review_required'
+  ).length;
+
+  const homeworkLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'assignments',
+      label: language === 'bn' ? 'বাড়ির কাজ তালিকা' : 'Assignments',
+      icon: BookOpen,
+      color: 'blue',
+      active: activeTab === 'assignments',
+      onClick: () => setActiveTab('assignments'),
+    },
+    {
+      id: 'student_submissions',
+      label: language === 'bn' ? 'শিক্ষার্থী সাবমিশন' : 'Submissions',
+      icon: Upload,
+      color: 'green',
+      active: activeTab === 'student_submissions',
+      onClick: () => setActiveTab('student_submissions'),
+    },
+    ...(canReview
+      ? [
+          {
+            id: 'teacher_review',
+            label: language === 'bn' ? 'AI রিভিউ ও অনুমোদন' : 'AI Review',
+            icon: Sparkles,
+            color: 'purple' as const,
+            badge: pendingReviewCount > 0 ? pendingReviewCount : undefined,
+            active: activeTab === 'teacher_review',
+            onClick: () => setActiveTab('teacher_review'),
+          },
+        ]
+      : []),
+    {
+      id: 'reports',
+      label: language === 'bn' ? 'রিপোর্ট ও বিশ্লেষণ' : 'Reports',
+      icon: BarChart3,
+      color: 'amber',
+      active: activeTab === 'reports',
+      onClick: () => setActiveTab('reports'),
+    },
+    ...(canCreate
+      ? [
+          {
+            id: 'create_hw',
+            label: language === 'bn' ? 'নতুন বাড়ির কাজ' : 'New Homework',
+            icon: Plus,
+            color: 'red' as const,
+            onClick: handleOpenCreate,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
-        <div>
-          <div className="flex items-center space-x-2.5">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md">
-              <FileCheck className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                <span>{language === 'bn' ? 'স্মার্ট হোমওয়ার্ক ও এআই মূল্যায়ন' : 'AI Smart Homework & Evaluation'}</span>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                  <Sparkles className="w-3 h-3 mr-1 text-indigo-600" />
-                  Gemini AI Evaluator
-                </span>
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                {language === 'bn'
-                  ? 'হস্তলিখিত খাতার ছবি থেকে স্বয়ংক্রিয় এআই নম্বর ও শিক্ষকের এক-ক্লিকে অনুমোদন ব্যবস্থা'
-                  : 'Multimodal AI grading of handwritten homework with one-click teacher bulk approval'}
-              </p>
-            </div>
+    <div className="space-y-5">
+      {/* Sub-module Colorful Launcher Grid */}
+      <LauncherIconGrid items={homeworkLauncherItems} columns={5} />
+
+      {/* Clean Compact Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+        <div className="flex items-center space-x-3">
+          <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-700 shrink-0">
+            <FileCheck className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-base sm:text-lg font-bold text-slate-900">
+              {language === 'bn' ? 'স্মার্ট হোমওয়ার্ক ও এআই মূল্যায়ন' : 'AI Smart Homework & Evaluation'}
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {language === 'bn'
+                ? 'হস্তলিখিত খাতার ছবি থেকে স্বয়ংক্রিয় এআই নম্বর ও শিক্ষকের এক-ক্লিকে অনুমোদন ব্যবস্থা'
+                : 'Multimodal AI grading of handwritten homework with one-click teacher bulk approval'}
+            </p>
           </div>
         </div>
 
         {canCreate && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handleOpenCreate}
-              className="flex items-center space-x-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors"
+              className="flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
             >
               <Plus className="w-4 h-4" />
-              <span>{language === 'bn' ? '+ নতুন বাড়ির কাজ দিন' : 'Create Homework'}</span>
+              <span>{language === 'bn' ? 'নতুন বাড়ির কাজ দিন' : 'Create Homework'}</span>
             </button>
           </div>
         )}
-      </div>
-
-      {/* Sub Tabs Navigation */}
-      <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-200/60 rounded-xl max-w-fit">
-        <button
-          onClick={() => setActiveTab('assignments')}
-          className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-            activeTab === 'assignments'
-              ? 'bg-white text-blue-700 shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <BookOpen className="w-3.5 h-3.5" />
-          <span>{language === 'bn' ? 'বাড়ির কাজের তালিকা (Assignments)' : 'Assignments'}</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('student_submissions')}
-          className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-            activeTab === 'student_submissions'
-              ? 'bg-white text-blue-700 shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Upload className="w-3.5 h-3.5" />
-          <span>{language === 'bn' ? 'শিক্ষার্থী সাবমিশন (Student Upload)' : 'Student Submissions'}</span>
-        </button>
-
-        {canReview && (
-          <button
-            onClick={() => setActiveTab('teacher_review')}
-            className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-              activeTab === 'teacher_review'
-                ? 'bg-white text-indigo-700 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-            <span>{language === 'bn' ? 'শিক্ষক রিভিউ ও এআই অনুমোদন (Review & Approval)' : 'AI Review & Approval'}</span>
-            {submissions.filter((s) => s.status === 'ai_evaluated' || s.status === 'review_required').length > 0 && (
-              <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] flex items-center justify-center font-bold">
-                {submissions.filter((s) => s.status === 'ai_evaluated' || s.status === 'review_required').length}
-              </span>
-            )}
-          </button>
-        )}
-
-        <button
-          onClick={() => setActiveTab('reports')}
-          className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-            activeTab === 'reports'
-              ? 'bg-white text-blue-700 shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <BarChart3 className="w-3.5 h-3.5" />
-          <span>{language === 'bn' ? 'হোমওয়ার্ক রিপোর্ট ও বিশ্লেষণ (Reports)' : 'Reports & Analytics'}</span>
-        </button>
       </div>
 
       {/* Notification Banner */}

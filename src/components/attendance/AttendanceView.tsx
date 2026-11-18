@@ -42,6 +42,7 @@ import { ClassTimingsTab } from './ClassTimingsTab';
 import { SaturdayOffToggle } from '../common/SaturdayOffToggle';
 import { resolveTeacherStaffProfile } from '../../utils/teacherResolver';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 
 export type AttendanceSubTab =
   | 'daily'
@@ -578,127 +579,117 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({ initialSubTab, j
     };
   };
 
+  const attendanceLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'daily',
+      label: language === 'bn' ? 'দৈনিক রোল কল' : 'Daily Roll Call',
+      icon: Calendar,
+      color: 'green',
+      active: activeTab === 'daily',
+      onClick: () => setActiveTab('daily'),
+    },
+    ...(activeRole !== 'teacher'
+      ? [
+          {
+            id: 'qr_scanner',
+            label: language === 'bn' ? 'QR + ফেস স্ক্যান' : 'QR + Face Scan',
+            icon: QrCode,
+            color: 'sky' as const,
+            active: activeTab === 'qr_scanner',
+            onClick: () => setActiveTab('qr_scanner'),
+          },
+          {
+            id: 'qr_id_cards',
+            label: language === 'bn' ? 'QR আইডি কার্ড' : 'QR ID Cards',
+            icon: FileBadge,
+            color: 'blue' as const,
+            active: activeTab === 'qr_id_cards',
+            onClick: () => setActiveTab('qr_id_cards'),
+          },
+          {
+            id: 'timing_rules',
+            label: language === 'bn' ? 'সময় ও লেইট রুলস' : 'Class Timings',
+            icon: Clock,
+            color: 'amber' as const,
+            active: activeTab === 'timing_rules',
+            onClick: () => setActiveTab('timing_rules'),
+          },
+        ]
+      : []),
+    {
+      id: 'monthly_sheet',
+      label: language === 'bn' ? 'মাসিক শিট' : 'Monthly Sheet',
+      icon: FileText,
+      color: 'red',
+      active: activeTab === 'monthly_sheet',
+      onClick: () => setActiveTab('monthly_sheet'),
+    },
+    {
+      id: 'student_report',
+      label: language === 'bn' ? 'শিক্ষার্থী কার্ড' : 'Student Report',
+      icon: User,
+      color: 'purple',
+      active: activeTab === 'student_report',
+      onClick: () => setActiveTab('student_report'),
+    },
+    {
+      id: 'period_summary',
+      label: language === 'bn' ? 'উপস্থিতি বিশ্লেষণ' : 'Periodic Summary',
+      icon: TrendingUp,
+      color: 'teal',
+      active: activeTab === 'period_summary',
+      onClick: () => setActiveTab('period_summary'),
+    },
+    ...(canViewSelfAttendanceTab
+      ? [
+          {
+            id: 'my_attendance',
+            label: language === 'bn' ? 'আমার হাজিরা' : 'My Attendance',
+            icon: CheckCircle2,
+            color: 'green' as const,
+            active: activeTab === 'my_attendance',
+            onClick: () => setActiveTab('my_attendance'),
+          },
+        ]
+      : []),
+    ...(activeRole === 'super_admin' || activeRole === 'admin' || activeRole === 'master_admin'
+      ? [
+          {
+            id: 'staff',
+            label: language === 'bn' ? 'স্টাফ হাজিরা' : 'Staff Attendance',
+            icon: Users,
+            color: 'orange' as const,
+            active: activeTab === 'staff',
+            onClick: () => setActiveTab('staff'),
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* TOP HEADER & SUB-TABS */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 print:hidden">
+    <div className="space-y-5">
+      {/* Sub-module Colorful Launcher Grid */}
+      <LauncherIconGrid items={attendanceLauncherItems} columns={5} />
+
+      {/* Clean Compact Header & Actions */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3 print:hidden">
         <div>
-          <h2 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
+          <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center space-x-2">
             <CalendarCheck2 className="w-5 h-5 text-blue-600" />
             <span>{language === 'bn' ? 'হাজিরা খাতা ও উপস্থিতি বিশ্লেষণ' : 'Attendance Register & Periodic Reports'}</span>
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
             {language === 'bn'
-              ? 'দৈনিক রোল কল, মাসিক মাস্টার হাজিরা শিট, শিক্ষার্থীভিত্তিক উপস্থিতি কার্ড এবং অনুপস্থিতদের SMS নোটিফিকেশন'
-              : 'Daily roll call, weekly/monthly/yearly reports, master register sheets & printable student attendance cards'}
+              ? 'দৈনিক রোল কল, মাসিক মাস্টার হাজিরা শিট, শিক্ষার্থীভিত্তিক উপস্থিতি কার্ড এবং SMS নোটিফিকেশন'
+              : 'Daily roll call, weekly/monthly/yearly reports, master register sheets & printable attendance cards'}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Main Navigation Sub-tabs */}
-          <div className="p-1 bg-slate-100 rounded-xl flex flex-wrap gap-1 text-xs font-semibold">
-            <button
-              onClick={() => setActiveTab('daily')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                activeTab === 'daily' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Calendar className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'দৈনিক রোল কল' : 'Daily Roll Call'}</span>
-            </button>
-            {activeRole !== 'teacher' && (
-              <>
-                <button
-                  onClick={() => setActiveTab('qr_scanner')}
-                  className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                    activeTab === 'qr_scanner'
-                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-xs font-bold'
-                      : 'text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100 font-bold'
-                  }`}
-                >
-                  <QrCode className="w-3.5 h-3.5" />
-                  <span>{language === 'bn' ? 'অটো QR + ফেস স্ক্যানার' : 'Auto QR + Face Scanner'}</span>
-                </button>
-                <button
-                  onClick={() => setActiveTab('qr_id_cards')}
-                  className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                    activeTab === 'qr_id_cards' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <FileBadge className="w-3.5 h-3.5" />
-                  <span>{language === 'bn' ? 'কিউআর আইডি কার্ড (ID Cards)' : 'QR ID Cards'}</span>
-                </button>
-                <button
-                  onClick={() => setActiveTab('timing_rules')}
-                  className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                    activeTab === 'timing_rules'
-                      ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-xs font-bold'
-                      : 'text-amber-800 bg-amber-50 hover:bg-amber-100 font-bold'
-                  }`}
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>{language === 'bn' ? 'শ্রেণির সময় ও লেইট রুলস' : 'Class Timings'}</span>
-                </button>
-              </>
-            )}
-            <button
-              onClick={() => setActiveTab('monthly_sheet')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                activeTab === 'monthly_sheet' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'মাসিক শিট' : 'Monthly Sheet'}</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('student_report')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                activeTab === 'student_report' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <User className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'শিক্ষার্থী হাজিরা কার্ড' : 'Student Report Card'}</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('period_summary')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                activeTab === 'period_summary' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'উপস্থিতি বিশ্লেষণ' : 'Periodic Summary'}</span>
-            </button>
-            {canViewSelfAttendanceTab && (
-              <button
-                onClick={() => setActiveTab('my_attendance')}
-                className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                  activeTab === 'my_attendance' ? 'bg-white text-blue-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <User className="w-3.5 h-3.5" />
-                <span>{language === 'bn' ? 'আমার হাজিরা (নিজস্ব)' : 'My Attendance'}</span>
-              </button>
-            )}
-            {(activeRole === 'super_admin' || activeRole === 'admin' || activeRole === 'master_admin') && (
-              <button
-                onClick={() => setActiveTab('staff')}
-                className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                  activeTab === 'staff' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" />
-                <span>{language === 'bn' ? 'স্টাফ হাজিরা' : 'Staff'}</span>
-              </button>
-            )}
-          </div>
-
-          {/* 1-Click Saturday Weekend / Open Day Switch */}
           <SaturdayOffToggle compact={true} />
-
-          {/* Quick Print Button */}
           <button
             onClick={() => window.print()}
-            className="flex items-center space-x-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 shadow-xs transition-colors"
+            className="flex items-center space-x-1.5 px-3.5 py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 shadow-xs transition-colors"
           >
             <Printer className="w-4 h-4 text-blue-600" />
             <span>{language === 'bn' ? 'প্রিন্ট' : 'Print'}</span>

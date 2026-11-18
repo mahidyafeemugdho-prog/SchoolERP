@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { SchoolProfile, SuperAdminCredentials } from '../../types';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   Settings as SettingsIcon,
   Building2,
@@ -282,13 +283,57 @@ export const SettingsView: React.FC = () => {
     reader.readAsText(file);
   };
 
+  const settingsLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'sync_now',
+      label: language === 'bn' ? 'ক্লাউড সিঙ্ক' : 'Cloud Sync',
+      icon: Cloud,
+      color: 'blue',
+      onClick: async () => {
+        await syncNow();
+        setSaveSuccess(language === 'bn' ? 'ক্লাউড ডেটাবেজের সাথে সফলভাবে লাইভ সিঙ্ক সম্পন্ন হয়েছে!' : 'Synced successfully with Firestore Cloud Database!');
+        setTimeout(() => setSaveSuccess(''), 3000);
+      },
+    },
+    {
+      id: 'export_json',
+      label: language === 'bn' ? 'ব্যাকআপ ডাউনলোড' : 'JSON Backup',
+      icon: Download,
+      color: 'green',
+      onClick: handleExportBackup,
+    },
+    {
+      id: 'account_creds',
+      label: language === 'bn' ? 'অ্যাকাউন্ট নিরাপত্তা' : 'Account Access',
+      icon: KeyRound,
+      color: 'purple',
+      onClick: () => {
+        setCredsModalTab('my_account');
+        setShowCredsModal(true);
+      },
+    },
+    {
+      id: 'manage_users',
+      label: language === 'bn' ? 'রোল ও পাসওয়ার্ড' : 'Role Access',
+      icon: ShieldCheck,
+      color: 'amber',
+      onClick: () => {
+        setCredsModalTab('manage_users');
+        setShowCredsModal(true);
+      },
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-bold text-slate-900">
+    <div className="space-y-5">
+      {/* App-Launcher Icon Tile Grid */}
+      <LauncherIconGrid items={settingsLauncherItems} columns={4} compact />
+
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5">
+        <h2 className="text-lg font-extrabold text-slate-900">
           {language === 'bn' ? 'বিদ্যালয় সেটিংস ও ক্লাউড ডেটাবেজ' : 'School Settings & Cloud Database'}
         </h2>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-slate-500 mt-0.5">
           {language === 'bn'
             ? 'প্রতিষ্ঠান পরিচিতি, ইআইআইএন নম্বর, ফায়ারস্টোর ক্লাউড সিঙ্ক এবং ব্যাকআপ ব্যবস্থাপনা'
             : 'Institutional profile, EIIN credentials, Firestore cloud sync, and JSON backup/restore'}

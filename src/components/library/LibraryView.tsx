@@ -4,8 +4,10 @@ import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { Book, BookIssue } from '../../types';
 import { DigitInput } from '../common/DigitInput';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   Library as LibraryIcon,
+  BookOpen,
   Search,
   Plus,
   BookMarked,
@@ -168,62 +170,84 @@ export const LibraryView: React.FC = () => {
     return b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q) || b.isbn.includes(q);
   });
 
+  const libraryLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'catalog',
+      label: language === 'bn' ? 'বই ক্যাটালগ' : 'Book Catalog',
+      icon: BookOpen,
+      color: 'blue',
+      active: activeTab === 'catalog',
+      badge: books.length,
+      onClick: () => setActiveTab('catalog'),
+    },
+    {
+      id: 'issues',
+      label: language === 'bn' ? 'ইস্যু রেজিস্টার' : 'Circulation & Issues',
+      icon: Clock,
+      color: 'amber',
+      active: activeTab === 'issues',
+      badge: issues.filter((i) => i.status === 'Issued' || i.status === 'Overdue').length || undefined,
+      onClick: () => setActiveTab('issues'),
+    },
+    ...(canManage
+      ? [
+          {
+            id: 'issue_book',
+            label: language === 'bn' ? 'বই ইস্যু' : 'Issue Book',
+            icon: BookMarked,
+            color: 'green' as const,
+            onClick: () => setShowIssueModal(true),
+          },
+          {
+            id: 'add_book',
+            label: language === 'bn' ? 'নতুন বই যোগ' : 'Add Book',
+            icon: Plus,
+            color: 'purple' as const,
+            onClick: handleOpenAddBook,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* App-Launcher Icon Tile Grid */}
+      <LauncherIconGrid items={libraryLauncherItems} columns={4} compact />
+
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">
+          <h2 className="text-lg font-extrabold text-slate-900">
             {language === 'bn' ? 'গ্রন্থাগার ও পাঠাগার ব্যবস্থাপনা (Library)' : 'Library Management System'}
           </h2>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500 mt-0.5">
             {language === 'bn'
               ? 'বই ক্যাটালগ, বই সংযোজন, সম্পাদনা, মুছে ফেলা, ইস্যু ও রিটার্ন রেজিস্টার'
               : 'Book catalog, circulation, borrowing logs, and overdue fine tracking'}
           </p>
         </div>
-        <div className="flex items-center space-x-2">
-          <div className="p-1 bg-slate-100 rounded-lg flex space-x-1 text-xs font-semibold">
+        {canManage && (
+          <div className="flex items-center space-x-2">
             <button
-              onClick={() => setActiveTab('catalog')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${
-                activeTab === 'catalog' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600'
-              }`}
+              onClick={() => setShowIssueModal(true)}
+              className="flex items-center space-x-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs"
             >
-              {language === 'bn' ? 'বই ক্যাটালগ' : 'Book Catalog'}
+              <BookMarked className="w-4 h-4" />
+              <span>{language === 'bn' ? 'বই ইস্যু' : 'Issue Book'}</span>
             </button>
             <button
-              onClick={() => setActiveTab('issues')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${
-                activeTab === 'issues' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600'
-              }`}
+              onClick={handleOpenAddBook}
+              className="flex items-center space-x-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs"
             >
-              {language === 'bn' ? 'ইস্যু ও জমা রেজিস্টার' : 'Circulation & Issues'}
+              <Plus className="w-4 h-4" />
+              <span>{language === 'bn' ? 'নতুন বই যোগ' : 'Add Book'}</span>
             </button>
           </div>
-          {canManage && (
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => setShowIssueModal(true)}
-                className="flex items-center space-x-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs"
-              >
-                <BookMarked className="w-4 h-4" />
-                <span>{language === 'bn' ? 'বই ইস্যু' : 'Issue Book'}</span>
-              </button>
-              <button
-                onClick={handleOpenAddBook}
-                className="flex items-center space-x-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs"
-              >
-                <Plus className="w-4 h-4" />
-                <span>{language === 'bn' ? 'নতুন বই যোগ' : 'Add Book'}</span>
-              </button>
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Search */}
-      <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-xs text-xs">
+      <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs text-xs">
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
           <input

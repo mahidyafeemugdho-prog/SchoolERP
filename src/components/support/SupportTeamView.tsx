@@ -18,11 +18,13 @@ import {
 } from '../../services/supportService';
 import { compressSupportScreenshot } from '../../utils/storageHelper';
 import { resolveSchoolDisplayName } from '../../utils/schoolNameResolver';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   ArrowLeft,
   CheckCircle2,
   Clock,
   Headphones,
+  Layers,
   ImagePlus,
   Loader2,
   MessageSquarePlus,
@@ -407,10 +409,66 @@ export const SupportTeamView: React.FC<SupportTeamViewProps> = ({ embedded = fal
     }
   };
 
+  const supportLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'all',
+      label: language === 'bn' ? 'সকল টিকেট' : 'All Tickets',
+      icon: Layers,
+      color: 'blue',
+      active: statusFilter === 'all',
+      badge: tickets.length || undefined,
+      onClick: () => setStatusFilter('all'),
+    },
+    {
+      id: 'open',
+      label: language === 'bn' ? 'অপেক্ষমাণ' : 'Open',
+      icon: Clock,
+      color: 'amber',
+      active: statusFilter === 'open',
+      badge: tickets.filter((t) => t.status === 'open').length || undefined,
+      onClick: () => setStatusFilter('open'),
+    },
+    {
+      id: 'replied',
+      label: language === 'bn' ? 'উত্তর পাওয়া' : 'Replied',
+      icon: Headphones,
+      color: 'teal',
+      active: statusFilter === 'replied',
+      badge: tickets.filter((t) => t.status === 'replied').length || undefined,
+      onClick: () => setStatusFilter('replied'),
+    },
+    {
+      id: 'resolved',
+      label: language === 'bn' ? 'সমাধান' : 'Resolved',
+      icon: CheckCircle2,
+      color: 'purple',
+      active: statusFilter === 'resolved',
+      badge: tickets.filter((t) => t.status === 'resolved').length || undefined,
+      onClick: () => setStatusFilter('resolved'),
+    },
+    ...(!isMasterAdmin
+      ? [
+          {
+            id: 'new_ticket',
+            label: language === 'bn' ? 'নতুন সমস্যা' : 'New Request',
+            icon: MessageSquarePlus,
+            color: 'green' as const,
+            onClick: () => {
+              setErrorMsg(null);
+              setShowNewModal(true);
+            },
+          },
+        ]
+      : []),
+  ];
+
   return (
     <div className={embedded ? 'space-y-4' : 'space-y-5'}>
+      {/* App-Launcher Icon Tile Grid */}
+      <LauncherIconGrid items={supportLauncherItems} columns={5} compact />
+
       {/* Page Header */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-start space-x-3">
           <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 shrink-0">
             <Headphones className="w-5 h-5" />
@@ -529,7 +587,7 @@ export const SupportTeamView: React.FC<SupportTeamViewProps> = ({ embedded = fal
                     onClick={() => setStatusFilter(st)}
                     className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors ${
                       active
-                        ? 'bg-slate-900 text-white border-slate-900'
+                        ? 'bg-blue-600 text-white border-blue-600'
                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
                     }`}
                   >

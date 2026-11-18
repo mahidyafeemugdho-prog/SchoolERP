@@ -9,8 +9,12 @@ import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { compareStudentsByClassAndRoll } from '../../utils/studentSort';
 import { LiveCameraModal } from '../common/LiveCameraModal';
 import { buildPrincipalSignatureHtml } from '../../utils/signatureHelper';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   Search,
+  Users,
+  Sun,
+  Moon,
   Filter,
   Plus,
   Download,
@@ -654,15 +658,66 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
     document.body.removeChild(link);
   };
 
+  const studentLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'all',
+      label: language === 'bn' ? 'সকল শিক্ষার্থী' : 'All Students',
+      icon: Users,
+      color: 'blue',
+      active: selectedShift === 'all',
+      badge: students.length,
+      onClick: () => setSelectedShift('all'),
+    },
+    {
+      id: 'morning',
+      label: language === 'bn' ? 'প্রভাতি শিফট' : 'Morning Shift',
+      icon: Sun,
+      color: 'amber',
+      active: selectedShift === 'Morning',
+      badge: students.filter((s) => s.shift === 'Morning').length || undefined,
+      onClick: () => setSelectedShift('Morning'),
+    },
+    {
+      id: 'day',
+      label: language === 'bn' ? 'দিবা শিফট' : 'Day Shift',
+      icon: Moon,
+      color: 'indigo',
+      active: selectedShift === 'Day',
+      badge: students.filter((s) => s.shift === 'Day').length || undefined,
+      onClick: () => setSelectedShift('Day'),
+    },
+    {
+      id: 'csv',
+      label: language === 'bn' ? 'CSV টেমপ্লেট' : 'CSV Template',
+      icon: Download,
+      color: 'teal',
+      onClick: handleDownloadCsvTemplate,
+    },
+    ...(canEdit
+      ? [
+          {
+            id: 'add',
+            label: language === 'bn' ? 'নতুন ভর্তি' : 'New Admission',
+            icon: Plus,
+            color: 'green' as const,
+            onClick: handleOpenAdd,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* App-Launcher Icon Tile Grid */}
+      <LauncherIconGrid items={studentLauncherItems} columns={5} compact />
+
       {/* Top Action Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">
+          <h2 className="text-lg font-extrabold text-slate-900">
             {language === 'bn' ? 'শিক্ষার্থী তালিকা ও ভর্তি রেজিস্টার' : 'Student Directory & Admissions'}
           </h2>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500 mt-0.5">
             {language === 'bn'
               ? `মোট ${toBnNumber(students.length)} জন শিক্ষার্থী প্লে থেকে দশম শ্রেণিতে ভর্তি রয়েছে`
               : `Total ${students.length} students enrolled from Nursery to Class 10`}
@@ -671,7 +726,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleDownloadCsvTemplate}
-            className="flex items-center space-x-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors"
+            className="flex items-center space-x-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors"
           >
             <Download className="w-4 h-4 text-slate-500" />
             <span>{language === 'bn' ? 'CSV টেমপ্লেট' : 'CSV Template'}</span>
@@ -679,7 +734,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
           {canEdit && (
             <button
               onClick={handleOpenAdd}
-              className="flex items-center space-x-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-xs"
+              className="flex items-center space-x-1.5 px-3.5 py-2 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-xs"
             >
               <Plus className="w-4 h-4" />
               <span>{language === 'bn' ? 'নতুন শিক্ষার্থী ভর্তি' : 'New Admission'}</span>
@@ -689,7 +744,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
       </div>
 
       {/* Filter and Search Controls */}
-      <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-xs">
+      <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {/* Search box */}
           <div className="relative md:col-span-2">

@@ -13,8 +13,10 @@ import {
   ID_CARD_THEME_OPTIONS,
   IDCardTheme,
 } from '../common/ModernIDCardFronts';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   UserPlus,
+  Users,
   Search,
   Plus,
   CheckCircle,
@@ -283,16 +285,69 @@ export const AdmissionsView: React.FC = () => {
     return true;
   });
 
+  const admissionLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'all',
+      label: language === 'bn' ? 'সকল আবেদন' : 'All Enquiries',
+      icon: Users,
+      color: 'blue',
+      active: statusFilter === 'all',
+      badge: enquiries.length,
+      onClick: () => setStatusFilter('all'),
+    },
+    {
+      id: 'Pending',
+      label: language === 'bn' ? 'অপেক্ষমাণ' : 'Pending',
+      icon: Clock,
+      color: 'amber',
+      active: statusFilter === 'Pending',
+      badge: enquiries.filter((e) => e.status === 'Pending').length || undefined,
+      onClick: () => setStatusFilter('Pending'),
+    },
+    {
+      id: 'Approved',
+      label: language === 'bn' ? 'অনুমোদিত' : 'Approved',
+      icon: CheckCircle,
+      color: 'teal',
+      active: statusFilter === 'Approved',
+      badge: enquiries.filter((e) => e.status === 'Approved').length || undefined,
+      onClick: () => setStatusFilter('Approved'),
+    },
+    {
+      id: 'Enrolled',
+      label: language === 'bn' ? 'ভর্তি সম্পন্ন' : 'Enrolled',
+      icon: GraduationCap,
+      color: 'purple',
+      active: statusFilter === 'Enrolled',
+      badge: enquiries.filter((e) => e.status === 'Enrolled').length || undefined,
+      onClick: () => setStatusFilter('Enrolled'),
+    },
+    ...(canManage
+      ? [
+          {
+            id: 'new',
+            label: language === 'bn' ? 'নতুন আবেদন' : 'New Admission',
+            icon: UserPlus,
+            color: 'green' as const,
+            onClick: handleOpenAddModal,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* App-Launcher Icon Tile Grid */}
+      <LauncherIconGrid items={admissionLauncherItems} columns={5} compact />
+
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center space-x-2">
-            <h2 className="text-xl font-bold text-slate-900">
+            <h2 className="text-lg font-extrabold text-slate-900">
               {language === 'bn' ? 'ভর্তি ও শিক্ষার্থী নিবন্ধন ডেস্ক' : 'Admissions & Enquiries Desk'}
             </h2>
-            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800">
+            <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
               {language === 'bn' ? 'অটো আইডি ও ছবি' : 'Auto ID & Photo'}
             </span>
           </div>

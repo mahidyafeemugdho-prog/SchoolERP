@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { SaturdayOffToggle } from '../common/SaturdayOffToggle';
 import { DigitInput } from '../common/DigitInput';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 
 export const AcademicView: React.FC = () => {
   const { activeRole } = useAuth();
@@ -420,60 +421,97 @@ export const AcademicView: React.FC = () => {
     return s.group === subjectGroupFilter;
   });
 
+  const academicLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'classes',
+      label: language === 'bn' ? 'শ্রেণি ও শাখা' : 'Classes & Sections',
+      icon: Layers,
+      color: 'blue',
+      badge: classes.length,
+      active: activeTab === 'classes',
+      onClick: () => setActiveTab('classes'),
+    },
+    {
+      id: 'subjects',
+      label: language === 'bn' ? 'বিষয় তালিকা' : 'Subject Catalog',
+      icon: BookOpen,
+      color: 'green',
+      badge: subjects.length,
+      active: activeTab === 'subjects',
+      onClick: () => setActiveTab('subjects'),
+    },
+    {
+      id: 'holidays',
+      label: language === 'bn' ? 'ছুটি ও অবকাশ' : 'Holidays',
+      icon: Palmtree,
+      color: 'amber',
+      badge: holidays.length,
+      active: activeTab === 'holidays',
+      onClick: () => setActiveTab('holidays'),
+    },
+    ...(canEdit
+      ? [
+          {
+            id: 'add_action',
+            label:
+              activeTab === 'classes'
+                ? language === 'bn'
+                  ? 'নতুন শ্রেণি'
+                  : 'Add Class'
+                : activeTab === 'subjects'
+                ? language === 'bn'
+                  ? 'নতুন বিষয়'
+                  : 'Add Subject'
+                : language === 'bn'
+                ? 'ছুটি ঘোষণা'
+                : 'Add Holiday',
+            icon: Plus,
+            color: 'red' as const,
+            onClick:
+              activeTab === 'classes'
+                ? handleOpenAddClass
+                : activeTab === 'subjects'
+                ? handleOpenAddSubject
+                : handleOpenAddHoliday,
+          },
+          ...(activeTab === 'holidays'
+            ? [
+                {
+                  id: 'tomorrow_off',
+                  label: language === 'bn' ? 'আগামীকাল ছুটি' : 'Tomorrow Off',
+                  icon: Clock,
+                  color: 'purple' as const,
+                  onClick: handleDeclareTomorrowHoliday,
+                },
+              ]
+            : []),
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="space-y-5">
+      {/* Sub-module Colorful Launcher Grid */}
+      <LauncherIconGrid items={academicLauncherItems} columns={5} />
+
+      {/* Clean Compact Header */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">
+          <h2 className="text-base sm:text-lg font-bold text-slate-900">
             {language === 'bn' ? 'একাডেমিক কাঠামো ও শিক্ষাপঞ্জি' : 'Academic Structure & Curriculum'}
           </h2>
           <p className="text-xs text-slate-500">
             {language === 'bn'
-              ? 'প্লে / নার্সারি থেকে যেকোনো শ্রেণি সম্পাদনা, বিষয়সূচি ও 2-20 দিনের দীর্ঘ ছুটি ব্যবস্থাপনা'
-              : 'Edit class names (Play, Nurani, Class 1-10), manage subjects & multi-day holiday vacations'}
+              ? 'প্লে / নার্সারি থেকে যেকোনো শ্রেণি সম্পাদনা, বিষয়সূচি ও দীর্ঘ ছুটি ব্যবস্থাপনা'
+              : 'Edit class levels (Play, Nurani, Class 1-10), manage subjects & multi-day holiday vacations'}
           </p>
         </div>
 
-        {/* Tab switcher & Actions */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="p-1 bg-slate-100 rounded-xl flex space-x-1 text-xs font-semibold">
-            <button
-              onClick={() => setActiveTab('classes')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                activeTab === 'classes' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'শ্রেণি ও শাখা' : 'Classes & Sections'}</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('subjects')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                activeTab === 'subjects' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'বিষয় তালিকা' : 'Subject Catalog'}</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('holidays')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 ${
-                activeTab === 'holidays' ? 'bg-white text-amber-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Palmtree className="w-3.5 h-3.5 text-amber-500" />
-              <span>{language === 'bn' ? 'ছুটি ও অবকাশ' : 'School Holidays'}</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-100 text-amber-800">
-                {holidays.length}
-              </span>
-            </button>
-          </div>
-
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {canEdit && activeTab === 'classes' && (
             <button
               onClick={handleOpenAddClass}
-              className="flex items-center space-x-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+              className="flex items-center space-x-1 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
             >
               <Plus className="w-4 h-4" />
               <span>{language === 'bn' ? 'নতুন শ্রেণি যোগ' : 'Add Class'}</span>
@@ -483,7 +521,7 @@ export const AcademicView: React.FC = () => {
           {canEdit && activeTab === 'subjects' && (
             <button
               onClick={handleOpenAddSubject}
-              className="flex items-center space-x-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+              className="flex items-center space-x-1 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
             >
               <Plus className="w-4 h-4" />
               <span>{language === 'bn' ? 'বিষয় যোগ করুন' : 'Add Subject'}</span>
@@ -494,7 +532,7 @@ export const AcademicView: React.FC = () => {
             <div className="flex items-center space-x-2">
               <button
                 onClick={handleDeclareTomorrowHoliday}
-                className="flex items-center space-x-1 px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+                className="flex items-center space-x-1 px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
                 title="1-click: Set tomorrow as official school off"
               >
                 <Clock className="w-3.5 h-3.5" />
@@ -502,10 +540,10 @@ export const AcademicView: React.FC = () => {
               </button>
               <button
                 onClick={handleOpenAddHoliday}
-                className="flex items-center space-x-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+                className="flex items-center space-x-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
               >
                 <Plus className="w-4 h-4" />
-                <span>{language === 'bn' ? 'দীর্ঘ ছুটি ঘোষণা (2-20 দিন)' : 'Declare Vacation'}</span>
+                <span>{language === 'bn' ? 'দীর্ঘ ছুটি ঘোষণা' : 'Declare Vacation'}</span>
               </button>
             </div>
           )}

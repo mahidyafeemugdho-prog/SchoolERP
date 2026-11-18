@@ -17,6 +17,7 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { DigitInput } from '../common/DigitInput';
 import { parseLocaleNumber } from '../../utils/i18n';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   CreditCard,
   CheckCircle2,
@@ -301,11 +302,54 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
   const sub = previewMode && previewSubscription ? previewSubscription : saasSession?.subscription;
   const school = previewMode && previewSchool ? previewSchool : saasSession?.school;
 
+  const billingLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'status',
+      label: language === 'bn' ? 'বর্তমান প্ল্যান' : 'Current Plan',
+      icon: ShieldCheck,
+      color: 'blue',
+      active: true,
+      badge: sub ? (sub.isExpired ? 0 : `${sub.remainingDays}d`) : undefined,
+      onClick: () => {},
+    },
+    {
+      id: 'refresh',
+      label: language === 'bn' ? 'রিফ্রেশ স্ট্যাটাস' : 'Refresh Status',
+      icon: RefreshCw,
+      color: 'teal',
+      onClick: async () => {
+        await refreshSaasSession();
+        await loadData();
+      },
+    },
+    {
+      id: 'channels',
+      label: language === 'bn' ? 'বিকাশ / নগদ' : 'Payment Info',
+      icon: Smartphone,
+      color: 'purple',
+      onClick: () => {
+        document.getElementById('subscription-payment-channels')?.scrollIntoView({ behavior: 'smooth' });
+      },
+    },
+    {
+      id: 'plans',
+      label: language === 'bn' ? 'সাবস্ক্রিপশন প্ল্যান' : 'All Plans',
+      icon: CreditCard,
+      color: 'green',
+      badge: plans.length || undefined,
+      onClick: () => {
+        document.getElementById('subscription-payment-channels')?.scrollIntoView({ behavior: 'smooth' });
+      },
+    },
+  ];
+
   return (
-    <div className={compactMode ? 'space-y-5' : 'space-y-6'}>
+    <div className={compactMode ? 'space-y-5' : 'space-y-5'}>
+      {!compactMode && <LauncherIconGrid items={billingLauncherItems} columns={4} compact />}
+
       {/* Current Subscription Card */}
       {school && sub && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5">
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
             <div className="flex items-start space-x-3">
               <div className="p-2.5 rounded-xl bg-blue-50 text-blue-700 border border-blue-200">
@@ -409,17 +453,19 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
       {/* Payment Channels + Manual Submission Form */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Left: Plans & Payment Instructions */}
-        <div className="lg:col-span-5 space-y-4">
-          <div className="bg-slate-900 text-white rounded-2xl p-5 border border-slate-800 space-y-4">
+        <div id="subscription-payment-channels" className="lg:col-span-5 space-y-4">
+          <div className="bg-white text-slate-900 rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-4">
             <div className="flex items-center space-x-2">
-              <ShieldCheck className="w-5 h-5 text-emerald-400" />
-              <h3 className="text-sm font-bold">
+              <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <h3 className="text-sm font-extrabold text-slate-900">
                 {language === 'bn'
                   ? 'পেমেন্ট পাঠানোর মাধ্যমসমূহ'
                   : 'Official Payment Channels'}
               </h3>
             </div>
-            <p className="text-[11px] text-slate-300 leading-relaxed">
+            <p className="text-[11px] text-slate-600 leading-relaxed">
               {language === 'bn'
                 ? 'নিচের যেকোনো মাধ্যমে আপনার নির্বাচিত প্ল্যানের টাকা পাঠিয়ে ডান পাশের ফর্মে Transaction ID জমা দিন। মাস্টার অ্যাডমিন যাচাই করে অনুমোদন করলে সাবস্ক্রিপশন চালু হবে।'
                 : 'Send subscription fee to any channel below, then submit your Transaction ID. Subscriptions are activated only after Master Admin verification.'}
@@ -427,22 +473,22 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
 
             <div className="space-y-2.5 text-xs">
               {channels.bkash && (
-                <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-start justify-between gap-2">
+                <div className="p-3 rounded-xl bg-pink-50/70 border border-pink-200 flex items-start justify-between gap-2">
                   <div className="flex items-start space-x-2.5 min-w-0">
-                    <Smartphone className="w-4 h-4 text-pink-400 shrink-0 mt-0.5" />
+                    <Smartphone className="w-4 h-4 text-pink-600 shrink-0 mt-0.5" />
                     <div className="min-w-0">
-                      <div className="font-bold text-pink-300">bKash</div>
-                      <div className="font-mono text-slate-200 mt-0.5 break-all">{channels.bkash}</div>
+                      <div className="font-bold text-pink-700">bKash</div>
+                      <div className="font-mono font-bold text-slate-900 mt-0.5 break-all">{channels.bkash}</div>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => handleCopyChannel('bkash', channels.bkash)}
-                    className="shrink-0 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] font-semibold text-slate-200 flex items-center space-x-1"
+                    className="shrink-0 px-2 py-1 rounded-lg bg-white hover:bg-pink-100 border border-pink-200 text-[10px] font-semibold text-pink-700 flex items-center space-x-1"
                     title="Copy bKash Number"
                   >
                     {copiedChannel === 'bkash' ? (
-                      <Check className="w-3 h-3 text-emerald-400" />
+                      <Check className="w-3 h-3 text-emerald-600" />
                     ) : (
                       <Copy className="w-3 h-3" />
                     )}
@@ -452,22 +498,22 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
               )}
 
               {channels.nagad && (
-                <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-start justify-between gap-2">
+                <div className="p-3 rounded-xl bg-orange-50/70 border border-orange-200 flex items-start justify-between gap-2">
                   <div className="flex items-start space-x-2.5 min-w-0">
-                    <Smartphone className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
+                    <Smartphone className="w-4 h-4 text-orange-600 shrink-0 mt-0.5" />
                     <div className="min-w-0">
-                      <div className="font-bold text-orange-300">Nagad</div>
-                      <div className="font-mono text-slate-200 mt-0.5 break-all">{channels.nagad}</div>
+                      <div className="font-bold text-orange-700">Nagad</div>
+                      <div className="font-mono font-bold text-slate-900 mt-0.5 break-all">{channels.nagad}</div>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => handleCopyChannel('nagad', channels.nagad)}
-                    className="shrink-0 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] font-semibold text-slate-200 flex items-center space-x-1"
+                    className="shrink-0 px-2 py-1 rounded-lg bg-white hover:bg-orange-100 border border-orange-200 text-[10px] font-semibold text-orange-700 flex items-center space-x-1"
                     title="Copy Nagad Number"
                   >
                     {copiedChannel === 'nagad' ? (
-                      <Check className="w-3 h-3 text-emerald-400" />
+                      <Check className="w-3 h-3 text-emerald-600" />
                     ) : (
                       <Copy className="w-3 h-3" />
                     )}
@@ -477,22 +523,22 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
               )}
 
               {channels.rocket && (
-                <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-start justify-between gap-2">
+                <div className="p-3 rounded-xl bg-purple-50/70 border border-purple-200 flex items-start justify-between gap-2">
                   <div className="flex items-start space-x-2.5 min-w-0">
-                    <Smartphone className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+                    <Smartphone className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
                     <div className="min-w-0">
-                      <div className="font-bold text-purple-300">Rocket</div>
-                      <div className="font-mono text-slate-200 mt-0.5 break-all">{channels.rocket}</div>
+                      <div className="font-bold text-purple-700">Rocket</div>
+                      <div className="font-mono font-bold text-slate-900 mt-0.5 break-all">{channels.rocket}</div>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => handleCopyChannel('rocket', channels.rocket || '')}
-                    className="shrink-0 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] font-semibold text-slate-200 flex items-center space-x-1"
+                    className="shrink-0 px-2 py-1 rounded-lg bg-white hover:bg-purple-100 border border-purple-200 text-[10px] font-semibold text-purple-700 flex items-center space-x-1"
                     title="Copy Rocket Number"
                   >
                     {copiedChannel === 'rocket' ? (
-                      <Check className="w-3 h-3 text-emerald-400" />
+                      <Check className="w-3 h-3 text-emerald-600" />
                     ) : (
                       <Copy className="w-3 h-3" />
                     )}
@@ -502,22 +548,22 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
               )}
 
               {channels.bank && (
-                <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-start justify-between gap-2">
+                <div className="p-3 rounded-xl bg-sky-50/70 border border-sky-200 flex items-start justify-between gap-2">
                   <div className="flex items-start space-x-2.5 min-w-0">
-                    <Landmark className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+                    <Landmark className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
                     <div className="min-w-0">
-                      <div className="font-bold text-sky-300">Bank Transfer</div>
-                      <div className="font-mono text-slate-200 mt-0.5 break-words">{channels.bank}</div>
+                      <div className="font-bold text-sky-700">Bank Transfer</div>
+                      <div className="font-mono font-bold text-slate-900 mt-0.5 break-words">{channels.bank}</div>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => handleCopyChannel('bank', channels.bank)}
-                    className="shrink-0 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] font-semibold text-slate-200 flex items-center space-x-1"
+                    className="shrink-0 px-2 py-1 rounded-lg bg-white hover:bg-sky-100 border border-sky-200 text-[10px] font-semibold text-sky-700 flex items-center space-x-1"
                     title="Copy Bank Details"
                   >
                     {copiedChannel === 'bank' ? (
-                      <Check className="w-3 h-3 text-emerald-400" />
+                      <Check className="w-3 h-3 text-emerald-600" />
                     ) : (
                       <Copy className="w-3 h-3" />
                     )}
@@ -528,17 +574,17 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
             </div>
 
             {channels.paymentInstruction && (
-              <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-400/30 text-[11px] text-amber-100 leading-relaxed">
-                <strong className="text-amber-300">
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-relaxed">
+                <strong className="text-amber-800">
                   {language === 'bn' ? 'নির্দেশনা:' : 'Note:'}
                 </strong>{' '}
                 {channels.paymentInstruction}
               </div>
             )}
 
-            <div className="pt-2 border-t border-white/10 text-[11px] text-slate-400">
-              Support: <span className="text-white font-semibold">{channels.supportPhone}</span> •{' '}
-              <span className="text-white font-semibold">{channels.supportEmail}</span>
+            <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-500">
+              Support: <span className="text-slate-900 font-semibold">{channels.supportPhone}</span> •{' '}
+              <span className="text-slate-900 font-semibold">{channels.supportEmail}</span>
             </div>
           </div>
 

@@ -5,6 +5,7 @@ import { StorageService } from '../../services/storage';
 import { AIService } from '../../services/aiService';
 import { Student, StudentPerformanceAnalytics, ClassLevel } from '../../types';
 import { compareStudentsByClassAndRoll } from '../../utils/studentSort';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   Sparkles,
   TrendingUp,
@@ -199,18 +200,74 @@ export const StudentPerformanceAnalyticsView: React.FC = () => {
 
   const isRestrictedRole = activeRole === 'student' || activeRole === 'guardian';
 
+  const analyticsLauncherItems: LauncherTileItem[] = [
+    ...(!isRestrictedRole
+      ? [
+          {
+            id: 'all_classes',
+            label: language === 'bn' ? 'সকল শ্রেণি' : 'All Classes',
+            icon: BarChart3,
+            color: 'blue' as const,
+            active: selectedClass === 'all',
+            badge: classAnalyticsOverview.totalStudents,
+            onClick: () => {
+              setSelectedClass('all');
+              setSelectedSection('all');
+            },
+          },
+          {
+            id: 'needs_support',
+            label: language === 'bn' ? 'সহায়তা প্রয়োজন' : 'Needs Support',
+            icon: AlertTriangle,
+            color: 'amber' as const,
+            badge: classAnalyticsOverview.weakStudentsList.length || undefined,
+            onClick: () => {
+              const el = document.getElementById('analytics-weak-students-section');
+              el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            },
+          },
+        ]
+      : []),
+    {
+      id: 'attendance_rate',
+      label: language === 'bn' ? 'উপস্থিতি হার' : 'Attendance',
+      icon: CalendarCheck2,
+      color: 'teal',
+      badge: !isRestrictedRole ? `${classAnalyticsOverview.avgAttendance}%` : undefined,
+      onClick: () => {},
+    },
+    {
+      id: 'exam_avg',
+      label: language === 'bn' ? 'পরীক্ষার গড়' : 'Exam Average',
+      icon: Award,
+      color: 'purple',
+      badge: !isRestrictedRole ? `${classAnalyticsOverview.avgExamScore}%` : undefined,
+      onClick: () => {},
+    },
+    {
+      id: 'print_report',
+      label: language === 'bn' ? 'রিপোর্ট প্রিন্ট' : 'Print Report',
+      icon: Printer,
+      color: 'green',
+      onClick: () => window.print(),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* App-Launcher Icon Tile Grid */}
+      <LauncherIconGrid items={analyticsLauncherItems} columns={5} compact />
+
       {/* Header Banner */}
       <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-600 flex items-center justify-center text-white shadow-md">
+          <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600 shrink-0">
             <Sparkles className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+            <h2 className="text-lg font-extrabold text-slate-900 flex items-center flex-wrap gap-2">
               <span>{language === 'bn' ? 'এআই শিক্ষার্থী পারফরম্যান্স অ্যানালিটিক্স' : 'AI Student Performance Analytics'}</span>
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+              <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                 Gemini 3.8 Flash Engine
               </span>
             </h2>
@@ -224,10 +281,10 @@ export const StudentPerformanceAnalyticsView: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2 print:hidden">
           <button
             onClick={() => window.print()}
-            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
+            className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
           >
             <Printer className="w-3.5 h-3.5" />
             <span>{language === 'bn' ? 'রিপোর্ট প্রিন্ট' : 'Print Report'}</span>

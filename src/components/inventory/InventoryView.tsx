@@ -4,8 +4,12 @@ import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { InventoryItem } from '../../types';
 import { DigitInput } from '../common/DigitInput';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   Package,
+  Layers,
+  Cpu,
+  Award,
   Search,
   Plus,
   AlertTriangle,
@@ -126,14 +130,76 @@ export const InventoryView: React.FC = () => {
     return true;
   });
 
+  const inventoryLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'all',
+      label: language === 'bn' ? 'সকল সম্পদ' : 'All Assets',
+      icon: Layers,
+      color: 'blue',
+      active: categoryFilter === 'all',
+      badge: items.length,
+      onClick: () => setCategoryFilter('all'),
+    },
+    {
+      id: 'Furniture',
+      label: language === 'bn' ? 'আসবাবপত্র' : 'Furniture',
+      icon: Building,
+      color: 'amber',
+      active: categoryFilter === 'Furniture',
+      badge: items.filter((i) => i.category === 'Furniture').length || undefined,
+      onClick: () => setCategoryFilter('Furniture'),
+    },
+    {
+      id: 'Science Lab',
+      label: language === 'bn' ? 'বিজ্ঞানাগার' : 'Science Lab',
+      icon: Package,
+      color: 'purple',
+      active: categoryFilter === 'Science Lab',
+      badge: items.filter((i) => i.category === 'Science Lab').length || undefined,
+      onClick: () => setCategoryFilter('Science Lab'),
+    },
+    {
+      id: 'IT & Computer',
+      label: language === 'bn' ? 'কম্পিউটার ও আইটি' : 'IT & Computer',
+      icon: Cpu,
+      color: 'sky',
+      active: categoryFilter === 'IT & Computer',
+      badge: items.filter((i) => i.category === 'IT & Computer').length || undefined,
+      onClick: () => setCategoryFilter('IT & Computer'),
+    },
+    {
+      id: 'Sports',
+      label: language === 'bn' ? 'ক্রীড়া সামগ্রী' : 'Sports',
+      icon: Award,
+      color: 'orange',
+      active: categoryFilter === 'Sports',
+      badge: items.filter((i) => i.category === 'Sports').length || undefined,
+      onClick: () => setCategoryFilter('Sports'),
+    },
+    ...(canManage
+      ? [
+          {
+            id: 'add',
+            label: language === 'bn' ? 'নতুন সম্পদ যোগ' : 'Add Asset',
+            icon: Plus,
+            color: 'green' as const,
+            onClick: handleOpenAddItem,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="space-y-5">
+      {/* App-Launcher Icon Tile Grid */}
+      <LauncherIconGrid items={inventoryLauncherItems} columns={6} compact />
+
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">
+          <h2 className="text-lg font-extrabold text-slate-900">
             {language === 'bn' ? 'বিদ্যালয়ের আসবাবপত্র ও সম্পদ তালিকা (Assets)' : 'School Inventory & Asset Registry'}
           </h2>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500 mt-0.5">
             {language === 'bn'
               ? 'শ্রেণিকক্ষের বেঞ্চ, টেবিল, চেয়ার, কম্পিউটার, ল্যাবরেটরি সরঞ্জাম এবং সম্পদ তথ্য'
               : 'Classroom furniture, computers, laboratory apparatus, and sports assets'}
@@ -142,7 +208,7 @@ export const InventoryView: React.FC = () => {
         {canManage && (
           <button
             onClick={handleOpenAddItem}
-            className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs"
+            className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs"
           >
             <Plus className="w-4 h-4" />
             <span>{language === 'bn' ? 'নতুন সম্পদ / আসবাবপত্র যোগ' : 'Add Asset / Stock'}</span>
@@ -151,7 +217,7 @@ export const InventoryView: React.FC = () => {
       </div>
 
       {/* Search & Category Filter */}
-      <div className="p-4 bg-white rounded-xl border border-slate-200 shadow-xs flex flex-col sm:flex-row gap-3 text-xs">
+      <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row gap-3 text-xs">
         <div className="relative flex-1">
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
           <input

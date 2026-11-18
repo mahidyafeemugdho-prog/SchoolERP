@@ -14,6 +14,7 @@ import {
   Award,
   BookOpen,
 } from 'lucide-react';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 
 export type ReportType = 'students' | 'attendance' | 'exam_results' | 'homework' | 'fees' | 'staff';
 
@@ -327,11 +328,27 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialReportType, jum
 
   const activeExamObj = exams.find((e) => e.id === (selectedExamId || exams[0]?.id));
 
+  const reportLauncherItems: LauncherTileItem[] = reportCards.map((rep, idx) => {
+    const palette: LauncherTileItem['color'][] = ['green', 'sky', 'red', 'purple', 'blue', 'amber'];
+    return {
+      id: rep.id,
+      label: rep.label,
+      icon: rep.icon,
+      color: palette[idx % palette.length],
+      badge: language === 'bn' ? toBnNumber(rep.count) : rep.count,
+      active: reportType === rep.id,
+      onClick: () => setReportType(rep.id),
+    };
+  });
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
+    <div className="space-y-5">
+      {/* Report Categories Colorful Launcher Grid */}
+      <LauncherIconGrid items={reportLauncherItems} columns={6} />
+
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">
+          <h2 className="text-base sm:text-lg font-bold text-slate-900">
             {language === 'bn' ? 'একাডেমিক ও হাজিরা রিপোর্ট সেন্টার' : 'Academic & Attendance Reports Center'}
           </h2>
           <p className="text-xs text-slate-500">
@@ -344,49 +361,22 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ initialReportType, jum
               : 'View, export CSV, and print attendance, exam merit, and homework performance reports'}
           </p>
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2 shrink-0">
           <button
             onClick={handleExportCurrent}
-            className="flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs whitespace-nowrap"
+            className="flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs whitespace-nowrap"
           >
             <Download className="w-4 h-4" />
             <span>{language === 'bn' ? 'CSV ডাউনলোড' : 'Export CSV'}</span>
           </button>
           <button
             onClick={() => window.print()}
-            className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs whitespace-nowrap"
+            className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs whitespace-nowrap"
           >
             <Printer className="w-4 h-4" />
             <span>{language === 'bn' ? 'রিপোর্ট প্রিন্ট' : 'Print Report'}</span>
           </button>
         </div>
-      </div>
-
-      {/* Report Category Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs print:hidden">
-        {reportCards.map((rep) => {
-          const Icon = rep.icon;
-          const isSelected = reportType === rep.id;
-          return (
-            <button
-              key={rep.id}
-              onClick={() => setReportType(rep.id)}
-              className={`p-3.5 rounded-xl border text-left transition-colors ${
-                isSelected
-                  ? 'border-blue-600 bg-blue-50/70 ring-1 ring-blue-600'
-                  : 'border-slate-200 bg-white hover:border-slate-300'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <Icon className={`w-4 h-4 ${isSelected ? 'text-blue-700' : 'text-slate-400'}`} />
-                <span className="text-[11px] font-mono font-bold text-slate-600 tabular-nums">
-                  {language === 'bn' ? toBnNumber(rep.count) : rep.count}
-                </span>
-              </div>
-              <h4 className="font-bold text-slate-900 mt-2 text-xs leading-snug">{rep.label}</h4>
-            </button>
-          );
-        })}
       </div>
 
       {/* Filters Bar */}

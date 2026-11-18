@@ -54,6 +54,7 @@ import {
 } from '../../services/supportService';
 import { DigitInput } from '../common/DigitInput';
 import { parseLocaleNumber } from '../../utils/i18n';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 
 type SubTab = 'schools' | 'payments' | 'plans' | 'payment_channels' | 'support';
 
@@ -766,8 +767,57 @@ export const MasterAdminSaaSPanel: React.FC = () => {
     lifetime: { en: 'Lifetime', bn: 'লাইফটাইম (Lifetime)' },
   };
 
+  const saasLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'schools',
+      label: language === 'bn' ? 'স্কুল তালিকা' : 'Schools',
+      icon: Building2,
+      color: 'blue',
+      active: activeSubTab === 'schools',
+      badge: schools.length,
+      onClick: () => setActiveSubTab('schools'),
+    },
+    {
+      id: 'payments',
+      label: language === 'bn' ? 'পেমেন্ট যাচাই' : 'Approvals',
+      icon: CreditCard,
+      color: 'amber',
+      active: activeSubTab === 'payments',
+      badge: analytics?.pendingPaymentsCount || undefined,
+      onClick: () => setActiveSubTab('payments'),
+    },
+    {
+      id: 'plans',
+      label: language === 'bn' ? 'সাবস্ক্রিপশন প্ল্যান' : 'Plans',
+      icon: Sliders,
+      color: 'purple',
+      active: activeSubTab === 'plans',
+      onClick: () => setActiveSubTab('plans'),
+    },
+    {
+      id: 'payment_channels',
+      label: language === 'bn' ? 'বিকাশ / নগদ' : 'Payment Setup',
+      icon: Smartphone,
+      color: 'red',
+      active: activeSubTab === 'payment_channels',
+      onClick: () => setActiveSubTab('payment_channels'),
+    },
+    {
+      id: 'support',
+      label: language === 'bn' ? 'সাপোর্ট টিম' : 'Support Team',
+      icon: Headphones,
+      color: 'teal',
+      active: activeSubTab === 'support',
+      badge: unreadSupportCount || undefined,
+      onClick: () => setActiveSubTab('support'),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* App-Launcher Icon Tile Grid */}
+      <LauncherIconGrid items={saasLauncherItems} columns={5} compact />
+
       {/* Analytics KPI Grid (1-Click Filters) */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         <button
@@ -1026,7 +1076,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
             onClick={() => setActiveSubTab('schools')}
             className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all ${
               activeSubTab === 'schools'
-                ? 'bg-slate-900 text-white shadow-sm'
+                ? 'bg-blue-600 text-white shadow-xs'
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
@@ -1038,7 +1088,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
             onClick={() => setActiveSubTab('payments')}
             className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all ${
               activeSubTab === 'payments'
-                ? 'bg-slate-900 text-white shadow-sm'
+                ? 'bg-blue-600 text-white shadow-xs'
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
@@ -1054,7 +1104,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
             onClick={() => setActiveSubTab('plans')}
             className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all ${
               activeSubTab === 'plans'
-                ? 'bg-slate-900 text-white shadow-sm'
+                ? 'bg-blue-600 text-white shadow-xs'
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >

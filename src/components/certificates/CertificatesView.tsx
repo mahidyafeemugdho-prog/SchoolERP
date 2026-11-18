@@ -16,6 +16,7 @@ import {
   IDCardTheme,
 } from '../common/ModernIDCardFronts';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   FileBadge,
   Printer,
@@ -139,15 +140,69 @@ export const CertificatesView: React.FC = () => {
   const pairedStudent = filteredStudents[currentIdx + 1] || filteredStudents[0];
   const pairedRoutines = pairedStudent ? getRoutinesForStudent(pairedStudent) : [];
 
+  const certificateLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'admit_card',
+      label: language === 'bn' ? 'প্রবেশপত্র' : 'Admit Card',
+      icon: FileBadge,
+      color: 'blue',
+      active: docType === 'admit_card',
+      onClick: () => setDocType('admit_card'),
+    },
+    {
+      id: 'id_card',
+      label: language === 'bn' ? 'আইডি কার্ড' : 'ID Card',
+      icon: CreditCard,
+      color: 'teal',
+      active: docType === 'id_card',
+      onClick: () => setDocType('id_card'),
+    },
+    {
+      id: 'testimonial',
+      label: language === 'bn' ? 'প্রশংসাপত্র' : 'Testimonial',
+      icon: Award,
+      color: 'amber',
+      active: docType === 'testimonial',
+      onClick: () => setDocType('testimonial'),
+    },
+    {
+      id: 'transfer',
+      label: language === 'bn' ? 'ছাড়পত্র (TC)' : 'Transfer (TC)',
+      icon: FileCheck2,
+      color: 'red',
+      active: docType === 'transfer',
+      onClick: () => setDocType('transfer'),
+    },
+    {
+      id: 'character',
+      label: language === 'bn' ? 'চারিত্রিক সনদ' : 'Character Cert',
+      icon: ShieldCheck,
+      color: 'purple',
+      active: docType === 'character',
+      onClick: () => setDocType('character'),
+    },
+    {
+      id: 'bonafide',
+      label: language === 'bn' ? 'প্রত্যয়নপত্র' : 'Bonafide Cert',
+      icon: CheckCircle,
+      color: 'green',
+      active: docType === 'bonafide',
+      onClick: () => setDocType('bonafide'),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* App-Launcher Icon Tile Grid (Hidden on Print) */}
+      <LauncherIconGrid items={certificateLauncherItems} columns={6} compact />
+
       {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">
+          <h2 className="text-lg font-extrabold text-slate-900">
             {language === 'bn' ? 'সনদপত্র ও প্রত্যয়নপত্র প্রিন্ট' : 'Official Certificates & Document Generator'}
           </h2>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500 mt-0.5">
             {language === 'bn'
               ? 'আইডি কার্ড, অ্যাডমিট কার্ড, প্রশংসাপত্র, ছাড়পত্র (TC), চারিত্রিক সনদ ও প্রত্যয়নপত্র'
               : 'Printable ID cards, admit cards, testimonials, transfer certificates & bonafide letters'}
@@ -155,7 +210,7 @@ export const CertificatesView: React.FC = () => {
         </div>
         <button
           onClick={() => window.print()}
-          className="flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs"
+          className="flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs"
         >
           <Printer className="w-4 h-4" />
           <span>{language === 'bn' ? 'প্রিন্ট করুন' : 'Print Document'}</span>
@@ -163,7 +218,7 @@ export const CertificatesView: React.FC = () => {
       </div>
 
       {/* Control Panel (Hidden on Print) */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 space-y-3.5 print:hidden">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 space-y-3.5 print:hidden">
         {/* Main Filters Row */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 text-xs">
           {/* Certificate Type */}

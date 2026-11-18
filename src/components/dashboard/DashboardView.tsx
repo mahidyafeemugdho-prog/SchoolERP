@@ -23,6 +23,18 @@ import {
   QrCode,
   Sparkles,
   FileCheck,
+  CalendarDays,
+  Layers,
+  UserPlus,
+  Library,
+  Bus,
+  Package,
+  Newspaper,
+  BarChart3,
+  CreditCard,
+  Settings,
+  Headphones,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
 import { SuperAdminStaffRBAC } from './SuperAdminStaffRBAC';
@@ -31,6 +43,7 @@ import { WebsiteMessagesModal } from '../auth/WebsiteMessagesModal';
 import { StudentDedicatedDashboard } from './StudentDedicatedDashboard';
 import { TeacherDedicatedDashboard } from './TeacherDedicatedDashboard';
 import { SuperAdminDraftApprovals } from './SuperAdminDraftApprovals';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 
 interface DashboardViewProps {
   onNavigate: (tab: string) => void;
@@ -121,107 +134,102 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
     classCounts[s.className] = (classCounts[s.className] || 0) + 1;
   });
 
-  return (
-    <div className="space-y-6">
-      {/* Welcome Banner */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-800 via-blue-700 to-teal-700 text-white p-6 shadow-sm">
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="inline-flex items-center space-x-2 px-2.5 py-1 rounded-full bg-white/15 text-xs font-medium backdrop-blur-xs mb-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>
-                {language === 'bn' ? 'সিস্টেম স্ট্যাটাস: অনলাইন • Asia/Dhaka GMT+6' : 'System Active • Asia/Dhaka GMT+6'}
-              </span>
-            </div>
-            <h2 className="text-xl md:text-2xl font-bold">
-              {language === 'bn' ? `স্বাগতম, ${currentUser.nameBn || currentUser.name}` : `Welcome back, ${currentUser.name}!`}
-            </h2>
-            <p className="text-blue-100 text-xs md:text-sm mt-1 max-w-xl">
-              {language === 'bn'
-                ? 'প্লে / নার্সারি থেকে দশম শ্রেণি পর্যন্ত সম্পূর্ণ একাডেমিক, শিক্ষার্থী হাজিরা, পরীক্ষা ও ফলাফল, ফি কালেকশন ও হিসাব খাতা।'
-                : 'Manage Nursery through Class 10 academic, attendance, examinations, fee collection, and institutional records in one unified ERP platform.'}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {isTabAuthorized('admissions', activeRole, currentUser) && (
-              <button
-                onClick={() => onNavigate('admissions')}
-                className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-white text-blue-800 text-xs font-semibold hover:bg-blue-50 transition-colors shadow-sm"
-              >
-                <PlusCircle className="w-4 h-4 text-blue-700" />
-                <span>{language === 'bn' ? 'নতুন ভর্তি' : 'New Admission'}</span>
-              </button>
-            )}
-            {isTabAuthorized('attendance', activeRole, currentUser) && (
-              <button
-                onClick={() => onNavigate('attendance')}
-                className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-blue-900/60 hover:bg-blue-900 text-white border border-white/20 text-xs font-semibold transition-colors"
-              >
-                <CalendarCheck2 className="w-4 h-4" />
-                <span>{language === 'bn' ? 'হাজিরা ও শিট' : 'Attendance & Sheet'}</span>
-              </button>
-            )}
-            {isTabAuthorized('examinations', activeRole, currentUser) && (
-              <button
-                onClick={() => onNavigate('examinations')}
-                className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-purple-700/80 hover:bg-purple-700 text-white border border-white/20 text-xs font-semibold transition-colors"
-              >
-                <Award className="w-4 h-4 text-amber-300" />
-                <span>{language === 'bn' ? 'পরীক্ষা, মার্ক এন্ট্রি ও রেজাল্ট' : 'Exams, Marks & Results'}</span>
-              </button>
-            )}
-            {isTabAuthorized('fees', activeRole, currentUser) && (
-              <button
-                onClick={() => onNavigate('fees')}
-                className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-teal-500 hover:bg-teal-600 text-white text-xs font-semibold transition-colors shadow-sm"
-              >
-                <Wallet className="w-4 h-4" />
-                <span>{language === 'bn' ? 'ফি গ্রহণ' : 'Collect Fee'}</span>
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
+  const dashboardLaunchTiles: LauncherTileItem[] = (() => {
+    const raw: {
+      id: string;
+      tabId: string;
+      label: string;
+      icon: typeof Users;
+      color: LauncherTileItem['color'];
+      badge?: number;
+    }[] = [
+      { id: 'students', tabId: 'students', label: language === 'bn' ? 'শিক্ষার্থী প্রোফাইল' : 'Students', icon: GraduationCap, color: 'green' },
+      { id: 'admissions', tabId: 'admissions', label: language === 'bn' ? 'ভর্তি ও আবেদন' : 'Admissions', icon: UserPlus, color: 'sky' },
+      { id: 'fees', tabId: 'fees', label: language === 'bn' ? 'ফিস ও হিসাব' : 'Fees & Cash', icon: Wallet, color: 'blue', badge: pendingOnlineRequests.length || undefined },
+      { id: 'attendance', tabId: 'attendance', label: language === 'bn' ? 'উপস্থিতি ও হাজিরা' : 'Attendance', icon: CalendarCheck2, color: 'teal' },
+      { id: 'examinations', tabId: 'examinations', label: language === 'bn' ? 'পরীক্ষা ও ফলাফল' : 'Exams & Results', icon: Award, color: 'red' },
+      { id: 'staff', tabId: 'staff', label: language === 'bn' ? 'শিক্ষক ও বেতন' : 'Staff & Payroll', icon: Users, color: 'amber' },
+      { id: 'academic', tabId: 'academic', label: language === 'bn' ? 'একাডেমিক ও ছুটি' : 'Academic', icon: Layers, color: 'red' },
+      { id: 'routine', tabId: 'routine', label: language === 'bn' ? 'ক্লাস রুটিন' : 'Class Routine', icon: CalendarDays, color: 'sky' },
+      { id: 'homework', tabId: 'homework', label: language === 'bn' ? 'বাড়ির কাজ (AI)' : 'AI Homework', icon: FileCheck, color: 'purple' },
+      { id: 'qr_attendance', tabId: 'qr_attendance', label: language === 'bn' ? 'QR গেট হাজিরা' : 'QR Attendance', icon: QrCode, color: 'green' },
+      { id: 'reports', tabId: 'reports', label: language === 'bn' ? 'রিপোর্ট ও এক্সপোর্ট' : 'Reports', icon: FileSpreadsheet, color: 'green' },
+      { id: 'analytics', tabId: 'analytics', label: language === 'bn' ? 'AI পারফরম্যান্স' : 'AI Analytics', icon: BarChart3, color: 'purple' },
+      { id: 'certificates', tabId: 'certificates', label: language === 'bn' ? 'সনদপত্র ও আইডি' : 'Certificates', icon: FileText, color: 'amber' },
+      { id: 'notices', tabId: 'notices', label: language === 'bn' ? 'নোটিশ বোর্ড' : 'Notice Board', icon: Bell, color: 'red' },
+      { id: 'library', tabId: 'library', label: language === 'bn' ? 'লাইব্রেরি' : 'Library', icon: Library, color: 'teal' },
+      { id: 'transport', tabId: 'transport', label: language === 'bn' ? 'পরিবহন ও বাস' : 'Transport', icon: Bus, color: 'orange' },
+      { id: 'inventory', tabId: 'inventory', label: language === 'bn' ? 'সম্পদ ও স্টক' : 'Inventory', icon: Package, color: 'sky' },
+      { id: 'blog', tabId: 'blog', label: language === 'bn' ? 'স্কুল ব্লগ' : 'School Blog', icon: Newspaper, color: 'indigo' },
+      { id: 'subscription_billing', tabId: 'subscription_billing', label: language === 'bn' ? 'সাবস্ক্রিপশন' : 'Billing', icon: CreditCard, color: 'amber' },
+      { id: 'settings', tabId: 'settings', label: language === 'bn' ? 'বিদ্যালয় সেটিংস' : 'Settings', icon: Settings, color: 'teal' },
+      { id: 'support', tabId: 'support', label: language === 'bn' ? 'সাপোর্ট টিম' : 'Support Team', icon: Headphones, color: 'red' },
+    ];
 
-      {/* Super Admin / Admin / Accountant: Pending Online Fee Payment Approval Notification */}
+    const authorized = raw
+      .filter((item) => isTabAuthorized(item.tabId, activeRole, currentUser))
+      .map<LauncherTileItem>((item) => ({
+        id: item.id,
+        label: item.label,
+        icon: item.icon,
+        color: item.color,
+        badge: item.badge,
+        onClick: () => onNavigate(item.tabId),
+      }));
+
+    if (activeRole === 'super_admin' || activeRole === 'master_admin') {
+      authorized.push({
+        id: 'website_messages',
+        label: language === 'bn' ? 'ওয়েবসাইট বার্তা' : 'Site Messages',
+        icon: MessageSquare,
+        color: 'sky',
+        badge: unreadMessagesCount || undefined,
+        onClick: () => setShowMessagesModal(true),
+      });
+    }
+
+    return authorized;
+  })();
+
+  return (
+    <div className="space-y-5">
+      {/* Primary App-Launcher Icon Grid */}
+      <LauncherIconGrid items={dashboardLaunchTiles} columns={5} />
+
+      {/* Super Admin / Admin / Accountant: Pending Online Fee Payment Approval Alert Strip */}
       {(activeRole === 'super_admin' ||
         activeRole === 'admin' ||
         activeRole === 'accountant' ||
         activeRole === 'master_admin') &&
         isTabAuthorized('fees', activeRole, currentUser) &&
         pendingOnlineRequests.length > 0 && (
-          <div className="bg-gradient-to-r from-amber-900 via-orange-900 to-rose-900 text-white p-4 rounded-2xl border border-amber-500/60 shadow-md flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-            <div className="flex items-start space-x-3.5 min-w-0">
-              <div className="w-12 h-12 rounded-xl bg-amber-400/20 border border-amber-300/40 flex items-center justify-center shrink-0">
-                <Bell className="w-6 h-6 text-amber-300 animate-bounce" />
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3">
+            <div className="flex items-start space-x-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 border border-amber-200 flex items-center justify-center shrink-0">
+                <Bell className="w-5 h-5 text-amber-700" />
               </div>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-black text-white text-sm sm:text-base">
-                    নতুন অনলাইন ফি পেমেন্ট অনুমোদন নোটিফিকেশন
-                  </h3>
-                  <span className="px-2.5 py-0.5 rounded-full bg-rose-600 text-white text-[11px] font-black animate-pulse">
-                    {toBnNumber(pendingOnlineRequests.length)}টি অপেক্ষমাণ •{' '}
+                  <h3 className="font-bold text-amber-950 text-xs sm:text-sm">
+                    নতুন অনলাইন ফি পেমেন্ট অনুমোদন অপেক্ষমাণ ({toBnNumber(pendingOnlineRequests.length)}টি •{' '}
                     {formatTaka(
                       pendingOnlineRequests.reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
                     )}
-                  </span>
+                    )
+                  </h3>
                 </div>
-                <p className="text-xs text-amber-100 mt-1">
-                  অভিভাবকরা বিকাশ, নগদ বা রকেট-এ ফি পাঠিয়ে অনুমোদনের জন্য রিকোয়েস্ট পাঠিয়েছেন:
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {pendingOnlineRequests.slice(0, 3).map((req) => (
                     <span
                       key={req.id}
-                      className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-white/10 border border-white/20 text-[11px] font-semibold text-white"
+                      className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-lg bg-white border border-amber-200 text-[11px] font-semibold text-slate-800"
                     >
                       <span>{req.studentName}</span>
-                      <span className="text-amber-300 font-black">
+                      <span className="text-amber-700 font-bold">
                         ({req.paymentMethod === 'bKash' ? 'বিকাশ' : req.paymentMethod === 'Rocket' ? 'রকেট' : 'নগদ'}{' '}
                         {formatTaka(req.amount)})
                       </span>
-                      <span className="font-mono text-[10px] text-amber-200">
+                      <span className="font-mono text-[10px] text-slate-500">
                         Trx: {req.transactionId}
                       </span>
                     </span>
@@ -232,144 +240,43 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             <button
               type="button"
               onClick={() => onNavigate('fees:online_approvals')}
-              className="flex items-center space-x-2 px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-xs transition-colors shadow-sm shrink-0"
+              className="flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-colors shadow-xs shrink-0"
             >
-              <Wallet className="w-4 h-4 text-slate-950" />
-              <span>অনলাইন পেমেন্ট অনুমোদনে যান</span>
-              <ArrowUpRight className="w-4 h-4 text-slate-950" />
+              <Wallet className="w-4 h-4" />
+              <span>অনলাইন অনুমোদনে যান</span>
+              <ArrowUpRight className="w-4 h-4" />
             </button>
           </div>
         )}
 
-      {/* AI SMART SCHOOL MANAGEMENT - 3 NEW FEATURES SPOTLIGHT CARDS */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Feature 1: AI Smart Homework */}
-        <div
-          onClick={() => onNavigate('homework')}
-          className="bg-gradient-to-br from-indigo-900 to-blue-900 text-white p-5 rounded-2xl border border-indigo-700/60 shadow-sm hover:shadow-md cursor-pointer transition-all group relative overflow-hidden flex flex-col justify-between"
-        >
-          <div className="relative z-10">
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-indigo-300">
-                <FileCheck className="w-5 h-5" />
-              </div>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
-                Multimodal AI
-              </span>
-            </div>
-            <h3 className="font-bold text-sm text-white group-hover:text-indigo-200 transition-colors">
-              {language === 'bn' ? 'এআই স্মার্ট হোমওয়ার্ক মূল্যায়ন' : 'AI Smart Homework Grading'}
-            </h3>
-            <p className="text-xs text-indigo-200 mt-1 line-clamp-2">
-              {language === 'bn'
-                ? 'হস্তলিখিত খাতার ছবি থেকে এআই দিয়ে স্বয়ংক্রিয় নম্বর ও শিক্ষকের এক-ক্লিকে অনুমোদন।'
-                : 'AI evaluates handwritten photos with step-by-step checks and bulk approval.'}
-            </p>
-          </div>
-          <div className="relative z-10 pt-3 mt-3 border-t border-indigo-800/80 flex items-center justify-between text-xs font-bold text-indigo-300 group-hover:text-white">
-            <span>{language === 'bn' ? 'হোমওয়ার্ক ড্যাশবোর্ড' : 'Open Homework'}</span>
-            <ArrowUpRight className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-          </div>
+      {/* Compact Clean Welcome & Quick Inbox Bar */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-base sm:text-lg font-bold text-slate-900">
+            {language === 'bn'
+              ? `স্বাগতম, ${currentUser.nameBn || currentUser.name}`
+              : `Welcome back, ${currentUser.name}`}
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            {language === 'bn'
+              ? 'প্লে / নার্সারি থেকে দশম শ্রেণি পর্যন্ত সম্পূর্ণ একাডেমিক, হাজিরা, পরীক্ষা, ফি ও হিসাব খাতা'
+              : 'Unified Academic, Attendance, Examinations, Fee Collection & Institutional Records'}
+          </p>
         </div>
-
-        {/* Feature 2: QR Code Smart Attendance */}
-        <div
-          onClick={() => onNavigate('attendance')}
-          className="bg-gradient-to-br from-slate-900 via-emerald-950 to-slate-900 text-white p-5 rounded-2xl border border-emerald-700/50 shadow-sm hover:shadow-md cursor-pointer transition-all group relative overflow-hidden flex flex-col justify-between"
-        >
-          <div className="relative z-10">
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-emerald-300">
-                <QrCode className="w-5 h-5" />
-              </div>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/30 text-emerald-200 border border-emerald-400/30">
-                Smart Gate Kiosk
-              </span>
-            </div>
-            <h3 className="font-bold text-sm text-white group-hover:text-emerald-200 transition-colors">
-              {language === 'bn' ? 'কিউআর কোড স্মার্ট হাজিরা' : 'QR Code Smart Attendance'}
-            </h3>
-            <p className="text-xs text-emerald-200 mt-1 line-clamp-2">
-              {language === 'bn'
-                ? 'মোবাইল ক্যামেরা দিয়ে আইডি কার্ড স্ক্যানে স্বয়ংক্রিয় হাজিরা ও ডুপ্লিকেট স্ক্যান রোধ।'
-                : 'Instant QR code scanning with student photo verification and duplicate prevention.'}
-            </p>
-          </div>
-          <div className="relative z-10 pt-3 mt-3 border-t border-emerald-900/80 flex items-center justify-between text-xs font-bold text-emerald-300 group-hover:text-white">
-            <span>{language === 'bn' ? 'স্ক্যানার ও আইডি কার্ড' : 'Launch Scanner'}</span>
-            <ArrowUpRight className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-          </div>
-        </div>
-
-        {/* Feature 3: AI Student Performance Analytics */}
-        <div
-          onClick={() => onNavigate('analytics')}
-          className="bg-gradient-to-br from-purple-950 via-slate-900 to-indigo-950 text-white p-5 rounded-2xl border border-purple-700/50 shadow-sm hover:shadow-md cursor-pointer transition-all group relative overflow-hidden flex flex-col justify-between"
-        >
-          <div className="relative z-10">
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-purple-300">
-                <Sparkles className="w-5 h-5" />
-              </div>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/30 text-purple-200 border border-purple-400/30">
-                Analytics Engine
-              </span>
-            </div>
-            <h3 className="font-bold text-sm text-white group-hover:text-purple-200 transition-colors">
-              {language === 'bn' ? 'এআই পারফরম্যান্স অ্যানালিটিক্স' : 'AI Student Performance Analytics'}
-            </h3>
-            <p className="text-xs text-purple-200 mt-1 line-clamp-2">
-              {language === 'bn'
-                ? 'বাস্তব পরীক্ষার নম্বর, উপস্থিতি ও বাড়ির কাজের ভিত্তিতে গভীর এআই প্রবৃদ্ধি পরামর্শ।'
-                : 'Real data-driven student performance analysis, weak subject radar, and AI study tips.'}
-            </p>
-          </div>
-          <div className="relative z-10 pt-3 mt-3 border-t border-purple-900/80 flex items-center justify-between text-xs font-bold text-purple-300 group-hover:text-white">
-            <span>{language === 'bn' ? 'অ্যানালিটিক্স ড্যাশবোর্ড' : 'Open Analytics'}</span>
-            <ArrowUpRight className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-          </div>
-        </div>
-      </div>
-
-      {/* Super Admin & Master Admin: Dedicated Public Website Messages & Inquiries Card */}
-      {(activeRole === 'super_admin' || activeRole === 'master_admin') && (
-        <div className="bg-gradient-to-r from-sky-900 via-indigo-900 to-slate-900 text-white p-4 rounded-2xl border border-sky-700/60 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-center space-x-3.5">
-            <div className="w-12 h-12 rounded-xl bg-sky-500/20 border border-sky-400/30 flex items-center justify-center shrink-0">
-              <MessageSquare className="w-6 h-6 text-sky-300" />
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <h3 className="font-bold text-white text-sm sm:text-base">
-                  {language === 'bn' ? 'ওয়েবসাইট থেকে আসা বার্তা ও অনুসন্ধান' : 'Public Website Inquiries & Messages'}
-                </h3>
-                {unreadMessagesCount > 0 ? (
-                  <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black animate-pulse">
-                    {language === 'bn' ? `${toBnNumber(unreadMessagesCount)} টি নতুন বার্তা` : `${unreadMessagesCount} Unread`}
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-700 text-emerald-100 text-[10px] font-semibold">
-                    {language === 'bn' ? 'সব পড়া হয়েছে' : 'All Read'}
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-sky-200 mt-0.5">
-                {language === 'bn'
-                  ? 'ওয়েবসাইটের "যোগাযোগ বা বার্তা পাঠান" ফর্ম থেকে পাঠানো অভিভাবক ও দর্শনার্থীদের সরাসরি বার্তা শুধু সুপার অ্যাডমিন দেখতে পাবেন।'
-                  : 'Direct inquiries sent from the public website contact form are visible exclusively to the Super Admin.'}
-              </p>
-            </div>
-          </div>
+        {(activeRole === 'super_admin' || activeRole === 'master_admin') && (
           <button
+            type="button"
             onClick={() => setShowMessagesModal(true)}
-            className="flex items-center space-x-2 px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold rounded-xl text-xs transition-colors shadow-xs shrink-0"
+            className="inline-flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-colors shadow-xs shrink-0 self-start md:self-auto"
           >
-            <MessageSquare className="w-4 h-4 text-slate-950" />
-            <span>{language === 'bn' ? 'ইনবক্স দেখুন ও উত্তর দিন' : 'Open Message Inbox'}</span>
-            <ArrowUpRight className="w-4 h-4 text-slate-950" />
+            <MessageSquare className="w-4 h-4" />
+            <span>
+              {language === 'bn' ? 'ওয়েবসাইট বার্তা ইনবক্স' : 'Website Inbox'}
+              {unreadMessagesCount > 0 ? ` (${language === 'bn' ? toBnNumber(unreadMessagesCount) : unreadMessagesCount})` : ''}
+            </span>
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Primary KPI Stats Grid */}
       {/* Primary KPI Stats Grid */}

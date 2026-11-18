@@ -4,6 +4,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { BlogPost } from '../../types';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
+import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   BookOpen,
   Plus,
@@ -201,16 +202,60 @@ export const BlogManagementView: React.FC = () => {
     return true;
   });
 
+  const blogLauncherItems: LauncherTileItem[] = [
+    {
+      id: 'all',
+      label: language === 'bn' ? 'সকল ব্লগ' : 'All Posts',
+      icon: Layers,
+      color: 'blue',
+      active: statusFilter === 'all',
+      badge: posts.length,
+      onClick: () => setStatusFilter('all'),
+    },
+    {
+      id: 'published',
+      label: language === 'bn' ? 'প্রকাশিত' : 'Published',
+      icon: Globe,
+      color: 'green',
+      active: statusFilter === 'published',
+      badge: posts.filter((p) => p.published).length || undefined,
+      onClick: () => setStatusFilter('published'),
+    },
+    {
+      id: 'draft',
+      label: language === 'bn' ? 'খসড়া (Draft)' : 'Drafts',
+      icon: FileText,
+      color: 'amber',
+      active: statusFilter === 'draft',
+      badge: posts.filter((p) => !p.published).length || undefined,
+      onClick: () => setStatusFilter('draft'),
+    },
+    ...(canManage
+      ? [
+          {
+            id: 'write',
+            label: language === 'bn' ? 'নতুন ব্লগ' : 'Write Article',
+            icon: Plus,
+            color: 'purple' as const,
+            onClick: handleOpenAdd,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* App-Launcher Icon Tile Grid */}
+      <LauncherIconGrid items={blogLauncherItems} columns={4} compact />
+
       {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center space-x-2">
-            <h2 className="text-xl font-bold text-slate-900">
+            <h2 className="text-lg font-extrabold text-slate-900">
               {language === 'bn' ? 'স্কুল ব্লগ ও পাবলিকেশন ম্যানেজমেন্ট' : 'School Blog & Publications'}
             </h2>
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+            <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
               {language === 'bn' ? `মোট ${toBnNumber(posts.length)}টি ব্লগ` : `${posts.length} posts`}
             </span>
           </div>
@@ -224,7 +269,7 @@ export const BlogManagementView: React.FC = () => {
         {canManage && (
           <button
             onClick={handleOpenAdd}
-            className="flex items-center space-x-1.5 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all"
+            className="flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
           >
             <Plus className="w-4 h-4" />
             <span>{language === 'bn' ? 'নতুন ব্লগ পোস্ট করুন' : 'Write New Article'}</span>
