@@ -1780,15 +1780,10 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
         setCameraFlash('warning');
         playBeep('warning');
 
-        const name = result.student?.nameBn || result.student?.nameEn || result.staff?.nameBn || result.staff?.nameEn || '';
-        const cooldownMins = rules.duplicateCooldownMinutes ?? 10;
         if (result.message.includes('উভয় হাজিরা')) {
-          speakBengaliVoice(`ডুপ্লিকেট সতর্কতা, ${name}। আজকের আগমন ও প্রস্থান উভয় হাজিরাই সম্পন্ন হয়েছে।`);
-        } else if (result.message.includes('ডুপ্লিকেট স্ক্যান রোধ')) {
-          speakBengaliVoice(`ডুপ্লিকেট স্ক্যান, ${name}। ${toBnNumber(cooldownMins)} মিনিটের মধ্যে হাজিরা পুনরায় নেওয়া হবে না।`);
+          speakBengaliVoice('আপনার আজকের আগমন ও প্রস্থান উভয় হাজিরাই ইতিমধ্যে রেকর্ড করা হয়েছে।');
         } else {
-          const actionName = result.scanType === 'out' ? 'প্রস্থান' : 'আগমন';
-          speakBengaliVoice(`ডুপ্লিকেট সতর্কতা, ${name}। আজকের ${actionName} ইতিপূর্বেই রেকর্ড করা হয়েছে।`);
+          speakBengaliVoice('আপনার হাজিরা ইতিমধ্যে রেকর্ড করা হয়েছে।');
         }
         setRecentScans(StorageService.getAttendanceAuditLogs().slice(0, 15));
       } else {
@@ -3174,7 +3169,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
                                 'Student'
                               }`
                             : lastScanResult.isDuplicate
-                            ? `ডুপ্লিকেট স্ক্যান (${toBnNumber(rules.duplicateCooldownMinutes ?? 10)} মিনিট নিয়ম)`
+                            ? 'আপনার হাজিরা ইতিমধ্যে রেকর্ড করা হয়েছে।'
                             : 'অকার্যকর স্ক্যান')}
                       </b>
                     </span>
