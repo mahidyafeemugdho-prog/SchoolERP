@@ -42,6 +42,9 @@ import {
   MfsPaymentSettings,
   OnlinePaymentRequest,
   StaffSalaryPayment,
+  SaleItem,
+  IncomeVoucher,
+  IncomeVoucherLineItem,
 } from '../types';
 import {
   buildSuperAdminPublishMeta,
@@ -116,6 +119,8 @@ const STORAGE_KEYS = {
   INVOICES: 'school_erp_invoices',
   PAYMENTS: 'school_erp_payments',
   EXPENSES: 'school_erp_expenses',
+  INCOME_VOUCHERS: 'school_erp_income_vouchers',
+  SALE_ITEMS: 'school_erp_sale_items',
   STAFF_SALARIES: 'school_erp_staff_salaries',
   ATTENDANCE: 'school_erp_attendance',
   ATTENDANCE_RULES: 'school_erp_attendance_rules',
@@ -170,6 +175,8 @@ if (typeof window !== 'undefined') {
     safeSetLocalStorage(STORAGE_KEYS.BOOK_ISSUES, JSON.stringify([]));
     safeSetLocalStorage(STORAGE_KEYS.ROUTES, JSON.stringify([]));
     safeSetLocalStorage(STORAGE_KEYS.EXPENSES, JSON.stringify([]));
+    safeSetLocalStorage(STORAGE_KEYS.INCOME_VOUCHERS, JSON.stringify([]));
+    safeSetLocalStorage(STORAGE_KEYS.SALE_ITEMS, JSON.stringify([]));
     safeSetLocalStorage(STORAGE_KEYS.STAFF_SALARIES, JSON.stringify([]));
     safeSetLocalStorage(STORAGE_KEYS.SCHEDULED_FEES, JSON.stringify([]));
     safeSetLocalStorage(STORAGE_KEYS.STUDENT_TRANSPORTS, JSON.stringify([]));
@@ -2193,6 +2200,120 @@ export const StorageService = {
     return true;
   },
 
+  // Sale Items Catalog (Books, Stationery, Canteen & Snacks, Uniforms)
+  getSaleItems(): SaleItem[] {
+    return getStored<SaleItem[]>(STORAGE_KEYS.SALE_ITEMS, []);
+  },
+  saveSaleItems(items: SaleItem[]): void {
+    setStored(STORAGE_KEYS.SALE_ITEMS, items);
+    CloudSyncService.pushSliceToCloud('finance', true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('school_sale_items_updated'));
+    }
+  },
+  addSaleItem(item: SaleItem): void {
+    const current = this.getSaleItems();
+    this.saveSaleItems([item, ...current]);
+  },
+  updateSaleItem(item: SaleItem): void {
+    const current = this.getSaleItems();
+    const updated = current.map((it) => (it.id === item.id ? { ...item, updatedAt: new Date().toISOString() } : it));
+    this.saveSaleItems(updated);
+  },
+  deleteSaleItem(id: string): void {
+    const current = this.getSaleItems();
+    this.saveSaleItems(current.filter((it) => it.id !== id));
+  },
+  applySaleItemStockDelta(lineItems: IncomeVoucherLineItem[], direction: -1 | 1): void {
+    if (!Array.isArray(lineItems) || lineItems.length === 0) return;
+    const deltaByItemId = new Map<string, number>();
+    lineItems.forEach((li) => {
+      if (li.saleItemId && li.quantity > 0) {
+        deltaByItemId.set(li.saleItemId, (deltaByItemId.get(li.saleItemId) || 0) + Number(li.quantity));
+      }
+    });
+    if (deltaByItemId.size === 0) return;
+    const currentItems = this.getSaleItems();
+    let changed = false;
+    const updatedItems = currentItems.map((catalogItem) => {
+      if (!catalogItem.trackStock) return catalogItem;
+      const qtyDelta = deltaByItemId.get(catalogItem.id);
+      if (!qtyDelta) return catalogItem;
+      changed = true;
+      const nextStock = Math.max(0, (Number(catalogItem.stockQty) || 0) + direction * qtyDelta);
+      return {
+        ...catalogItem,
+        stockQty: nextStock,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    if (changed) {
+      setStored(STORAGE_KEYS.SALE_ITEMS, updatedItems);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('school_sale_items_updated'));
+      }
+    }
+  },
+
+  // Income Vouchers & Store / Canteen Sales
+  getIncomeVouchers(): IncomeVoucher[] {
+    return getStored<IncomeVoucher[]>(STORAGE_KEYS.INCOME_VOUCHERS, []);
+  },
+  saveIncomeVouchers(vouchers: IncomeVoucher[]): void {
+    setStored(STORAGE_KEYS.INCOME_VOUCHERS, vouchers);
+    CloudSyncService.pushSliceToCloud('finance', true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('school_income_vouchers_updated'));
+    }
+  },
+  generateNextIncomeVoucherNo(dateStr?: string): string {
+    const year = (dateStr || new Date().toISOString().split('T')[0]).slice(0, 4) || String(new Date().getFullYear());
+    const prefix = `INC-${year}-`;
+    const existing = this.getIncomeVouchers();
+    let maxSeq = 0;
+    existing.forEach((v) => {
+      if (v.voucherNo && v.voucherNo.startsWith(prefix)) {
+        const n = parseInt(v.voucherNo.slice(prefix.length), 10);
+        if (!isNaN(n) && n > maxSeq) maxSeq = n;
+      }
+    });
+    return `${prefix}${String(maxSeq + 1).padStart(3, '0')}`;
+  },
+  addIncomeVoucher(voucher: IncomeVoucher): void {
+    this.applySaleItemStockDelta(voucher.items || [], -1);
+    const current = this.getIncomeVouchers();
+    this.saveIncomeVouchers([voucher, ...current]);
+  },
+  updateIncomeVoucher(voucher: IncomeVoucher, actorRole?: UserRole | null): boolean {
+    if (!canEditOrDeleteFinanceRecord(actorRole)) {
+      return false;
+    }
+    const current = this.getIncomeVouchers();
+    const existing = current.find((v) => v.id === voucher.id);
+    if (existing) {
+      this.applySaleItemStockDelta(existing.items || [], 1);
+    }
+    this.applySaleItemStockDelta(voucher.items || [], -1);
+    const updated = current.map((v) =>
+      v.id === voucher.id ? { ...voucher, updatedAt: new Date().toISOString() } : v
+    );
+    this.saveIncomeVouchers(updated);
+    return true;
+  },
+  deleteIncomeVoucher(id: string, actorRole?: UserRole | null): boolean {
+    if (!canEditOrDeleteFinanceRecord(actorRole)) {
+      return false;
+    }
+    const current = this.getIncomeVouchers();
+    const target = current.find((v) => v.id === id);
+    if (target) {
+      this.applySaleItemStockDelta(target.items || [], 1);
+    }
+    const updated = current.filter((v) => v.id !== id);
+    this.saveIncomeVouchers(updated);
+    return true;
+  },
+
   // Staff Salary & Monthly Payroll Ledger
   getStaffSalaries(): StaffSalaryPayment[] {
     return getStored<StaffSalaryPayment[]>(STORAGE_KEYS.STAFF_SALARIES, []);
@@ -3349,7 +3470,7 @@ export const StorageService = {
     }
 
     // Validate Student Active Status
-    if (student.status !== 'active') {
+    if (student.status && student.status !== 'active') {
       return {
         success: false,
         scanType: scanMode === 'out' ? 'out' : 'in',
@@ -4438,6 +4559,8 @@ export const StorageService = {
     const routes = this.getRoutes();
     const notices = this.getNotices();
     const expenses = this.getExpenses();
+    const incomeVouchers = this.getIncomeVouchers();
+    const saleItems = this.getSaleItems();
     const staffSalaries = this.getStaffSalaries();
 
     const stats: Record<string, number> = {
@@ -4456,6 +4579,8 @@ export const StorageService = {
       routes: routes.length,
       notices: notices.length,
       expenses: expenses.length,
+      incomeVouchers: incomeVouchers.length,
+      saleItems: saleItems.length,
       staffSalaries: staffSalaries.length,
     };
 
@@ -4533,6 +4658,8 @@ export const StorageService = {
 - পরিবহন রুট (Transport Routes)     : ${fullExport.stats.routes} টি
 - নোটিশ (Notices)                   : ${fullExport.stats.notices} টি
 - খরচের ভাউচার (Expenses)           : ${fullExport.stats.expenses} টি
+- আয় ভাউচার ও বিক্রয় (Income)        : ${fullExport.stats.incomeVouchers || 0} টি
+- বিক্রয় আইটেম ক্যাটালগ (Catalog)      : ${fullExport.stats.saleItems || 0} টি
 
 ------------------------------------------------------------------------
 ফাইল ও ফোল্ডার বিবরণী (Archive Structure):
@@ -4596,6 +4723,8 @@ export const StorageService = {
           classFees: this.getClassFeeConfigs(),
           invoices: this.getInvoices(),
           payments: this.getPayments(),
+          incomeVouchers: this.getIncomeVouchers(),
+          saleItems: this.getSaleItems(),
           mfsSettings: this.getMfsSettings(),
           onlinePaymentRequests: this.getOnlinePaymentRequests(),
         })
@@ -4819,6 +4948,8 @@ export const StorageService = {
         if (fees.classFees) dataPayload[STORAGE_KEYS.CLASS_FEES] = fees.classFees;
         if (fees.invoices) dataPayload[STORAGE_KEYS.INVOICES] = fees.invoices;
         if (fees.payments) dataPayload[STORAGE_KEYS.PAYMENTS] = fees.payments;
+        if (fees.incomeVouchers) dataPayload[STORAGE_KEYS.INCOME_VOUCHERS] = fees.incomeVouchers;
+        if (fees.saleItems) dataPayload[STORAGE_KEYS.SALE_ITEMS] = fees.saleItems;
         if (fees.mfsSettings) dataPayload[STORAGE_KEYS.MFS_SETTINGS] = fees.mfsSettings;
         if (fees.onlinePaymentRequests) dataPayload[STORAGE_KEYS.ONLINE_PAYMENT_REQUESTS] = fees.onlinePaymentRequests;
       }

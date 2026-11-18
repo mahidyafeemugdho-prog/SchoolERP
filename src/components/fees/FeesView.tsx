@@ -3,12 +3,13 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useSchool } from '../../context/SchoolContext';
 import { StorageService } from '../../services/storage';
-import { FeeInvoice, FeePayment, Expense, Student, FeeItem, ClassFeeConfig, OnlinePaymentRequest, MfsPaymentSettings } from '../../types';
+import { FeeInvoice, FeePayment, Expense, Student, FeeItem, ClassFeeConfig, OnlinePaymentRequest, MfsPaymentSettings, IncomeVoucher } from '../../types';
 import { ClassFeeSetupTab } from './ClassFeeSetupTab';
 import { ScheduledFeesTab } from './ScheduledFeesTab';
 import { TransportStudentsTab } from './TransportStudentsTab';
 import { StudentFeeStatementTab } from './StudentFeeStatementTab';
 import { StaffSalaryPayrollTab } from '../staff/StaffSalaryPayrollTab';
+import { IncomeVouchersSection } from './IncomeVouchersSection';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
 import { findDuplicatePaidFee } from '../../utils/feeDuplicateCheck';
@@ -139,6 +140,8 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const [invoices, setInvoices] = useState<FeeInvoice[]>(() => StorageService.getInvoices());
   const [payments, setPayments] = useState<FeePayment[]>(() => StorageService.getPayments());
   const [expenses, setExpenses] = useState<Expense[]>(() => StorageService.getExpenses());
+  const [incomeVouchers, setIncomeVouchers] = useState<IncomeVoucher[]>(() => StorageService.getIncomeVouchers());
+  const [incomeCreateSignal, setIncomeCreateSignal] = useState<number>(0);
   const [classFeeConfigs, setClassFeeConfigs] = useState<ClassFeeConfig[]>(() => StorageService.getClassFeeConfigs());
 
   // Online Fee Payments & Approvals State
@@ -148,18 +151,30 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const [syncTick, setSyncTick] = useState<number>(0);
   const skipNextAutoItemsRef = useRef<boolean>(false);
 
+  const refreshFinanceData = () => {
+    setInvoices(StorageService.getInvoices());
+    setPayments(StorageService.getPayments());
+    setExpenses(StorageService.getExpenses());
+    setIncomeVouchers(StorageService.getIncomeVouchers());
+    setClassFeeConfigs(StorageService.getClassFeeConfigs());
+    setOnlineRequests(StorageService.getOnlinePaymentRequests());
+    setMfsSettings(StorageService.getMfsSettings());
+    setSyncTick((n) => n + 1);
+  };
+
   useEffect(() => {
     const handleSync = () => {
-      setInvoices(StorageService.getInvoices());
-      setPayments(StorageService.getPayments());
-      setExpenses(StorageService.getExpenses());
-      setClassFeeConfigs(StorageService.getClassFeeConfigs());
-      setOnlineRequests(StorageService.getOnlinePaymentRequests());
-      setMfsSettings(StorageService.getMfsSettings());
-      setSyncTick((n) => n + 1);
+      refreshFinanceData();
+    };
+    const handleIncomeVoucherUpdate = () => {
+      setIncomeVouchers(StorageService.getIncomeVouchers());
     };
     window.addEventListener('school_cloud_data_synced', handleSync);
-    return () => window.removeEventListener('school_cloud_data_synced', handleSync);
+    window.addEventListener('school_income_vouchers_updated', handleIncomeVoucherUpdate);
+    return () => {
+      window.removeEventListener('school_cloud_data_synced', handleSync);
+      window.removeEventListener('school_income_vouchers_updated', handleIncomeVoucherUpdate);
+    };
   }, []);
   const [onlineStatusFilter, setOnlineStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
   const [onlineMethodFilter, setOnlineMethodFilter] = useState<'all' | 'bKash' | 'Nagad' | 'Rocket'>('all');
@@ -697,9 +712,11 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
 
   // Financial Totals
   const totalCollected = payments.reduce((sum, p) => sum + p.amount, 0);
+  const totalIncomeVouchersAmount = incomeVouchers.reduce((sum, v) => sum + (Number(v.amount) || 0), 0);
+  const totalInstitutionalIncome = totalCollected + totalIncomeVouchersAmount;
   const totalDues = comprehensiveDueEntries.reduce((sum, d) => sum + d.amount, 0);
   const totalExpensesAmount = expenses.reduce((sum, e) => sum + e.amount, 0);
-  const netCashInHand = totalCollected - totalExpensesAmount;
+  const netCashInHand = totalInstitutionalIncome - totalExpensesAmount;
 
   // Selected student's active transport mapping if any
   const selectedStudentTransport = useMemo(() => {
@@ -1807,7 +1824,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
     },
     {
       id: 'expenses',
-      label: language === 'bn' ? 'ব্যয় ও ভাউচার' : 'Expenses',
+      label: language === 'bn' ? 'আয় ও ব্যয় ভাউচার' : 'Vouchers & Store',
       icon: TrendingDown,
       color: 'red',
       active: activeTab === 'expenses',
@@ -1914,13 +1931,24 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
             </button>
           )}
           {canManage && activeTab === 'expenses' && (
-            <button
-              onClick={() => setShowExpenseModal(true)}
-              className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              <span>{language === 'bn' ? 'নতুন ভাউচার' : 'New Voucher'}</span>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setIncomeCreateSignal((n) => n + 1)}
+                className="flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                <span>{language === 'bn' ? 'নতুন আয় ভাউচার' : 'New Income'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowExpenseModal(true)}
+                className="flex items-center space-x-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                <span>{language === 'bn' ? 'ব্যয় ভাউচার' : 'New Expense'}</span>
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -1930,17 +1958,23 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
         <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500">
-              {language === 'bn' ? 'মোট সংগৃহীত ফি' : 'Total Fee Collections'}
+              {language === 'bn' ? 'মোট আয় ও সংগৃহীত ফি' : 'Total Income & Fees'}
             </span>
             <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
               <TrendingUp className="w-5 h-5" />
             </div>
           </div>
-          <div className="mt-2 text-xl font-bold text-slate-900">
-            {formatTaka(totalCollected)}
+          <div className="mt-2 text-xl font-bold text-slate-900 tabular-nums">
+            {formatTaka(totalInstitutionalIncome)}
           </div>
           <div className="text-[11px] text-slate-500 mt-1">
-            {language === 'bn' ? 'ক্যাশ, বিকাশ ও ব্যাংক প্রাপ্তি' : 'Cash, bKash & Bank receipts'}
+            {totalIncomeVouchersAmount > 0
+              ? language === 'bn'
+                ? `ফি: ${formatTaka(totalCollected)} • আয় ভাউচার: ${formatTaka(totalIncomeVouchersAmount)}`
+                : `Fees: ${formatTaka(totalCollected)} • Vouchers: ${formatTaka(totalIncomeVouchersAmount)}`
+              : language === 'bn'
+              ? 'ক্যাশ, বিকাশ ও ব্যাংক প্রাপ্তি'
+              : 'Cash, bKash & Bank receipts'}
           </div>
         </div>
 
@@ -3895,96 +3929,34 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
         />
       )}
 
-      {/* TAB: EXPENSES */}
+      {/* TAB: INCOME & EXPENSE VOUCHERS + STORE/CANTEEN POS */}
       {activeTab === 'expenses' && (
-        <div className="space-y-4">
-          {canManage && !canEditDeleteInvoices && (
-            <div className="px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-900 font-medium">
-              <Lock className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>
-                {language === 'bn'
-                  ? 'নিরাপত্তা নীতি: ব্যয় ভাউচার তৈরি হওয়ার পর হিসাবরক্ষক সেটি এডিট বা ডিলিট করতে পারবেন না — শুধুমাত্র সুপার অ্যাডমিন সংশোধন বা ডিলিট করতে পারবেন।'
-                  : 'Audit lock: Created expense vouchers cannot be edited or deleted by Accountants — only Super Admin can edit or delete them.'}
-              </span>
-            </div>
-          )}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-          <div className="p-4 border-b border-slate-200 flex items-center justify-between text-xs">
-            <span className="font-bold text-slate-900 text-sm">
-              {language === 'bn' ? 'বিদ্যালয়ের পরিচালনা ও প্রাতিষ্ঠানিক ব্যয়' : 'Institutional Operational Expenses'}
-            </span>
-            <span className="text-slate-500 font-semibold">
-              Total Expenses: {formatTaka(totalExpensesAmount)}
-            </span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase">
-                  <th className="py-3 px-4">Voucher No</th>
-                  <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">Description</th>
-                  <th className="py-3 px-4">Paid To</th>
-                  <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4 text-right">Amount</th>
-                  <th className="py-3 px-4 text-right">Action / অ্যাকশন</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {expenses.map((e) => (
-                  <tr key={e.id} className="hover:bg-slate-50/60">
-                    <td className="py-3 px-4 font-bold text-slate-800">{e.voucherNo}</td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                        {e.category}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-semibold text-slate-900">{e.title}</td>
-                    <td className="py-3 px-4 text-slate-700">{e.paidTo}</td>
-                    <td className="py-3 px-4 text-slate-500">{e.date}</td>
-                    <td className="py-3 px-4 text-right font-bold text-rose-600 text-sm">
-                      {formatTaka(e.amount)}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      {canEditDeleteInvoices ? (
-                        <div className="flex items-center justify-end space-x-1">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEditExpense(e)}
-                            className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                            title="ভাউচার এডিট করুন"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteExpense(e)}
-                            className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                            title="ভাউচার মুছে ফেলুন"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ) : canManage ? (
-                        <span
-                          className="inline-flex items-center p-1.5 text-slate-400 bg-slate-100 rounded-lg border border-slate-200 cursor-not-allowed"
-                          title={
-                            language === 'bn'
-                              ? 'শুধুমাত্র সুপার অ্যাডমিন ব্যয় ভাউচার এডিট বা ডিলিট করতে পারবেন'
-                              : 'Only Super Admin can edit or delete expense vouchers'
-                          }
-                        >
-                          <Lock className="w-3.5 h-3.5" />
-                        </span>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          </div>
-        </div>
+        <IncomeVouchersSection
+          activeRole={activeRole}
+          currentUserName={currentUser.name}
+          school={school}
+          language={language}
+          students={students}
+          expenses={expenses}
+          incomeVouchers={incomeVouchers}
+          canManage={canManage}
+          canEditDeleteInvoices={canEditDeleteInvoices}
+          formatTaka={formatTaka}
+          toBnNumber={toBnNumber}
+          formatDate={formatDate}
+          amountInWords={amountInWords}
+          onRefreshAll={refreshFinanceData}
+          onOpenNewExpenseModal={() => {
+            setEditingExpense(null);
+            setExpenseTitle('');
+            setExpenseAmount(0);
+            setExpensePaidTo('');
+            setShowExpenseModal(true);
+          }}
+          onEditExpense={handleOpenEditExpense}
+          onDeleteExpense={handleDeleteExpense}
+          externalCreateSignal={incomeCreateSignal}
+        />
       )}
 
       {/* TAB: CASHBOOK */}
@@ -4019,10 +3991,70 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
             <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50">
               <h4 className="font-bold text-emerald-800 border-b border-emerald-200 pb-2 mb-3 flex items-center justify-between">
-                <span>INCOME (আদায়)</span>
-                <span className="text-sm">{formatTaka(totalCollected)}</span>
+                <span>INCOME (আদায় ও বিক্রয়)</span>
+                <span className="text-sm tabular-nums">{formatTaka(totalInstitutionalIncome)}</span>
               </h4>
               <div className="space-y-2">
+                {incomeVouchers.map((v) => (
+                  <div key={v.id} className="flex justify-between items-center py-1.5 border-b border-slate-100 hover:bg-white/80 px-2 rounded-lg transition-colors">
+                    <div>
+                      <div className="font-semibold text-slate-800 flex items-center gap-1.5">
+                        <span>{v.title}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] font-bold">
+                          {v.voucherNo}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        {v.date} • {v.receivedFrom} • {v.paymentMethod}
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span className="font-bold text-emerald-700 tabular-nums">{formatTaka(v.amount)}</span>
+                      {canEditDeleteInvoices ? (
+                        <div className="flex items-center space-x-1">
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('expenses')}
+                            className="p-1 text-slate-400 hover:text-indigo-600 rounded"
+                            title={language === 'bn' ? 'ভাউচার সেকশনে দেখুন/এডিট' : 'View/Edit in Vouchers'}
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  language === 'bn'
+                                    ? `আয় ভাউচার "${v.voucherNo}" (${formatTaka(v.amount)}) মুছে ফেলবেন?`
+                                    : `Delete income voucher "${v.voucherNo}"?`
+                                )
+                              ) {
+                                StorageService.deleteIncomeVoucher(v.id, activeRole);
+                                refreshFinanceData();
+                              }
+                            }}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                            title={language === 'bn' ? 'আয় ভাউচার মুছে ফেলুন' : 'Delete income voucher'}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ) : canManage ? (
+                        <span
+                          className="inline-flex items-center p-1 text-slate-400 bg-slate-100 rounded border border-slate-200 cursor-not-allowed"
+                          title={
+                            language === 'bn'
+                              ? 'শুধুমাত্র সুপার অ্যাডমিন আয় ভাউচার এডিট বা ডিলিট করতে পারবেন'
+                              : 'Only Super Admin can edit or delete income vouchers'
+                          }
+                        >
+                          <Lock className="w-3 h-3" />
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
                 {payments.map((p) => (
                   <div key={p.id} className="flex justify-between items-center py-1.5 border-b border-slate-100 hover:bg-white/80 px-2 rounded-lg transition-colors">
                     <div>

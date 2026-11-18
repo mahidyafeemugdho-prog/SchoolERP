@@ -505,6 +505,54 @@ export interface Expense {
   notes?: string;
 }
 
+export type SaleItemCategory = 'Books' | 'Stationery' | 'Canteen' | 'Uniform' | 'Other';
+
+export interface SaleItem {
+  id: string;
+  nameBn: string;
+  nameEn: string;
+  category: SaleItemCategory;
+  unitPrice: number;
+  costPrice?: number;
+  unit?: string;
+  stockQty: number;
+  trackStock: boolean;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface IncomeVoucherLineItem {
+  id: string;
+  saleItemId?: string;
+  name: string;
+  category: SaleItemCategory;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+}
+
+export interface IncomeVoucher {
+  id: string;
+  voucherNo: string;
+  category: SaleItemCategory | 'Mixed';
+  title: string;
+  items: IncomeVoucherLineItem[];
+  subtotal: number;
+  discount: number;
+  amount: number;
+  date: string;
+  receivedFrom: string;
+  buyerPhone?: string;
+  studentId?: string;
+  paymentMethod: 'Cash' | 'bKash' | 'Nagad' | 'Bank';
+  transactionId?: string;
+  receivedBy: string;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export type DayOfWeek = 'Saturday' | 'Sunday' | 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday';
 
 export interface RoutinePeriod {

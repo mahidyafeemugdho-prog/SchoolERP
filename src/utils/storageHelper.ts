@@ -186,7 +186,22 @@ export async function compressImageToPassportSize(
         }
 
         ctx.drawImage(img, 0, 0, width, height);
-        const compressed = canvas.toDataURL('image/jpeg', quality);
+        let q = quality;
+        let compressed = canvas.toDataURL('image/jpeg', q);
+        while (compressed.length > 38000 && q > 0.35) {
+          q = Math.max(0.32, q - 0.12);
+          compressed = canvas.toDataURL('image/jpeg', q);
+        }
+        if (compressed.length > 38000) {
+          const smallCanvas = document.createElement('canvas');
+          smallCanvas.width = Math.max(120, Math.round(width * 0.75));
+          smallCanvas.height = Math.max(150, Math.round(height * 0.75));
+          const sCtx = smallCanvas.getContext('2d');
+          if (sCtx) {
+            sCtx.drawImage(canvas, 0, 0, smallCanvas.width, smallCanvas.height);
+            compressed = smallCanvas.toDataURL('image/jpeg', 0.55);
+          }
+        }
         resolve(compressed);
       };
 

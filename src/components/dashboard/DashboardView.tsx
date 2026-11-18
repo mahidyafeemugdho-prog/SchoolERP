@@ -110,7 +110,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
   const attendanceRate =
     todayAttendance.length > 0 ? Math.round((presentCount / todayAttendance.length) * 100) : 0;
 
-  const totalFeeCollected = payments.reduce((sum, p) => sum + p.amount, 0);
+  const incomeVouchers = StorageService.getIncomeVouchers();
+  const totalIncomeVoucherCollected = incomeVouchers.reduce((sum, v) => sum + (Number(v.amount) || 0), 0);
+  const totalFeeCollected = payments.reduce((sum, p) => sum + p.amount, 0) + totalIncomeVoucherCollected;
   const totalDues = (() => {
     const studentDueSum = students.reduce((sum, st) => {
       const dues = StorageService.getStudentDueFees(st);

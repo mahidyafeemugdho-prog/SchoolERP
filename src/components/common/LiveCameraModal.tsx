@@ -118,6 +118,18 @@ export const LiveCameraModal: React.FC<LiveCameraModalProps> = ({
     }
 
     streamRef.current = stream;
+    try {
+      const videoTrack = stream.getVideoTracks()[0];
+      const settingsFacing = videoTrack?.getSettings?.()?.facingMode;
+      const trackLabel = videoTrack?.label || '';
+      if (settingsFacing === 'user' || settingsFacing === 'environment') {
+        setFacing(settingsFacing);
+      } else if (/front|user|selfie|facetime|integrated/i.test(trackLabel)) {
+        setFacing('user');
+      } else if (/back|rear|environment/i.test(trackLabel)) {
+        setFacing('environment');
+      }
+    } catch {}
     if (videoRef.current) {
       videoRef.current.srcObject = stream;
       try {

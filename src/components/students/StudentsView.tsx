@@ -1148,7 +1148,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                   <LiveCameraModal
                     isOpen={showPhotoCamera}
                     title={language === 'bn' ? 'শিক্ষার্থীর ফেস ছবি তুলুন' : 'Capture Student Face Photo'}
-                    defaultFacing="environment"
+                    defaultFacing="user"
                     onCapture={(dataUrl) => setFormData((prev) => ({ ...prev, photoUrl: dataUrl }))}
                     onClose={() => setShowPhotoCamera(false)}
                   />

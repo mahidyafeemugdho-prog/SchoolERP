@@ -14,6 +14,7 @@ import {
   IDCardTheme,
 } from '../common/ModernIDCardFronts';
 import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
+import { LiveCameraModal } from '../common/LiveCameraModal';
 import {
   UserPlus,
   Users,
@@ -110,6 +111,7 @@ export const AdmissionsView: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const enrollFileInputRef = useRef<HTMLInputElement>(null);
+  const [cameraTarget, setCameraTarget] = useState<'add' | 'enroll' | null>(null);
 
   const canManage = activeRole === 'super_admin' || activeRole === 'admin' || activeRole === 'receptionist' || activeRole === 'master_admin';
 
@@ -597,6 +599,14 @@ export const AdmissionsView: React.FC = () => {
                       <Upload className="w-3.5 h-3.5" />
                       <span>{photoUrl ? (language === 'bn' ? 'ছবি পরিবর্তন' : 'Change Photo') : (language === 'bn' ? 'ছবি বাছাই করুন' : 'Choose Photo')}</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setCameraTarget('add')}
+                      className="flex items-center space-x-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>{language === 'bn' ? 'ক্যামেরা দিয়ে তুলুন' : 'Take Face Photo'}</span>
+                    </button>
                     {!photoUrl && (
                       <button
                         type="button"
@@ -815,6 +825,24 @@ export const AdmissionsView: React.FC = () => {
                   <p className="text-xs text-slate-600">{targetEnquiry.applicantNameBn}</p>
                   <div className="text-[11px] text-blue-700 font-semibold mt-0.5">
                     Class: {targetEnquiry.applyingClass} • Guardian: {targetEnquiry.guardianName}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setCameraTarget('enroll')}
+                      className="inline-flex items-center space-x-1 px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold shadow-xs"
+                    >
+                      <Camera className="w-3 h-3" />
+                      <span>{language === 'bn' ? 'ক্যামেরায় ফেস তুলুন' : 'Live Face Cam'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => enrollFileInputRef.current?.click()}
+                      className="inline-flex items-center space-x-1 px-2 py-1 bg-white border border-blue-200 hover:bg-blue-50 text-blue-700 rounded-lg text-[10px] font-bold"
+                    >
+                      <Upload className="w-3 h-3" />
+                      <span>{language === 'bn' ? 'গ্যালারি' : 'Upload'}</span>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1135,6 +1163,19 @@ export const AdmissionsView: React.FC = () => {
           </div>
         </div>
       )}
+      <LiveCameraModal
+        isOpen={cameraTarget !== null}
+        title={language === 'bn' ? 'শিক্ষার্থীর ফেস ছবি তুলুন' : 'Capture Student Face Photo'}
+        defaultFacing="user"
+        onCapture={(dataUrl) => {
+          if (cameraTarget === 'add') {
+            setPhotoUrl(dataUrl);
+          } else if (cameraTarget === 'enroll') {
+            setEnrollPhotoUrl(dataUrl);
+          }
+        }}
+        onClose={() => setCameraTarget(null)}
+      />
     </div>
   );
 };

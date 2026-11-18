@@ -284,7 +284,7 @@ describe('Face Recognition Helper', () => {
     expect(cleanMatch.matched).toBe(true);
     expect(cleanMatch.bestCandidate?.person).toBe('Alice');
 
-    // Near-identical scores between two different people in [0.71, 0.84) must trigger ambiguity guard
+    // Near-identical scores between two different people in [0.66, 0.82) must trigger ambiguity guard
     const nearTie = matchFaceDescriptor(
       [vecA],
       [
@@ -295,6 +295,74 @@ describe('Face Recognition Helper', () => {
     );
     expect(nearTie.isAmbiguous).toBe(true);
     expect(nearTie.matched).toBe(false);
+  });
+
+  it('matches horizontally mirrored selfies and directional window lighting via multi-variant candidate vecs without self-ambiguity', () => {
+    const faceBase = makeSyntheticFaceRgba(0, false);
+
+    // Horizontally mirror faceBase to simulate selfie vs back/uploaded camera difference
+    const mirrored16 = new Uint8ClampedArray(16 * 16 * 4);
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        const srcIdx = (y * 16 + (15 - x)) * 4;
+        const dstIdx = (y * 16 + x) * 4;
+        mirrored16[dstIdx] = faceBase.rgba16[srcIdx];
+        mirrored16[dstIdx + 1] = faceBase.rgba16[srcIdx + 1];
+        mirrored16[dstIdx + 2] = faceBase.rgba16[srcIdx + 2];
+        mirrored16[dstIdx + 3] = 255;
+      }
+    }
+    const mirrored8 = new Uint8ClampedArray(8 * 8 * 4);
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) {
+        const srcIdx = (y * 2 * 16 + x * 2) * 4;
+        const dstIdx = (y * 8 + x) * 4;
+        mirrored8[dstIdx] = mirrored16[srcIdx];
+        mirrored8[dstIdx + 1] = mirrored16[srcIdx + 1];
+        mirrored8[dstIdx + 2] = mirrored16[srcIdx + 2];
+        mirrored8[dstIdx + 3] = 255;
+      }
+    }
+
+    // Add strong directional left-to-right lighting ramp on top of mirrored face
+    const litMirrored16 = new Uint8ClampedArray(mirrored16);
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        const idx = (y * 16 + x) * 4;
+        const ramp = Math.round((x - 7.5) * 4);
+        litMirrored16[idx] = Math.max(0, Math.min(255, litMirrored16[idx] + ramp));
+        litMirrored16[idx + 1] = Math.max(0, Math.min(255, litMirrored16[idx + 1] + ramp));
+        litMirrored16[idx + 2] = Math.max(0, Math.min(255, litMirrored16[idx + 2] + ramp));
+      }
+    }
+
+    const vecNormal = extractFaceDescriptorFromImageData(faceBase.rgba16, faceBase.rgba8)!;
+    const vecMirrored = extractFaceDescriptorFromImageData(mirrored16, mirrored8)!;
+    const vecLiveLitMirrored = extractFaceDescriptorFromImageData(litMirrored16, mirrored8)!;
+    const other = makeSyntheticDifferentFaceRgba();
+    const vecOther = extractFaceDescriptorFromImageData(other.rgba16, other.rgba8)!;
+
+    // Multi-variant bank (normal + mirrored) for same person alongside another distinct student
+    const matchRes = matchFaceDescriptor(
+      [vecLiveLitMirrored],
+      [
+        { person: { id: 'stu_self' }, vecs: [vecNormal, vecMirrored] },
+        { person: { id: 'stu_other' }, vecs: [vecOther] },
+      ],
+      { isSilentAuto: true, hasDetectedBox: false }
+    );
+
+    expect(matchRes.isAmbiguous).toBe(false);
+    expect(matchRes.matched).toBe(true);
+    expect(matchRes.bestCandidate?.person.id).toBe('stu_self');
+
+    // Cool indoor LED tint should still satisfy analyzeCenterFacePresence
+    const coolFace = new Uint8ClampedArray(faceBase.rgba16);
+    for (let i = 0; i < coolFace.length; i += 4) {
+      coolFace[i] = Math.max(0, coolFace[i] - 10);
+      coolFace[i + 2] = Math.min(255, coolFace[i + 2] + 18);
+    }
+    expect(analyzeCenterFacePresence(coolFace).hasSkinPresence).toBe(true);
   });
 });
 
@@ -433,5 +501,55 @@ describe('QR & Face Attendance Storage Pipeline', () => {
     vi.clearAllMocks();
     StorageService.updateStaff({ ...staff, photoUrl: 'data:image/jpeg;base64,abc' });
     expect(pushSliceMock).toHaveBeenCalledWith('staff', true);
+  });
+
+  it('persists face photo across admission enquiry -> enrollment and marks face_scan attendance immediately', () => {
+    const faceDataUrl = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/testface';
+    StorageService.addEnquiry({
+      id: 'enq_face_1',
+      applicationNo: 'APP-2026-9901',
+      applicantNameEn: 'Sabbir Rahman',
+      applicantNameBn: 'সাব্বির রহমান',
+      applyingClass: 'Class 8',
+      gender: 'Male',
+      dob: '2012-03-10',
+      bloodGroup: 'O+',
+      photoUrl: faceDataUrl,
+      guardianName: 'Kamal Rahman',
+      phone: '01711009988',
+      address: 'Mirpur, Dhaka',
+      status: 'Approved',
+      appliedDate: '2026-11-18',
+    });
+
+    const enrolled = StorageService.convertEnquiryToStudent(
+      'enq_face_1',
+      '07',
+      'A',
+      'Day',
+      'SCH001-S-2026-1099',
+      undefined,
+      'O+',
+      '2026'
+    );
+
+    expect(enrolled).not.toBeNull();
+    expect(enrolled!.photoUrl).toBe(faceDataUrl);
+    expect(enrolled!.status).toBe('active');
+
+    const storedStudent = StorageService.getStudents().find((s) => s.id === enrolled!.id);
+    expect(storedStudent?.photoUrl).toBe(faceDataUrl);
+
+    const faceScanRes = StorageService.processQRScan(
+      enrolled!.id,
+      'AI Face Scanner',
+      '2026-11-18',
+      'auto',
+      'face_scan'
+    );
+    expect(faceScanRes.success).toBe(true);
+    expect(faceScanRes.scanType).toBe('in');
+    expect(faceScanRes.record?.method).toBe('face_scan');
+    expect(faceScanRes.record?.targetId).toBe(enrolled!.id);
   });
 });

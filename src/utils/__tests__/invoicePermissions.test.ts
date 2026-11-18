@@ -198,4 +198,107 @@ describe('Finance Edit/Delete Role Permissions (Invoices, Receipts, Expenses, Ca
     expect(StorageService.deleteExpense(exp.id, 'super_admin')).toBe(true);
     expect(StorageService.getExpenses().find((e) => e.id === exp.id)).toBeUndefined();
   });
+
+  it('tracks catalog stock on income voucher sales and enforces Super Admin-only edit/delete', () => {
+    StorageService.addSaleItem({
+      id: 'sale_khata_1',
+      nameBn: 'স্কুল খাতা (৮০ পাতা)',
+      nameEn: 'School Notebook',
+      category: 'Stationery',
+      unitPrice: 35,
+      unit: 'টি',
+      stockQty: 50,
+      trackStock: true,
+      isActive: true,
+    });
+    StorageService.addSaleItem({
+      id: 'sale_singara_1',
+      nameBn: 'গরম সিঙ্গারা',
+      nameEn: 'Singara',
+      category: 'Canteen',
+      unitPrice: 15,
+      unit: 'পিস',
+      stockQty: 100,
+      trackStock: false,
+      isActive: true,
+    });
+
+    const voucherNo1 = StorageService.generateNextIncomeVoucherNo('2026-11-18');
+    expect(voucherNo1).toBe('INC-2026-001');
+
+    StorageService.addIncomeVoucher({
+      id: 'inc_test_1',
+      voucherNo: voucherNo1,
+      category: 'Mixed',
+      title: 'খাতা ও সিঙ্গারা বিক্রয়',
+      items: [
+        {
+          id: 'l1',
+          saleItemId: 'sale_khata_1',
+          name: 'স্কুল খাতা (৮০ পাতা)',
+          category: 'Stationery',
+          quantity: 4,
+          unitPrice: 35,
+          total: 140,
+        },
+        {
+          id: 'l2',
+          saleItemId: 'sale_singara_1',
+          name: 'গরম সিঙ্গারা',
+          category: 'Canteen',
+          quantity: 6,
+          unitPrice: 15,
+          total: 90,
+        },
+      ],
+      subtotal: 230,
+      discount: 10,
+      amount: 220,
+      date: '2026-11-18',
+      receivedFrom: 'Rahim (Class 8)',
+      paymentMethod: 'Cash',
+      receivedBy: 'Accountant',
+    });
+
+    const khataAfterSale = StorageService.getSaleItems().find((i) => i.id === 'sale_khata_1');
+    const singaraAfterSale = StorageService.getSaleItems().find((i) => i.id === 'sale_singara_1');
+    expect(khataAfterSale?.stockQty).toBe(46);
+    expect(singaraAfterSale?.stockQty).toBe(100);
+    expect(StorageService.generateNextIncomeVoucherNo('2026-11-18')).toBe('INC-2026-002');
+
+    const storedVoucher = StorageService.getIncomeVouchers().find((v) => v.id === 'inc_test_1')!;
+    expect(storedVoucher.amount).toBe(220);
+
+    // Accountant cannot edit or delete existing income voucher
+    expect(
+      StorageService.updateIncomeVoucher({ ...storedVoucher, amount: 100 }, 'accountant')
+    ).toBe(false);
+    expect(StorageService.deleteIncomeVoucher(storedVoucher.id, 'accountant')).toBe(false);
+    expect(StorageService.getIncomeVouchers().find((v) => v.id === 'inc_test_1')?.amount).toBe(220);
+    expect(StorageService.getSaleItems().find((i) => i.id === 'sale_khata_1')?.stockQty).toBe(46);
+
+    // Super Admin can edit (changing qty from 4 to 2 restores 2 notebooks -> 48)
+    expect(
+      StorageService.updateIncomeVoucher(
+        {
+          ...storedVoucher,
+          items: [
+            { ...storedVoucher.items[0], quantity: 2, total: 70 },
+            storedVoucher.items[1],
+          ],
+          subtotal: 160,
+          discount: 0,
+          amount: 160,
+        },
+        'super_admin'
+      )
+    ).toBe(true);
+    expect(StorageService.getSaleItems().find((i) => i.id === 'sale_khata_1')?.stockQty).toBe(48);
+    expect(StorageService.getIncomeVouchers().find((v) => v.id === 'inc_test_1')?.amount).toBe(160);
+
+    // Super Admin delete restores full stock back to 50
+    expect(StorageService.deleteIncomeVoucher('inc_test_1', 'super_admin')).toBe(true);
+    expect(StorageService.getIncomeVouchers().find((v) => v.id === 'inc_test_1')).toBeUndefined();
+    expect(StorageService.getSaleItems().find((i) => i.id === 'sale_khata_1')?.stockQty).toBe(50);
+  });
 });
