@@ -2153,6 +2153,19 @@ export const StorageService = {
   getExpenses(): Expense[] {
     return getStored<Expense[]>(STORAGE_KEYS.EXPENSES, initialExpenses);
   },
+  generateNextExpenseVoucherNo(dateStr?: string): string {
+    const year = (dateStr || new Date().toISOString().split('T')[0]).slice(0, 4) || String(new Date().getFullYear());
+    const prefix = `VOUCH-${year}-`;
+    const existing = this.getExpenses();
+    let maxSeq = 500;
+    existing.forEach((e) => {
+      if (e.voucherNo && e.voucherNo.startsWith(prefix)) {
+        const n = parseInt(e.voucherNo.slice(prefix.length), 10);
+        if (!isNaN(n) && n > maxSeq) maxSeq = n;
+      }
+    });
+    return `${prefix}${String(maxSeq + 1).padStart(3, '0')}`;
+  },
   addExpense(expense: Expense): void {
     const current = this.getExpenses();
     setStored(STORAGE_KEYS.EXPENSES, [expense, ...current]);

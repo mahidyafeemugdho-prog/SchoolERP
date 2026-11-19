@@ -157,9 +157,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   const [meritPrintNotice, setMeritPrintNotice] = useState<string | null>(null);
 
   // Combined Multi-Exam Final CGPA Merit List State
-  const [meritMode, setMeritMode] = useState<'combined' | 'single'>(() =>
-    exams.length > 1 ? 'combined' : 'single'
-  );
+  const [meritMode, setMeritMode] = useState<'combined' | 'single'>('single');
   const [meritSelectedExamIds, setMeritSelectedExamIds] = useState<string[]>(() =>
     exams.map((e) => e.id)
   );
@@ -910,6 +908,14 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
 
   const examLauncherItems: LauncherTileItem[] = [
     {
+      id: 'exams',
+      label: language === 'bn' ? 'পরীক্ষার তালিকা' : 'Exams List',
+      icon: Award,
+      color: 'red',
+      active: activeTab === 'exams',
+      onClick: () => setActiveTab('exams'),
+    },
+    {
       id: 'exam_routine',
       label: language === 'bn' ? 'পরীক্ষার রুটিন' : 'Exam Routine',
       icon: Calendar,
@@ -941,14 +947,6 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
           },
         ]
       : []),
-    {
-      id: 'exams',
-      label: language === 'bn' ? 'পরীক্ষার তালিকা' : 'Exams List',
-      icon: Award,
-      color: 'red',
-      active: activeTab === 'exams',
-      onClick: () => setActiveTab('exams'),
-    },
     ...(canManage
       ? [
           {
@@ -3088,6 +3086,17 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                   <div className="inline-flex rounded-xl bg-white p-1 border border-slate-200 shadow-2xs">
                     <button
                       type="button"
+                      onClick={() => setMeritMode('single')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                        meritMode === 'single'
+                          ? 'bg-blue-700 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {language === 'bn' ? 'একক পরীক্ষা (Single Exam)' : 'Single Exam Only'}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setMeritMode('combined')}
                       className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
                         meritMode === 'combined'
@@ -3098,17 +3107,6 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                       {language === 'bn'
                         ? 'সকল পরীক্ষা মিলিয়ে ১টি ফাইনাল CGPA (Combined)'
                         : 'Combined Final CGPA (All Selected Exams)'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setMeritMode('single')}
-                      className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
-                        meritMode === 'single'
-                          ? 'bg-blue-700 text-white shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      {language === 'bn' ? 'একক পরীক্ষা (Single Exam)' : 'Single Exam Only'}
                     </button>
                   </div>
 

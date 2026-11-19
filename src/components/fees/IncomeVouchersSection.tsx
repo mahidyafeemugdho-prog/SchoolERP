@@ -13,6 +13,15 @@ import { StorageService } from '../../services/storage';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { DigitInput } from '../common/DigitInput';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
+import { PeriodFilterBar } from './PeriodFilterBar';
+import { ExpenseSummaryPrintModal, IncomeSummaryPrintModal } from './FinancePrintModals';
+import {
+  DateFilterPeriod,
+  getPeriodDisplayLabel,
+  isDateInPeriod,
+  normalizeExpenseItems,
+  toLocalIsoDate,
+} from '../../utils/financeFilters';
 import {
   Plus,
   Search,
@@ -58,6 +67,7 @@ interface IncomeVouchersSectionProps {
   onOpenNewExpenseModal: () => void;
   onEditExpense: (exp: Expense) => void;
   onDeleteExpense: (exp: Expense) => void;
+  onPrintExpense?: (exp: Expense) => void;
   initialSubMode?: 'income' | 'expense' | 'catalog';
   externalCreateSignal?: number;
 }
@@ -353,6 +363,7 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
   onOpenNewExpenseModal,
   onEditExpense,
   onDeleteExpense,
+  onPrintExpense,
   initialSubMode = 'income',
   externalCreateSignal = 0,
 }) => {
@@ -369,10 +380,23 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
     };
   }, []);
 
+  const localToday = toLocalIsoDate();
+
   // Income voucher filters
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<SaleItemCategory | 'All'>('All');
-  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'month'>('all');
+  const [dateFilter, setDateFilter] = useState<DateFilterPeriod>('all');
+  const [incomeCustomStart, setIncomeCustomStart] = useState<string>(localToday);
+  const [incomeCustomEnd, setIncomeCustomEnd] = useState<string>(localToday);
+
+  // Expense voucher filters & print modals
+  const [expSearchQuery, setExpSearchQuery] = useState<string>('');
+  const [expCategoryFilter, setExpCategoryFilter] = useState<string>('All');
+  const [expDateFilter, setExpDateFilter] = useState<DateFilterPeriod>('all');
+  const [expCustomStart, setExpCustomStart] = useState<string>(localToday);
+  const [expCustomEnd, setExpCustomEnd] = useState<string>(localToday);
+  const [showIncomeSummaryPrint, setShowIncomeSummaryPrint] = useState<boolean>(false);
+  const [showExpenseSummaryPrint, setShowExpenseSummaryPrint] = useState<boolean>(false);
 
   // POS / Voucher Modal State
   const [showVoucherModal, setShowVoucherModal] = useState<boolean>(false);
@@ -435,8 +459,7 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
     }
   }, [externalCreateSignal]);
 
-  const todayIso = new Date().toISOString().split('T')[0];
-  const monthPrefix = todayIso.slice(0, 7);
+  const todayIso = toLocalIsoDate();
 
   // KPI Metrics for Income Vouchers
   const incomeMetrics = useMemo(() => {
@@ -449,7 +472,7 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
     incomeVouchers.forEach((v) => {
       const amt = Number(v.amount) || 0;
       totalAmount += amt;
-      if (v.date === todayIso) {
+      if (isDateInPeriod(v.date, 'today')) {
         todayAmount += amt;
         todayCount += 1;
       }
@@ -481,18 +504,51 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
       booksStationeryAmount,
       canteenAmount,
     };
-  }, [incomeVouchers, todayIso]);
+  }, [incomeVouchers]);
 
   const totalExpensesAmount = useMemo(
     () => expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0),
     [expenses]
   );
 
+  const expenseCategories = useMemo(() => {
+    const set = new Set<string>();
+    expenses.forEach((e) => {
+      if (e.category) set.add(e.category);
+    });
+    return Array.from(set);
+  }, [expenses]);
+
+  const expenseMetrics = useMemo(() => {
+    let todayAmount = 0;
+    let todayCount = 0;
+    let monthAmount = 0;
+    let totalItemsCount = 0;
+
+    expenses.forEach((e) => {
+      const amt = Number(e.amount) || 0;
+      if (isDateInPeriod(e.date, 'today')) {
+        todayAmount += amt;
+        todayCount += 1;
+      }
+      if (isDateInPeriod(e.date, 'month')) {
+        monthAmount += amt;
+      }
+      totalItemsCount += normalizeExpenseItems(e).length;
+    });
+
+    return {
+      todayAmount,
+      todayCount,
+      monthAmount,
+      totalItemsCount,
+    };
+  }, [expenses]);
+
   // Filtered Income Vouchers
   const filteredVouchers = useMemo(() => {
     return incomeVouchers.filter((v) => {
-      if (dateFilter === 'today' && v.date !== todayIso) return false;
-      if (dateFilter === 'month' && !v.date?.startsWith(monthPrefix)) return false;
+      if (!isDateInPeriod(v.date, dateFilter, incomeCustomStart, incomeCustomEnd)) return false;
       if (categoryFilter !== 'All') {
         const matchesMain = v.category === categoryFilter;
         const matchesItem = Array.isArray(v.items) && v.items.some((it) => it.category === categoryFilter);
@@ -511,7 +567,30 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
       }
       return true;
     });
-  }, [incomeVouchers, dateFilter, categoryFilter, searchQuery, todayIso, monthPrefix]);
+  }, [incomeVouchers, dateFilter, incomeCustomStart, incomeCustomEnd, categoryFilter, searchQuery]);
+
+  // Filtered Expense Vouchers
+  const filteredExpenses = useMemo(() => {
+    return expenses.filter((e) => {
+      if (!isDateInPeriod(e.date, expDateFilter, expCustomStart, expCustomEnd)) return false;
+      if (expCategoryFilter !== 'All' && e.category !== expCategoryFilter) return false;
+      if (expSearchQuery.trim() !== '') {
+        const q = expSearchQuery.toLowerCase().trim();
+        const itemText = normalizeExpenseItems(e)
+          .map((it) => it.description)
+          .join(' ')
+          .toLowerCase();
+        return (
+          e.voucherNo.toLowerCase().includes(q) ||
+          e.title.toLowerCase().includes(q) ||
+          (e.paidTo || '').toLowerCase().includes(q) ||
+          (e.category || '').toLowerCase().includes(q) ||
+          itemText.includes(q)
+        );
+      }
+      return true;
+    });
+  }, [expenses, expDateFilter, expCustomStart, expCustomEnd, expCategoryFilter, expSearchQuery]);
 
   // Catalog Items + Quick Pick Pool inside POS
   const quickPickPool = useMemo(() => {
@@ -1204,65 +1283,84 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
             </div>
           </div>
 
-          {/* Search & Filters */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {(['All', 'Books', 'Stationery', 'Canteen', 'Uniform', 'Other'] as const).map((cat) => (
+          {/* Search & Period Filters */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3.5 space-y-3">
+            <PeriodFilterBar
+              period={dateFilter}
+              onPeriodChange={setDateFilter}
+              customStart={incomeCustomStart}
+              customEnd={incomeCustomEnd}
+              onCustomStartChange={setIncomeCustomStart}
+              onCustomEndChange={setIncomeCustomEnd}
+              language={language}
+              compact
+            />
+
+            <div className="pt-2.5 border-t border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(['All', 'Books', 'Stationery', 'Canteen', 'Uniform', 'Other'] as const).map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setCategoryFilter(cat)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                      categoryFilter === cat
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {cat === 'All'
+                      ? language === 'bn'
+                        ? 'সকল খাত'
+                        : 'All'
+                      : language === 'bn'
+                      ? SALE_CATEGORY_META[cat].labelBn
+                      : SALE_CATEGORY_META[cat].labelEn}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative flex-1 min-w-[200px]">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder={language === 'bn' ? 'ভাউচার নং, ক্রেতা বা আইটেম...' : 'Search voucher, buyer, item...'}
+                    className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
                 <button
-                  key={cat}
                   type="button"
-                  onClick={() => setCategoryFilter(cat)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
-                    categoryFilter === cat
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
+                  onClick={() => setShowIncomeSummaryPrint(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-2xs"
                 >
-                  {cat === 'All'
-                    ? language === 'bn'
-                      ? 'সকল খাত'
-                      : 'All'
-                    : language === 'bn'
-                    ? SALE_CATEGORY_META[cat].labelBn
-                    : SALE_CATEGORY_META[cat].labelEn}
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>{language === 'bn' ? 'আয় রিপোর্ট প্রিন্ট' : 'Print Report'}</span>
                 </button>
-              ))}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={dateFilter}
-                onChange={(e) => setDateFilter(e.target.value as any)}
-                className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 bg-slate-50"
-              >
-                <option value="all">{language === 'bn' ? 'সব তারিখ' : 'All Dates'}</option>
-                <option value="today">{language === 'bn' ? 'শুধু আজকের' : 'Today Only'}</option>
-                <option value="month">{language === 'bn' ? 'এই মাসের' : 'This Month'}</option>
-              </select>
-
-              <div className="relative flex-1 min-w-[200px]">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={language === 'bn' ? 'ভাউচার নং, ক্রেতা বা আইটেম...' : 'Search voucher, buyer, item...'}
-                  className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-emerald-500"
-                />
               </div>
             </div>
           </div>
 
           {/* Income Vouchers Table */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="p-4 border-b border-slate-200 flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-900 text-sm">
-                {language === 'bn'
-                  ? 'আয় ভাউচার রেজিস্ট্রি (বই, খাতা-কলম, খাবার ও অন্যান্য বিক্রয়)'
-                  : 'Income Vouchers & Store Sales Registry'}
-              </span>
+            <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div>
+                <span className="font-bold text-slate-900 text-sm">
+                  {language === 'bn'
+                    ? 'আয় ভাউচার রেজিস্ট্রি (বই, খাতা-কলম, খাবার ও অন্যান্য বিক্রয়)'
+                    : 'Income Vouchers & Store Sales Registry'}
+                </span>
+                <span className="ml-2 text-[11px] text-slate-500 font-medium">
+                  ({getPeriodDisplayLabel(dateFilter, language, incomeCustomStart, incomeCustomEnd)})
+                </span>
+              </div>
               <span className="text-emerald-700 font-bold tabular-nums">
-                {language === 'bn' ? 'মোট:' : 'Total:'} {formatTaka(filteredVouchers.reduce((s, v) => s + v.amount, 0))}
+                {language === 'bn'
+                  ? `মোট (${toBnNumber(filteredVouchers.length)}টি):`
+                  : `Total (${filteredVouchers.length}):`}{' '}
+                {formatTaka(filteredVouchers.reduce((s, v) => s + v.amount, 0))}
               </span>
             </div>
 
@@ -1390,87 +1488,244 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
 
       {/* SUB-MODE 2: EXPENSE VOUCHERS */}
       {subMode === 'expense' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden print:hidden">
-          <div className="p-4 border-b border-slate-200 flex items-center justify-between text-xs">
-            <span className="font-bold text-slate-900 text-sm">
-              {language === 'bn' ? 'বিদ্যালয়ের পরিচালনা ও প্রাতিষ্ঠানিক ব্যয়' : 'Institutional Operational Expenses'}
-            </span>
-            <span className="text-rose-600 font-bold tabular-nums">
-              {language === 'bn' ? 'মোট ব্যয়:' : 'Total Expenses:'} {formatTaka(totalExpensesAmount)}
-            </span>
+        <div className="space-y-4 print:hidden">
+          {/* Expense KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
+              <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
+                <span>{language === 'bn' ? 'সর্বমোট প্রাতিষ্ঠানিক ব্যয়' : 'Total Expenses'}</span>
+                <TrendingDown className="w-4 h-4 text-rose-600" />
+              </div>
+              <div className="mt-1.5 text-lg font-extrabold text-rose-700 tabular-nums">
+                {formatTaka(totalExpensesAmount)}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                {language === 'bn'
+                  ? `মোট ${toBnNumber(expenses.length)}টি ভাউচার (${toBnNumber(expenseMetrics.totalItemsCount)}টি আইটেম)`
+                  : `${expenses.length} vouchers (${expenseMetrics.totalItemsCount} line items)`}
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
+              <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
+                <span>{language === 'bn' ? 'আজকের ব্যয়' : "Today's Expense"}</span>
+                <Calendar className="w-4 h-4 text-rose-600" />
+              </div>
+              <div className="mt-1.5 text-lg font-extrabold text-slate-900 tabular-nums">
+                {formatTaka(expenseMetrics.todayAmount)}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                {language === 'bn'
+                  ? `আজ ${toBnNumber(expenseMetrics.todayCount)}টি ব্যয় ভাউচার`
+                  : `${expenseMetrics.todayCount} vouchers today`}
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
+              <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
+                <span>{language === 'bn' ? 'এই মাসের মোট ব্যয়' : "This Month's Expense"}</span>
+                <Receipt className="w-4 h-4 text-amber-600" />
+              </div>
+              <div className="mt-1.5 text-lg font-extrabold text-amber-700 tabular-nums">
+                {formatTaka(expenseMetrics.monthAmount)}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                {language === 'bn' ? 'চলতি মাসের অনুমোদিত ব্যয়' : 'Approved expenses this month'}
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-rose-50/70 rounded-2xl border border-rose-200 shadow-xs">
+              <div className="flex items-center justify-between text-xs text-rose-800 font-bold">
+                <span>{language === 'bn' ? 'নির্বাচিত সময়ের ব্যয়' : 'Filtered Period Total'}</span>
+                <Printer className="w-4 h-4 text-rose-700" />
+              </div>
+              <div className="mt-1.5 text-lg font-extrabold text-rose-800 tabular-nums">
+                {formatTaka(filteredExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0))}
+              </div>
+              <div className="text-[11px] text-rose-700 mt-0.5">
+                {language === 'bn'
+                  ? `${toBnNumber(filteredExpenses.length)}টি ভাউচার পাওয়া গেছে`
+                  : `${filteredExpenses.length} matching vouchers`}
+              </div>
+            </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase">
-                  <th className="py-3 px-4">Voucher No</th>
-                  <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">Description</th>
-                  <th className="py-3 px-4">Paid To</th>
-                  <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4 text-right">Amount</th>
-                  <th className="py-3 px-4 text-right">Action / অ্যাকশন</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {expenses.map((e) => (
-                  <tr key={e.id} className="hover:bg-slate-50/60">
-                    <td className="py-3 px-4 font-bold text-slate-800">{e.voucherNo}</td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                        {e.category}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-semibold text-slate-900">{e.title}</td>
-                    <td className="py-3 px-4 text-slate-700">{e.paidTo}</td>
-                    <td className="py-3 px-4 text-slate-500">{e.date}</td>
-                    <td className="py-3 px-4 text-right font-bold text-rose-600 text-sm tabular-nums">
-                      {formatTaka(e.amount)}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      {canEditDeleteInvoices ? (
-                        <div className="flex items-center justify-end space-x-1">
-                          <button
-                            type="button"
-                            onClick={() => onEditExpense(e)}
-                            className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                            title="ভাউচার এডিট করুন"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onDeleteExpense(e)}
-                            className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                            title="ভাউচার মুছে ফেলুন"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ) : canManage ? (
-                        <span
-                          className="inline-flex items-center p-1.5 text-slate-400 bg-slate-100 rounded-lg border border-slate-200 cursor-not-allowed"
-                          title={
-                            language === 'bn'
-                              ? 'শুধুমাত্র সুপার অ্যাডমিন ব্যয় ভাউচার এডিট বা ডিলিট করতে পারবেন'
-                              : 'Only Super Admin can edit or delete expense vouchers'
-                          }
-                        >
-                          <Lock className="w-3.5 h-3.5" />
-                        </span>
-                      ) : null}
-                    </td>
+
+          {/* Expense Period Filter + Search Bar */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3.5 space-y-3">
+            <PeriodFilterBar
+              period={expDateFilter}
+              onPeriodChange={setExpDateFilter}
+              customStart={expCustomStart}
+              customEnd={expCustomEnd}
+              onCustomStartChange={setExpCustomStart}
+              onCustomEndChange={setExpCustomEnd}
+              language={language}
+              compact
+            />
+
+            <div className="pt-2.5 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={expCategoryFilter}
+                  onChange={(e) => setExpCategoryFilter(e.target.value)}
+                  className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 bg-slate-50"
+                >
+                  <option value="All">{language === 'bn' ? 'সকল ব্যয় খাত' : 'All Categories'}</option>
+                  {expenseCategories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+                <div className="relative min-w-[210px] flex-1">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={expSearchQuery}
+                    onChange={(e) => setExpSearchQuery(e.target.value)}
+                    placeholder={language === 'bn' ? 'ভাউচার নং, প্রাপক বা আইটেম...' : 'Search voucher, vendor, item...'}
+                    className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-rose-500"
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowExpenseSummaryPrint(true)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-2xs shrink-0"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>{language === 'bn' ? 'ব্যয় রিপোর্ট প্রিন্ট' : 'Print Expense Report'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Expense Vouchers Table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div>
+                <span className="font-bold text-slate-900 text-sm">
+                  {language === 'bn' ? 'বিদ্যালয়ের পরিচালনা ও প্রাতিষ্ঠানিক ব্যয়' : 'Institutional Operational Expenses'}
+                </span>
+                <span className="ml-2 text-[11px] text-slate-500 font-medium">
+                  ({getPeriodDisplayLabel(expDateFilter, language, expCustomStart, expCustomEnd)})
+                </span>
+              </div>
+              <span className="text-rose-600 font-bold tabular-nums">
+                {language === 'bn'
+                  ? `মোট ব্যয় (${toBnNumber(filteredExpenses.length)}টি):`
+                  : `Total (${filteredExpenses.length}):`}{' '}
+                {formatTaka(filteredExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0))}
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase">
+                    <th className="py-3 px-4">Voucher No</th>
+                    <th className="py-3 px-4">Category</th>
+                    <th className="py-3 px-4">Description & Items</th>
+                    <th className="py-3 px-4">Paid To</th>
+                    <th className="py-3 px-4">Date</th>
+                    <th className="py-3 px-4 text-right">Amount</th>
+                    <th className="py-3 px-4 text-right">Action / অ্যাকশন</th>
                   </tr>
-                ))}
-                {expenses.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
-                      {language === 'bn' ? 'কোনো ব্যয় ভাউচার পাওয়া যায়নি।' : 'No expense vouchers found.'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredExpenses.map((e) => {
+                    const lineItems = normalizeExpenseItems(e);
+                    return (
+                      <tr key={e.id} className="hover:bg-slate-50/60">
+                        <td className="py-3 px-4 font-bold text-rose-800 font-mono whitespace-nowrap">{e.voucherNo}</td>
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                            {e.category}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-slate-900 flex flex-wrap items-center gap-1.5">
+                            <span>{e.title}</span>
+                            {lineItems.length > 1 && (
+                              <span className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold">
+                                {language === 'bn'
+                                  ? `${toBnNumber(lineItems.length)}টি আইটেম`
+                                  : `${lineItems.length} items`}
+                              </span>
+                            )}
+                          </div>
+                          {lineItems.length > 1 && (
+                            <div className="text-[11px] text-slate-500 mt-0.5">
+                              {lineItems
+                                .map((it) => `${it.description} (×${it.quantity}: ${formatTaka(it.amount)})`)
+                                .join(' • ')}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-slate-700">
+                          <div>{e.paidTo}</div>
+                          <div className="text-[10px] text-slate-400">{e.paymentMethod}</div>
+                        </td>
+                        <td className="py-3 px-4 text-slate-500 whitespace-nowrap">{e.date}</td>
+                        <td className="py-3 px-4 text-right font-bold text-rose-600 text-sm tabular-nums whitespace-nowrap">
+                          {formatTaka(e.amount)}
+                        </td>
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end space-x-1">
+                            {onPrintExpense && (
+                              <button
+                                type="button"
+                                onClick={() => onPrintExpense(e)}
+                                className="p-1.5 text-slate-600 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
+                                title={language === 'bn' ? 'ব্যয় ভাউচার প্রিন্ট' : 'Print Expense Voucher'}
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {canEditDeleteInvoices ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => onEditExpense(e)}
+                                  className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                  title="ভাউচার এডিট করুন"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onDeleteExpense(e)}
+                                  className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                                  title="ভাউচার মুছে ফেলুন"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            ) : canManage ? (
+                              <span
+                                className="inline-flex items-center p-1.5 text-slate-400 bg-slate-100 rounded-lg border border-slate-200 cursor-not-allowed"
+                                title={
+                                  language === 'bn'
+                                    ? 'শুধুমাত্র সুপার অ্যাডমিন ব্যয় ভাউচার এডিট বা ডিলিট করতে পারবেন'
+                                    : 'Only Super Admin can edit or delete expense vouchers'
+                                }
+                              >
+                                <Lock className="w-3.5 h-3.5" />
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredExpenses.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-slate-400">
+                        {language === 'bn' ? 'কোনো ব্যয় ভাউচার পাওয়া যায়নি।' : 'No expense vouchers found.'}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -2525,6 +2780,36 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* PERIOD INCOME VOUCHERS SUMMARY PRINT MODAL */}
+      {showIncomeSummaryPrint && (
+        <IncomeSummaryPrintModal
+          vouchers={filteredVouchers}
+          periodLabel={getPeriodDisplayLabel(dateFilter, language, incomeCustomStart, incomeCustomEnd)}
+          school={school}
+          language={language}
+          formatTaka={formatTaka}
+          toBnNumber={toBnNumber}
+          formatDate={formatDate}
+          amountInWords={amountInWords}
+          onClose={() => setShowIncomeSummaryPrint(false)}
+        />
+      )}
+
+      {/* PERIOD EXPENSE SUMMARY PRINT MODAL */}
+      {showExpenseSummaryPrint && (
+        <ExpenseSummaryPrintModal
+          expenses={filteredExpenses}
+          periodLabel={getPeriodDisplayLabel(expDateFilter, language, expCustomStart, expCustomEnd)}
+          school={school}
+          language={language}
+          formatTaka={formatTaka}
+          toBnNumber={toBnNumber}
+          formatDate={formatDate}
+          amountInWords={amountInWords}
+          onClose={() => setShowExpenseSummaryPrint(false)}
+        />
       )}
     </div>
   );

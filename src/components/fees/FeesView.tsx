@@ -3,13 +3,29 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useSchool } from '../../context/SchoolContext';
 import { StorageService } from '../../services/storage';
-import { FeeInvoice, FeePayment, Expense, Student, FeeItem, ClassFeeConfig, OnlinePaymentRequest, MfsPaymentSettings, IncomeVoucher } from '../../types';
+import { FeeInvoice, FeePayment, Expense, ExpenseLineItem, Student, FeeItem, ClassFeeConfig, OnlinePaymentRequest, MfsPaymentSettings, IncomeVoucher } from '../../types';
 import { ClassFeeSetupTab } from './ClassFeeSetupTab';
 import { ScheduledFeesTab } from './ScheduledFeesTab';
 import { TransportStudentsTab } from './TransportStudentsTab';
 import { StudentFeeStatementTab } from './StudentFeeStatementTab';
 import { StaffSalaryPayrollTab } from '../staff/StaffSalaryPayrollTab';
 import { IncomeVouchersSection } from './IncomeVouchersSection';
+import { PeriodFilterBar } from './PeriodFilterBar';
+import {
+  ExpenseVoucherPrintModal,
+  CollectionReportPrintModal,
+  CashbookStatementPrintModal,
+} from './FinancePrintModals';
+import {
+  DateFilterPeriod,
+  calculateExpenseItemsTotal,
+  getPeriodDisplayLabel,
+  isDateInPeriod,
+  normalizeExpenseItems,
+  summarizeByPaymentMethod,
+  summarizeExpenseTitle,
+  toLocalIsoDate,
+} from '../../utils/financeFilters';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
 import { findDuplicatePaidFee } from '../../utils/feeDuplicateCheck';
@@ -109,6 +125,40 @@ const QUICK_PRESETS = [
   { id: 'tour', nameEn: 'Educational Study Tour', nameBn: 'শিক্ষা সফর ফি', defaultAmount: 1500, icon: Sparkles },
   { id: 'sports', nameEn: 'Sports & Cultural Fee', nameBn: 'ক্রীড়া ও সাংস্কৃতিক ফি', defaultAmount: 500, icon: Sparkles },
 ];
+
+const EXPENSE_CATEGORIES = [
+  'Electricity & Utilities',
+  'Printing & Stationery',
+  'Science Laboratory',
+  'Maintenance & Repairs',
+  'Sports & Cultural',
+  'Teacher Welfare',
+  'Canteen & Refreshment',
+  'Furniture & Equipment',
+  'Transport & Fuel',
+  'Other Expenses',
+];
+
+const QUICK_EXPENSE_PRESETS: Array<{ description: string; category: string; unit: string; unitPrice: number }> = [
+  { description: 'বিদ্যুৎ বিল পরিশোধ', category: 'Electricity & Utilities', unit: 'মাস', unitPrice: 2500 },
+  { description: 'হোয়াইটবোর্ড মার্কার পেন', category: 'Printing & Stationery', unit: 'পিস', unitPrice: 40 },
+  { description: 'A4 ফটোকপি কাগজ (রিম)', category: 'Printing & Stationery', unit: 'রিম', unitPrice: 480 },
+  { description: 'চা-নাস্তা ও অতিথি আপ্যায়ন', category: 'Canteen & Refreshment', unit: 'প্যাকেজ', unitPrice: 300 },
+  { description: 'পানি ও পরিচ্ছন্নতা সামগ্রী', category: 'Maintenance & Repairs', unit: 'সেট', unitPrice: 350 },
+  { description: 'ইলেকট্রিক ও ফ্যান মেরামত', category: 'Maintenance & Repairs', unit: 'কাজ', unitPrice: 500 },
+  { description: 'পরীক্ষার খাতা ও প্রশ্ন প্রিন্টিং', category: 'Printing & Stationery', unit: 'সেট', unitPrice: 1200 },
+  { description: 'ল্যাব কেমিক্যাল ও উপকরণ', category: 'Science Laboratory', unit: 'সেট', unitPrice: 800 },
+];
+
+const createBlankExpenseItem = (category = 'Electricity & Utilities'): ExpenseLineItem => ({
+  id: `exp_item_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  description: '',
+  category,
+  unit: '',
+  quantity: 1,
+  unitPrice: 0,
+  amount: 0,
+});
 
 export type FeesSubTab =
   | 'counter'
@@ -320,14 +370,39 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const [showDuePrintModal, setShowDuePrintModal] = useState<boolean>(false);
   const [duePrintMode, setDuePrintMode] = useState<'summary' | 'detailed'>('summary');
 
-  // Expense Modal State (Create & Edit)
+  // Expense Modal State (Create & Edit - Multi-Item Supported)
+  const localToday = toLocalIsoDate();
   const [showExpenseModal, setShowExpenseModal] = useState<boolean>(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [expenseTitle, setExpenseTitle] = useState<string>('');
   const [expenseCategory, setExpenseCategory] = useState<string>('Electricity & Utilities');
-  const [expenseAmount, setExpenseAmount] = useState<number>(0);
+  const [expenseItems, setExpenseItems] = useState<ExpenseLineItem[]>(() => [createBlankExpenseItem('Electricity & Utilities')]);
+  const [expenseDate, setExpenseDate] = useState<string>(localToday);
   const [expensePaidTo, setExpensePaidTo] = useState<string>('');
-  const [expenseMethod, setExpenseMethod] = useState<'Cash' | 'bKash' | 'Bank'>('Cash');
+  const [expenseMethod, setExpenseMethod] = useState<'Cash' | 'bKash' | 'Nagad' | 'Bank' | 'Cheque'>('Cash');
+  const [expenseRefNo, setExpenseRefNo] = useState<string>('');
+  const [expenseNotes, setExpenseNotes] = useState<string>('');
+  const [expenseFormError, setExpenseFormError] = useState<string>('');
+  const [printingExpense, setPrintingExpense] = useState<Expense | null>(null);
+
+  // Period Filters & Print Modals for Collection (Receipts), Invoices, and Cashbook
+  const [receiptPeriodFilter, setReceiptPeriodFilter] = useState<DateFilterPeriod>('all');
+  const [receiptCustomStart, setReceiptCustomStart] = useState<string>(localToday);
+  const [receiptCustomEnd, setReceiptCustomEnd] = useState<string>(localToday);
+  const [receiptMethodFilter, setReceiptMethodFilter] = useState<string>('all');
+  const [receiptSearch, setReceiptSearch] = useState<string>('');
+  const [showCollectionPrintModal, setShowCollectionPrintModal] = useState<boolean>(false);
+
+  const [cashbookPeriodFilter, setCashbookPeriodFilter] = useState<DateFilterPeriod>('all');
+  const [cashbookCustomStart, setCashbookCustomStart] = useState<string>(localToday);
+  const [cashbookCustomEnd, setCashbookCustomEnd] = useState<string>(localToday);
+  const [cashbookMethodFilter, setCashbookMethodFilter] = useState<string>('all');
+  const [showCashbookPrintModal, setShowCashbookPrintModal] = useState<boolean>(false);
+
+  const [invoicePeriodFilter, setInvoicePeriodFilter] = useState<DateFilterPeriod>('all');
+  const [invoiceCustomStart, setInvoiceCustomStart] = useState<string>(localToday);
+  const [invoiceCustomEnd, setInvoiceCustomEnd] = useState<string>(localToday);
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<'all' | 'Paid' | 'Partial' | 'Unpaid'>('all');
 
   // Edit Receipt Modal State
   const [editingReceipt, setEditingReceipt] = useState<FeePayment | null>(null);
@@ -717,6 +792,86 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const totalDues = comprehensiveDueEntries.reduce((sum, d) => sum + d.amount, 0);
   const totalExpensesAmount = expenses.reduce((sum, e) => sum + e.amount, 0);
   const netCashInHand = totalInstitutionalIncome - totalExpensesAmount;
+
+  // Today's live snapshot across Fee Receipts, Income Vouchers, and Expenses
+  const todayFeeCollection = useMemo(
+    () => payments.filter((p) => isDateInPeriod(p.paidDate, 'today')).reduce((s, p) => s + (Number(p.amount) || 0), 0),
+    [payments]
+  );
+  const todayIncomeVoucherCollection = useMemo(
+    () => incomeVouchers.filter((v) => isDateInPeriod(v.date, 'today')).reduce((s, v) => s + (Number(v.amount) || 0), 0),
+    [incomeVouchers]
+  );
+  const todayTotalCollection = todayFeeCollection + todayIncomeVoucherCollection;
+  const todayExpenseTotal = useMemo(
+    () => expenses.filter((e) => isDateInPeriod(e.date, 'today')).reduce((s, e) => s + (Number(e.amount) || 0), 0),
+    [expenses]
+  );
+
+  // Filtered Fee Collection Receipts (রসিদ রেজিস্ট্রি)
+  const filteredReceipts = useMemo(() => {
+    return payments.filter((p) => {
+      if (!isDateInPeriod(p.paidDate, receiptPeriodFilter, receiptCustomStart, receiptCustomEnd)) return false;
+      if (receiptMethodFilter !== 'all' && p.paymentMethod !== receiptMethodFilter) return false;
+      if (receiptSearch.trim() !== '') {
+        const q = receiptSearch.toLowerCase().trim();
+        return (
+          p.receiptNo.toLowerCase().includes(q) ||
+          p.studentName.toLowerCase().includes(q) ||
+          (p.className || '').toLowerCase().includes(q) ||
+          String(p.roll || '').toLowerCase().includes(q) ||
+          (p.transactionId || '').toLowerCase().includes(q) ||
+          (p.notes || '').toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [payments, receiptPeriodFilter, receiptCustomStart, receiptCustomEnd, receiptMethodFilter, receiptSearch]);
+
+  const receiptMethodSummary = useMemo(() => summarizeByPaymentMethod(filteredReceipts), [filteredReceipts]);
+
+  // Filtered Cashbook Data (আয়-ব্যয় খাতা)
+  const cashbookFilteredPayments = useMemo(() => {
+    return payments.filter((p) => {
+      if (!isDateInPeriod(p.paidDate, cashbookPeriodFilter, cashbookCustomStart, cashbookCustomEnd)) return false;
+      if (cashbookMethodFilter !== 'all' && p.paymentMethod !== cashbookMethodFilter) return false;
+      return true;
+    });
+  }, [payments, cashbookPeriodFilter, cashbookCustomStart, cashbookCustomEnd, cashbookMethodFilter]);
+
+  const cashbookFilteredIncomeVouchers = useMemo(() => {
+    return incomeVouchers.filter((v) => {
+      if (!isDateInPeriod(v.date, cashbookPeriodFilter, cashbookCustomStart, cashbookCustomEnd)) return false;
+      if (cashbookMethodFilter !== 'all' && v.paymentMethod !== cashbookMethodFilter) return false;
+      return true;
+    });
+  }, [incomeVouchers, cashbookPeriodFilter, cashbookCustomStart, cashbookCustomEnd, cashbookMethodFilter]);
+
+  const cashbookFilteredExpenses = useMemo(() => {
+    return expenses.filter((e) => {
+      if (!isDateInPeriod(e.date, cashbookPeriodFilter, cashbookCustomStart, cashbookCustomEnd)) return false;
+      if (cashbookMethodFilter !== 'all' && e.paymentMethod !== cashbookMethodFilter) return false;
+      return true;
+    });
+  }, [expenses, cashbookPeriodFilter, cashbookCustomStart, cashbookCustomEnd, cashbookMethodFilter]);
+
+  const cashbookTotals = useMemo(() => {
+    const feeIncome = cashbookFilteredPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const voucherIncome = cashbookFilteredIncomeVouchers.reduce((s, v) => s + (Number(v.amount) || 0), 0);
+    const totalIncome = feeIncome + voucherIncome;
+    const totalExpense = cashbookFilteredExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    return {
+      feeIncome,
+      voucherIncome,
+      totalIncome,
+      totalExpense,
+      netBalance: totalIncome - totalExpense,
+      incomeByMethod: summarizeByPaymentMethod([
+        ...cashbookFilteredPayments.map((p) => ({ paymentMethod: p.paymentMethod, amount: p.amount })),
+        ...cashbookFilteredIncomeVouchers.map((v) => ({ paymentMethod: v.paymentMethod, amount: v.amount })),
+      ]),
+    };
+  }, [cashbookFilteredPayments, cashbookFilteredIncomeVouchers, cashbookFilteredExpenses]);
 
   // Selected student's active transport mapping if any
   const selectedStudentTransport = useMemo(() => {
@@ -1257,9 +1412,125 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
     setShowReceiptModal(true);
   };
 
+  const expenseModalGrandTotal = useMemo(() => calculateExpenseItemsTotal(expenseItems), [expenseItems]);
+
+  const resetExpenseForm = (defaultCategory = 'Electricity & Utilities') => {
+    setEditingExpense(null);
+    setExpenseTitle('');
+    setExpenseCategory(defaultCategory);
+    setExpenseItems([createBlankExpenseItem(defaultCategory)]);
+    setExpenseDate(toLocalIsoDate());
+    setExpensePaidTo('');
+    setExpenseMethod('Cash');
+    setExpenseRefNo('');
+    setExpenseNotes('');
+    setExpenseFormError('');
+  };
+
+  const handleOpenNewExpenseModal = () => {
+    resetExpenseForm('Electricity & Utilities');
+    setShowExpenseModal(true);
+  };
+
+  const handleAddExpenseRow = () => {
+    setExpenseItems((prev) => [...prev, createBlankExpenseItem(expenseCategory)]);
+    setExpenseFormError('');
+  };
+
+  const handleAddPresetExpenseItem = (preset: { description: string; category: string; unit: string; unitPrice: number }) => {
+    setExpenseItems((prev) => {
+      const existingIdx = prev.findIndex(
+        (row) => row.description.trim().toLowerCase() === preset.description.toLowerCase()
+      );
+      if (existingIdx >= 0) {
+        return prev.map((row, i) => {
+          if (i !== existingIdx) return row;
+          const nextQty = row.quantity + 1;
+          return { ...row, quantity: nextQty, amount: nextQty * row.unitPrice };
+        });
+      }
+      const emptyIdx = prev.findIndex((row) => row.description.trim() === '' && row.unitPrice === 0);
+      const newRow: ExpenseLineItem = {
+        id: `exp_item_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        description: preset.description,
+        category: preset.category,
+        unit: preset.unit,
+        quantity: 1,
+        unitPrice: preset.unitPrice,
+        amount: preset.unitPrice,
+      };
+      if (emptyIdx >= 0) {
+        return prev.map((row, i) => (i === emptyIdx ? newRow : row));
+      }
+      return [...prev, newRow];
+    });
+    setExpenseFormError('');
+  };
+
+  const handleUpdateExpenseRow = (
+    rowId: string,
+    patch: Partial<Pick<ExpenseLineItem, 'description' | 'category' | 'unit' | 'quantity' | 'unitPrice'>>
+  ) => {
+    setExpenseItems((prev) =>
+      prev.map((row) => {
+        if (row.id !== rowId) return row;
+        const nextQty = patch.quantity !== undefined ? Math.max(1, Number(patch.quantity) || 1) : row.quantity;
+        const nextPrice = patch.unitPrice !== undefined ? Math.max(0, Number(patch.unitPrice) || 0) : row.unitPrice;
+        return {
+          ...row,
+          ...patch,
+          quantity: nextQty,
+          unitPrice: nextPrice,
+          amount: Math.round(nextQty * nextPrice),
+        };
+      })
+    );
+    setExpenseFormError('');
+  };
+
+  const handleRemoveExpenseRow = (rowId: string) => {
+    setExpenseItems((prev) => {
+      const remaining = prev.filter((row) => row.id !== rowId);
+      return remaining.length > 0 ? remaining : [createBlankExpenseItem(expenseCategory)];
+    });
+  };
+
   const handleCreateExpense = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!expenseTitle || expenseAmount <= 0) return;
+    const validItems = expenseItems
+      .map((it) => {
+        const qty = Math.max(1, Number(it.quantity) || 1);
+        const unitPrice = Math.max(0, Number(it.unitPrice) || 0);
+        return {
+          ...it,
+          description: it.description.trim(),
+          category: it.category || expenseCategory,
+          quantity: qty,
+          unitPrice,
+          amount: Math.round(qty * unitPrice),
+        };
+      })
+      .filter((it) => it.description !== '' && it.amount > 0);
+
+    if (validItems.length === 0) {
+      setExpenseFormError(
+        language === 'bn'
+          ? 'অন্তত একটি ব্যয়ের আইটেমের বিবরণ ও টাকার পরিমাণ (০ এর বেশি) দিন।'
+          : 'Please enter at least one valid expense item with description and amount > 0.'
+      );
+      return;
+    }
+
+    if (!expensePaidTo.trim()) {
+      setExpenseFormError(
+        language === 'bn' ? 'প্রাপকের নাম (Vendor / Person) লিখুন।' : 'Please enter Paid To (Vendor / Person).'
+      );
+      return;
+    }
+
+    const totalAmount = calculateExpenseItemsTotal(validItems);
+    const resolvedTitle = summarizeExpenseTitle(validItems, expenseTitle);
+    const resolvedDate = expenseDate || toLocalIsoDate();
 
     if (editingExpense) {
       if (!canEditDeleteInvoices) {
@@ -1268,39 +1539,42 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       const updatedExpense: Expense = {
         ...editingExpense,
         category: expenseCategory,
-        title: expenseTitle,
-        amount: expenseAmount,
-        paidTo: expensePaidTo,
+        title: resolvedTitle,
+        amount: totalAmount,
+        items: validItems,
+        date: resolvedDate,
+        paidTo: expensePaidTo.trim(),
         paymentMethod: expenseMethod,
+        referenceNo: expenseRefNo.trim() || undefined,
+        notes: expenseNotes.trim() || undefined,
       };
       StorageService.updateExpense(updatedExpense, activeRole);
       setExpenses(StorageService.getExpenses());
       setShowExpenseModal(false);
-      setEditingExpense(null);
-      setExpenseTitle('');
-      setExpenseAmount(0);
-      setExpensePaidTo('');
+      resetExpenseForm();
       return;
     }
 
     const newExpense: Expense = {
       id: `exp_${Date.now()}`,
-      voucherNo: `VOUCH-2026-${Math.floor(100 + Math.random() * 900)}`,
+      voucherNo: StorageService.generateNextExpenseVoucherNo(resolvedDate),
       category: expenseCategory,
-      title: expenseTitle,
-      amount: expenseAmount,
-      date: new Date().toISOString().split('T')[0],
-      paidTo: expensePaidTo,
+      title: resolvedTitle,
+      amount: totalAmount,
+      items: validItems,
+      date: resolvedDate,
+      paidTo: expensePaidTo.trim(),
       paymentMethod: expenseMethod,
+      referenceNo: expenseRefNo.trim() || undefined,
       approvedBy: currentUser.name,
+      notes: expenseNotes.trim() || undefined,
     };
 
     StorageService.addExpense(newExpense);
     setExpenses(StorageService.getExpenses());
     setShowExpenseModal(false);
-    setExpenseTitle('');
-    setExpenseAmount(0);
-    setExpensePaidTo('');
+    resetExpenseForm();
+    setPrintingExpense(newExpense);
   };
 
   const handleOpenEditExpense = (exp: Expense) => {
@@ -1308,11 +1582,17 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       return;
     }
     setEditingExpense(exp);
-    setExpenseTitle(exp.title);
-    setExpenseCategory(exp.category);
-    setExpenseAmount(exp.amount);
-    setExpensePaidTo(exp.paidTo);
+    const normalized = normalizeExpenseItems(exp);
+    const autoSummary = summarizeExpenseTitle(normalized);
+    setExpenseTitle(exp.title !== autoSummary ? exp.title : '');
+    setExpenseCategory(exp.category || 'Electricity & Utilities');
+    setExpenseItems(normalized);
+    setExpenseDate(exp.date || toLocalIsoDate());
+    setExpensePaidTo(exp.paidTo || '');
     setExpenseMethod((exp.paymentMethod as any) || 'Cash');
+    setExpenseRefNo(exp.referenceNo || '');
+    setExpenseNotes(exp.notes || '');
+    setExpenseFormError('');
     setShowExpenseModal(true);
   };
 
@@ -1478,6 +1758,13 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
     if (selectedSessionFilter !== 'all') {
       const invSession = (inv as any).session || (inv.invoiceNo?.includes('2027') ? '2027' : '2026');
       if (invSession !== selectedSessionFilter) return false;
+    }
+    if (invoiceStatusFilter !== 'all' && inv.status !== invoiceStatusFilter) return false;
+    if (
+      invoicePeriodFilter !== 'all' &&
+      !isDateInPeriod(inv.paymentDate || inv.dueDate, invoicePeriodFilter, invoiceCustomStart, invoiceCustomEnd)
+    ) {
+      return false;
     }
     if (searchTerm.trim() !== '') {
       const q = searchTerm.toLowerCase();
@@ -1942,7 +2229,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
               </button>
               <button
                 type="button"
-                onClick={() => setShowExpenseModal(true)}
+                onClick={handleOpenNewExpenseModal}
                 className="flex items-center space-x-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
               >
                 <Plus className="w-4 h-4" />
@@ -1967,7 +2254,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           <div className="mt-2 text-xl font-bold text-slate-900 tabular-nums">
             {formatTaka(totalInstitutionalIncome)}
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">
+          <div className="text-[11px] text-emerald-700 font-bold mt-1 tabular-nums">
+            {language === 'bn'
+              ? `আজকের কালেকশন: ${formatTaka(todayTotalCollection)}`
+              : `Today's Collection: ${formatTaka(todayTotalCollection)}`}
+          </div>
+          <div className="text-[10px] text-slate-500 mt-0.5">
             {totalIncomeVouchersAmount > 0
               ? language === 'bn'
                 ? `ফি: ${formatTaka(totalCollected)} • আয় ভাউচার: ${formatTaka(totalIncomeVouchersAmount)}`
@@ -2004,10 +2296,15 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
               <TrendingDown className="w-5 h-5" />
             </div>
           </div>
-          <div className="mt-2 text-xl font-bold text-slate-900">
+          <div className="mt-2 text-xl font-bold text-slate-900 tabular-nums">
             {formatTaka(totalExpensesAmount)}
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">
+          <div className="text-[11px] text-rose-600 font-bold mt-1 tabular-nums">
+            {language === 'bn'
+              ? `আজকের ব্যয়: ${formatTaka(todayExpenseTotal)}`
+              : `Today's Expense: ${formatTaka(todayExpenseTotal)}`}
+          </div>
+          <div className="text-[10px] text-slate-500 mt-0.5">
             {language === 'bn' ? 'অনুমোদিত ভাউচার সমূহ' : 'Approved operational vouchers'}
           </div>
         </div>
@@ -3224,40 +3521,81 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
               </span>
             </div>
           )}
-          <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder={language === 'bn' ? 'শিক্ষার্থী, ইনভয়েস নং বা রোল দিয়ে খুঁজুন...' : 'Search student name, invoice, roll...'}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-slate-50 focus:bg-white"
-              />
+          <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3">
+            <PeriodFilterBar
+              period={invoicePeriodFilter}
+              onPeriodChange={setInvoicePeriodFilter}
+              customStart={invoiceCustomStart}
+              customEnd={invoiceCustomEnd}
+              onCustomStartChange={setInvoiceCustomStart}
+              onCustomEndChange={setInvoiceCustomEnd}
+              language={language}
+              compact
+            />
+            <div className="pt-2.5 border-t border-slate-100 flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder={language === 'bn' ? 'শিক্ষার্থী, ইনভয়েস নং বা রোল দিয়ে খুঁজুন...' : 'Search student name, invoice, roll...'}
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-slate-50 focus:bg-white"
+                />
+              </div>
+              <div className="sm:w-44">
+                <select
+                  value={invoiceStatusFilter}
+                  onChange={(e) => setInvoiceStatusFilter(e.target.value as any)}
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-white font-semibold"
+                >
+                  <option value="all">{language === 'bn' ? 'সকল স্ট্যাটাস' : 'All Status'}</option>
+                  <option value="Paid">Paid (পরিশোধিত)</option>
+                  <option value="Partial">Partial (আংশিক)</option>
+                  <option value="Unpaid">Unpaid (বকেয়া)</option>
+                </select>
+              </div>
+              <div className="sm:w-48">
+                <select
+                  value={selectedSessionFilter}
+                  onChange={(e) => setSelectedSessionFilter(e.target.value as any)}
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-white font-semibold text-blue-900"
+                >
+                  <option value="all">{language === 'bn' ? 'সকল শিক্ষাবর্ষ (All Sessions)' : 'All Sessions'}</option>
+                  <option value="2026">সেশন ২০২৬ (বর্তমান)</option>
+                  <option value="2027">সেশন ২০২৭ (অগ্রিম ভর্তি)</option>
+                  <option value="2028">সেশন ২০২৮</option>
+                </select>
+              </div>
+              <div className="sm:w-44">
+                <select
+                  value={selectedClass}
+                  onChange={(e) => setSelectedClass(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="all">{language === 'bn' ? 'সকল শ্রেণি' : 'All Classes'}</option>
+                  {['Class 10', 'Class 9', 'Class 8', 'Class 7', 'Class 6', 'Class 5', 'Class 4', 'Class 3', 'Class 2', 'Class 1', 'KG', 'Nursery'].map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <div className="sm:w-56">
-              <select
-                value={selectedSessionFilter}
-                onChange={(e) => setSelectedSessionFilter(e.target.value as any)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-white font-semibold text-blue-900"
-              >
-                <option value="all">{language === 'bn' ? 'সকল শিক্ষাবর্ষ (All Sessions)' : 'All Sessions'}</option>
-                <option value="2026">সেশন ২০২৬ (বর্তমান)</option>
-                <option value="2027">সেশন ২০২৭ (অগ্রিম ভর্তি)</option>
-                <option value="2028">সেশন ২০২৮</option>
-              </select>
-            </div>
-            <div className="sm:w-56">
-              <select
-                value={selectedClass}
-                onChange={(e) => setSelectedClass(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-white"
-              >
-                <option value="all">{language === 'bn' ? 'সকল শ্রেণি' : 'All Classes'}</option>
-                {['Class 10', 'Class 9', 'Class 8', 'Class 7', 'Class 6', 'Class 5', 'Class 4', 'Class 3', 'Class 2', 'Class 1', 'KG', 'Nursery'].map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+              <span className="font-semibold text-slate-600">
+                {getPeriodDisplayLabel(invoicePeriodFilter, language, invoiceCustomStart, invoiceCustomEnd)} •{' '}
+                {language === 'bn' ? `${toBnNumber(filteredInvoices.length)}টি ইনভয়েস` : `${filteredInvoices.length} invoices`}
+              </span>
+              <div className="flex flex-wrap items-center gap-3 font-bold tabular-nums">
+                <span className="text-slate-800">
+                  {language === 'bn' ? 'মোট বিল:' : 'Billed:'} {formatTaka(filteredInvoices.reduce((s, i) => s + i.netAmount, 0))}
+                </span>
+                <span className="text-emerald-700">
+                  {language === 'bn' ? 'আদায়:' : 'Paid:'} {formatTaka(filteredInvoices.reduce((s, i) => s + i.paidAmount, 0))}
+                </span>
+                <span className="text-rose-600">
+                  {language === 'bn' ? 'বকেয়া:' : 'Due:'} {formatTaka(filteredInvoices.reduce((s, i) => s + i.dueAmount, 0))}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -3439,9 +3777,13 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       {/* TAB: TRANSPORT STUDENTS & FARES */}
       {activeTab === 'transport_fees' && <TransportStudentsTab />}
 
-      {/* TAB: PAID RECEIPTS */}
+      {/* TAB: PAID RECEIPTS / COLLECTION REGISTER */}
       {activeTab === 'invoices' && (
-        <div className="space-y-4">
+        <div
+          className={`space-y-4 ${
+            showReceiptModal || showCollectionPrintModal ? 'print:hidden' : ''
+          }`}
+        >
           {canManage && !canEditDeleteInvoices && (
             <div className="px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-900 font-medium">
               <Lock className="w-4 h-4 text-amber-600 shrink-0" />
@@ -3452,13 +3794,125 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
               </span>
             </div>
           )}
+
+          {/* Collection KPI & Today's Live Snapshot */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="p-3.5 bg-emerald-50/70 rounded-2xl border border-emerald-200 shadow-xs">
+              <div className="text-xs font-bold text-emerald-900">
+                {language === 'bn' ? 'আজকের মোট কালেকশন (ফি + ভাউচার)' : "Today's Total Collection"}
+              </div>
+              <div className="mt-1 text-lg font-black text-emerald-700 tabular-nums">
+                {formatTaka(todayTotalCollection)}
+              </div>
+              <div className="text-[11px] text-emerald-800 mt-0.5 tabular-nums">
+                {language === 'bn'
+                  ? `ফি রসিদ: ${formatTaka(todayFeeCollection)} • আয় ভাউচার: ${formatTaka(todayIncomeVoucherCollection)}`
+                  : `Fees: ${formatTaka(todayFeeCollection)} • Vouchers: ${formatTaka(todayIncomeVoucherCollection)}`}
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-xs">
+              <div className="text-xs font-semibold text-slate-500">
+                {language === 'bn' ? 'নির্বাচিত সময়ের ফি কালেকশন' : 'Filtered Fee Collection'}
+              </div>
+              <div className="mt-1 text-lg font-extrabold text-slate-900 tabular-nums">
+                {formatTaka(receiptMethodSummary.total)}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                {language === 'bn'
+                  ? `${toBnNumber(filteredReceipts.length)}টি রসিদ`
+                  : `${filteredReceipts.length} receipt(s)`}
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-xs">
+              <div className="text-xs font-semibold text-slate-500">
+                {language === 'bn' ? 'নগদ (Cash) কালেকশন' : 'Cash Collection'}
+              </div>
+              <div className="mt-1 text-lg font-extrabold text-blue-700 tabular-nums">
+                {formatTaka(receiptMethodSummary.Cash)}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                {language === 'bn' ? 'ক্যাশ কাউন্টার প্রাপ্তি' : 'Cash counter payments'}
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-xs">
+              <div className="text-xs font-semibold text-slate-500">
+                {language === 'bn' ? 'বিকাশ / নগদ / রকেট / ব্যাংক' : 'MFS & Bank Collection'}
+              </div>
+              <div className="mt-1 text-lg font-extrabold text-purple-700 tabular-nums">
+                {formatTaka(receiptMethodSummary.bKash + receiptMethodSummary.Nagad + receiptMethodSummary.Rocket + receiptMethodSummary.Bank)}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+                bKash: {formatTaka(receiptMethodSummary.bKash)} • Nagad: {formatTaka(receiptMethodSummary.Nagad)}
+              </div>
+            </div>
+          </div>
+
+          {/* Period & Search Filter Bar */}
+          <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3">
+            <PeriodFilterBar
+              period={receiptPeriodFilter}
+              onPeriodChange={setReceiptPeriodFilter}
+              customStart={receiptCustomStart}
+              customEnd={receiptCustomEnd}
+              onCustomStartChange={setReceiptCustomStart}
+              onCustomEndChange={setReceiptCustomEnd}
+              language={language}
+              compact
+            />
+
+            <div className="pt-2.5 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="flex flex-wrap items-center gap-2 flex-1">
+                <div className="relative flex-1 min-w-[200px]">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={receiptSearch}
+                    onChange={(e) => setReceiptSearch(e.target.value)}
+                    placeholder={language === 'bn' ? 'রসিদ নং, শিক্ষার্থী, রোল বা TrxID...' : 'Search receipt no, student, roll, TrxID...'}
+                    className="w-full pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <select
+                  value={receiptMethodFilter}
+                  onChange={(e) => setReceiptMethodFilter(e.target.value)}
+                  className="px-3 py-1.5 text-xs border border-slate-200 rounded-xl bg-slate-50 font-semibold text-slate-700"
+                >
+                  <option value="all">{language === 'bn' ? 'সকল পেমেন্ট মাধ্যম' : 'All Methods'}</option>
+                  <option value="Cash">Cash (নগদ)</option>
+                  <option value="bKash">bKash (বিকাশ)</option>
+                  <option value="Nagad">Nagad (নগদ)</option>
+                  <option value="Rocket">Rocket (রকেট)</option>
+                  <option value="Bank">Bank (ব্যাংক)</option>
+                </select>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCollectionPrintModal(true)}
+                className="flex items-center justify-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs shrink-0"
+              >
+                <Printer className="w-4 h-4" />
+                <span>{language === 'bn' ? 'কালেকশন রিপোর্ট প্রিন্ট' : 'Print Collection Report'}</span>
+              </button>
+            </div>
+          </div>
+
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex items-center justify-between text-xs">
-            <span className="font-bold text-slate-900">
-              {language === 'bn' ? 'পরিশোধিত ফি রসিদ খাতা' : 'Official Fee Payment Receipts Registry'}
-            </span>
-            <span className="text-slate-500 font-semibold">
-              Total Receipts: {payments.length}
+          <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div>
+              <span className="font-bold text-slate-900">
+                {language === 'bn' ? 'পরিশোধিত ফি রসিদ খাতা (কালেকশন রেজিস্টার)' : 'Official Fee Payment Receipts Registry'}
+              </span>
+              <span className="ml-2 text-[11px] text-slate-500 font-medium">
+                ({getPeriodDisplayLabel(receiptPeriodFilter, language, receiptCustomStart, receiptCustomEnd)})
+              </span>
+            </div>
+            <span className="text-emerald-700 font-bold tabular-nums">
+              {language === 'bn'
+                ? `${toBnNumber(filteredReceipts.length)}টি রসিদ • মোট: ${formatTaka(receiptMethodSummary.total)}`
+                : `${filteredReceipts.length} Receipts • Total: ${formatTaka(receiptMethodSummary.total)}`}
             </span>
           </div>
           <div className="overflow-x-auto">
@@ -3475,9 +3929,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {payments.map((p) => (
+                {filteredReceipts.map((p) => (
                   <tr key={p.id} className="hover:bg-slate-50/60">
-                    <td className="py-3 px-4 font-bold text-blue-700">{p.receiptNo}</td>
+                    <td className="py-3 px-4 font-bold text-blue-700 font-mono">{p.receiptNo}</td>
                     <td className="py-3 px-4">
                       <div className="font-semibold text-slate-900">{p.studentName}</div>
                       <div className="text-[11px] text-slate-500">{p.className} • Roll {p.roll}</div>
@@ -3490,8 +3944,8 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                     <td className="py-3 px-4 text-slate-600 text-[11px]">
                       {p.transactionId ? <span className="font-mono text-blue-600">{p.transactionId}</span> : p.notes}
                     </td>
-                    <td className="py-3 px-4 text-slate-500">{p.paidDate}</td>
-                    <td className="py-3 px-4 text-right font-bold text-emerald-700 text-sm">
+                    <td className="py-3 px-4 text-slate-500 whitespace-nowrap">{p.paidDate}</td>
+                    <td className="py-3 px-4 text-right font-bold text-emerald-700 text-sm tabular-nums">
                       {formatTaka(p.amount)}
                     </td>
                     <td className="py-3 px-4 text-right">
@@ -3544,6 +3998,15 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                     </td>
                   </tr>
                 ))}
+                {filteredReceipts.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-slate-400">
+                      {language === 'bn'
+                        ? 'নির্বাচিত সময়কাল বা ফিল্টারে কোনো ফি রসিদ পাওয়া যায়নি।'
+                        : 'No payment receipts found for the selected filter.'}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -3946,22 +4409,21 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           formatDate={formatDate}
           amountInWords={amountInWords}
           onRefreshAll={refreshFinanceData}
-          onOpenNewExpenseModal={() => {
-            setEditingExpense(null);
-            setExpenseTitle('');
-            setExpenseAmount(0);
-            setExpensePaidTo('');
-            setShowExpenseModal(true);
-          }}
+          onOpenNewExpenseModal={handleOpenNewExpenseModal}
           onEditExpense={handleOpenEditExpense}
           onDeleteExpense={handleDeleteExpense}
+          onPrintExpense={(exp) => setPrintingExpense(exp)}
           externalCreateSignal={incomeCreateSignal}
         />
       )}
 
       {/* TAB: CASHBOOK */}
       {activeTab === 'cashbook' && (
-        <div className="p-6 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-6">
+        <div
+          className={`p-4 sm:p-6 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-5 ${
+            showCashbookPrintModal || printingExpense ? 'print:hidden' : ''
+          }`}
+        >
           {canManage && !canEditDeleteInvoices && (
             <div className="px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-900 font-medium">
               <Lock className="w-4 h-4 text-amber-600 shrink-0" />
@@ -3972,30 +4434,117 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
               </span>
             </div>
           )}
-          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
             <div>
               <h3 className="font-bold text-slate-900 text-base">
                 {language === 'bn' ? 'দৈনিক ক্যাশ বই ও আয়-ব্যয় খাতা' : 'Daily Cashbook & Financial Summary'}
               </h3>
-              <p className="text-xs text-slate-500">{school.nameBn} • {academicYear} Session</p>
+              <p className="text-xs text-slate-500">
+                {school.nameBn} • {getPeriodDisplayLabel(cashbookPeriodFilter, language, cashbookCustomStart, cashbookCustomEnd)}
+              </p>
             </div>
-            <button
-              onClick={() => window.print()}
-              className="flex items-center space-x-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-xl text-xs font-semibold hover:bg-blue-700"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>Print Cashbook</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={cashbookMethodFilter}
+                onChange={(e) => setCashbookMethodFilter(e.target.value)}
+                className="px-2.5 py-1.5 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 bg-slate-50"
+              >
+                <option value="all">{language === 'bn' ? 'সকল মাধ্যম' : 'All Methods'}</option>
+                <option value="Cash">Cash (নগদ)</option>
+                <option value="bKash">bKash (বিকাশ)</option>
+                <option value="Nagad">Nagad (নগদ)</option>
+                <option value="Rocket">Rocket (রকেট)</option>
+                <option value="Bank">Bank (ব্যাংক)</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => setShowCashbookPrintModal(true)}
+                className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 shadow-xs"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>{language === 'bn' ? 'আয়-ব্যয় স্টেটমেন্ট প্রিন্ট' : 'Print Statement'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Period Filter Bar for Cashbook */}
+          <div className="p-3 bg-slate-50/70 rounded-xl border border-slate-200">
+            <PeriodFilterBar
+              period={cashbookPeriodFilter}
+              onPeriodChange={setCashbookPeriodFilter}
+              customStart={cashbookCustomStart}
+              customEnd={cashbookCustomEnd}
+              onCustomStartChange={setCashbookCustomStart}
+              onCustomEndChange={setCashbookCustomEnd}
+              language={language}
+              compact
+            />
+          </div>
+
+          {/* Period Summary Strip */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200">
+              <div className="text-[11px] font-semibold text-emerald-900">
+                {language === 'bn' ? 'সময়কালের মোট আয়' : 'Period Income'}
+              </div>
+              <div className="mt-1 text-lg font-extrabold text-emerald-700 tabular-nums">
+                {formatTaka(cashbookTotals.totalIncome)}
+              </div>
+              <div className="text-[10px] text-emerald-800 mt-0.5 tabular-nums">
+                {language === 'bn'
+                  ? `ফি: ${formatTaka(cashbookTotals.feeIncome)} • ভাউচার: ${formatTaka(cashbookTotals.voucherIncome)}`
+                  : `Fees: ${formatTaka(cashbookTotals.feeIncome)} • Vouchers: ${formatTaka(cashbookTotals.voucherIncome)}`}
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-rose-50/70 border border-rose-200">
+              <div className="text-[11px] font-semibold text-rose-900">
+                {language === 'bn' ? 'সময়কালের মোট ব্যয়' : 'Period Expense'}
+              </div>
+              <div className="mt-1 text-lg font-extrabold text-rose-700 tabular-nums">
+                {formatTaka(cashbookTotals.totalExpense)}
+              </div>
+              <div className="text-[10px] text-rose-800 mt-0.5">
+                {language === 'bn'
+                  ? `${toBnNumber(cashbookFilteredExpenses.length)}টি ব্যয় ভাউচার`
+                  : `${cashbookFilteredExpenses.length} expense voucher(s)`}
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-200">
+              <div className="text-[11px] font-semibold text-blue-900">
+                {language === 'bn' ? 'নিট ক্যাশ উদ্বৃত্ত (Net)' : 'Period Net Balance'}
+              </div>
+              <div className="mt-1 text-lg font-extrabold text-blue-700 tabular-nums">
+                {formatTaka(cashbookTotals.netBalance)}
+              </div>
+              <div className="text-[10px] text-blue-800 mt-0.5">
+                {language === 'bn' ? 'আয় থেকে ব্যয় বাদ দিয়ে' : 'Income minus expenditure'}
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+              <div className="text-[11px] font-semibold text-slate-600">
+                {language === 'bn' ? 'মাধ্যম ভিত্তিক আদায়' : 'Income by Method'}
+              </div>
+              <div className="mt-1 text-[11px] font-bold text-slate-800 space-y-0.5 tabular-nums">
+                <div>Cash: {formatTaka(cashbookTotals.incomeByMethod.Cash)}</div>
+                <div>
+                  bKash/Nagad: {formatTaka(cashbookTotals.incomeByMethod.bKash + cashbookTotals.incomeByMethod.Nagad)} • Bank: {formatTaka(cashbookTotals.incomeByMethod.Bank)}
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
             <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50">
               <h4 className="font-bold text-emerald-800 border-b border-emerald-200 pb-2 mb-3 flex items-center justify-between">
                 <span>INCOME (আদায় ও বিক্রয়)</span>
-                <span className="text-sm tabular-nums">{formatTaka(totalInstitutionalIncome)}</span>
+                <span className="text-sm tabular-nums">{formatTaka(cashbookTotals.totalIncome)}</span>
               </h4>
               <div className="space-y-2">
-                {incomeVouchers.map((v) => (
+                {cashbookFilteredIncomeVouchers.map((v) => (
                   <div key={v.id} className="flex justify-between items-center py-1.5 border-b border-slate-100 hover:bg-white/80 px-2 rounded-lg transition-colors">
                     <div>
                       <div className="font-semibold text-slate-800 flex items-center gap-1.5">
@@ -4055,14 +4604,14 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                     </div>
                   </div>
                 ))}
-                {payments.map((p) => (
+                {cashbookFilteredPayments.map((p) => (
                   <div key={p.id} className="flex justify-between items-center py-1.5 border-b border-slate-100 hover:bg-white/80 px-2 rounded-lg transition-colors">
                     <div>
                       <div className="font-semibold text-slate-800">{p.studentName} ({p.receiptNo})</div>
                       <div className="text-[10px] text-slate-400">{p.paidDate} • {p.paymentMethod}</div>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <span className="font-bold text-emerald-700">{formatTaka(p.amount)}</span>
+                      <span className="font-bold text-emerald-700 tabular-nums">{formatTaka(p.amount)}</span>
                       {canEditDeleteInvoices ? (
                         <div className="flex items-center space-x-1">
                           <button
@@ -4097,57 +4646,90 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                     </div>
                   </div>
                 ))}
+                {cashbookFilteredIncomeVouchers.length === 0 && cashbookFilteredPayments.length === 0 && (
+                  <div className="py-6 text-center text-slate-400">
+                    {language === 'bn' ? 'নির্বাচিত সময়কালে কোনো আয় পাওয়া যায়নি।' : 'No income in selected period.'}
+                  </div>
+                )}
               </div>
             </div>
 
             <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50">
               <h4 className="font-bold text-rose-800 border-b border-rose-200 pb-2 mb-3 flex items-center justify-between">
                 <span>EXPENDITURE (ব্যয়)</span>
-                <span className="text-sm">{formatTaka(totalExpensesAmount)}</span>
+                <span className="text-sm tabular-nums">{formatTaka(cashbookTotals.totalExpense)}</span>
               </h4>
               <div className="space-y-2">
-                {expenses.map((e) => (
-                  <div key={e.id} className="flex justify-between items-center py-1.5 border-b border-slate-100 hover:bg-white/80 px-2 rounded-lg transition-colors">
-                    <div>
-                      <div className="font-semibold text-slate-800">{e.title}</div>
-                      <div className="text-[10px] text-slate-400">{e.date} • {e.voucherNo}</div>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <span className="font-bold text-rose-600">{formatTaka(e.amount)}</span>
-                      {canEditDeleteInvoices ? (
-                        <div className="flex items-center space-x-1">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEditExpense(e)}
-                            className="p-1 text-slate-400 hover:text-indigo-600 rounded"
-                            title="ব্যয় ভাউচার এডিট"
-                          >
-                            <Edit2 className="w-3 h-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteExpense(e)}
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded"
-                            title="ব্যয় ভাউচার মুছে ফেলুন"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+                {cashbookFilteredExpenses.map((e) => {
+                  const lineItems = normalizeExpenseItems(e);
+                  return (
+                    <div key={e.id} className="flex justify-between items-start gap-2 py-1.5 border-b border-slate-100 hover:bg-white/80 px-2 rounded-lg transition-colors">
+                      <div>
+                        <div className="font-semibold text-slate-800 flex flex-wrap items-center gap-1.5">
+                          <span>{e.title}</span>
+                          {lineItems.length > 1 && (
+                            <span className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[9px] font-bold">
+                              {language === 'bn' ? `${toBnNumber(lineItems.length)}টি আইটেম` : `${lineItems.length} items`}
+                            </span>
+                          )}
                         </div>
-                      ) : canManage ? (
-                        <span
-                          className="inline-flex items-center p-1 text-slate-400 bg-slate-100 rounded border border-slate-200 cursor-not-allowed"
-                          title={
-                            language === 'bn'
-                              ? 'শুধুমাত্র সুপার অ্যাডমিন ব্যয় ভাউচার এডিট বা ডিলিট করতে পারবেন'
-                              : 'Only Super Admin can edit or delete expense vouchers'
-                          }
+                        <div className="text-[10px] text-slate-400">{e.date} • {e.voucherNo} • {e.paymentMethod}</div>
+                        {lineItems.length > 1 && (
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            {lineItems.map((it) => `${it.description} (×${it.quantity})`).join(' • ')}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-1.5 shrink-0">
+                        <span className="font-bold text-rose-600 tabular-nums">{formatTaka(e.amount)}</span>
+                        <button
+                          type="button"
+                          onClick={() => setPrintingExpense(e)}
+                          className="p-1 text-slate-400 hover:text-rose-700 rounded"
+                          title={language === 'bn' ? 'ভাউচার প্রিন্ট' : 'Print Voucher'}
                         >
-                          <Lock className="w-3 h-3" />
-                        </span>
-                      ) : null}
+                          <Printer className="w-3 h-3" />
+                        </button>
+                        {canEditDeleteInvoices ? (
+                          <div className="flex items-center space-x-1">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditExpense(e)}
+                              className="p-1 text-slate-400 hover:text-indigo-600 rounded"
+                              title="ব্যয় ভাউচার এডিট"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteExpense(e)}
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                              title="ব্যয় ভাউচার মুছে ফেলুন"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ) : canManage ? (
+                          <span
+                            className="inline-flex items-center p-1 text-slate-400 bg-slate-100 rounded border border-slate-200 cursor-not-allowed"
+                            title={
+                              language === 'bn'
+                                ? 'শুধুমাত্র সুপার অ্যাডমিন ব্যয় ভাউচার এডিট বা ডিলিট করতে পারবেন'
+                                : 'Only Super Admin can edit or delete expense vouchers'
+                            }
+                          >
+                            <Lock className="w-3 h-3" />
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
+                  );
+                })}
+                {cashbookFilteredExpenses.length === 0 && (
+                  <div className="py-6 text-center text-slate-400">
+                    {language === 'bn' ? 'নির্বাচিত সময়কালে কোনো ব্যয় পাওয়া যায়নি।' : 'No expenses in selected period.'}
                   </div>
-                ))}
+                )}
               </div>
             </div>
           </div>
@@ -4400,126 +4982,300 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
         </div>
       )}
 
-      {/* EXPENSE MODAL (CREATE & EDIT) */}
+      {/* MULTI-ITEM EXPENSE MODAL (CREATE & EDIT) */}
       {showExpenseModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-md w-full p-6 text-xs animate-in zoom-in-95">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900 text-sm">
-                {editingExpense
-                  ? language === 'bn'
-                    ? 'ব্যয় ভাউচার সংশোধন / এডিট'
-                    : 'Edit Expense Voucher'
-                  : language === 'bn'
-                  ? 'নতুন প্রাতিষ্ঠানিক ব্যয় ভাউচার'
-                  : 'Create New Expense Voucher'}
-              </h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/50 backdrop-blur-xs print:hidden">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-3xl w-full max-h-[92vh] flex flex-col overflow-hidden text-xs animate-in zoom-in-95">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/70">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
+                  <Receipt className="w-4 h-4 text-rose-600" />
+                  <span>
+                    {editingExpense
+                      ? language === 'bn'
+                        ? `ব্যয় ভাউচার সংশোধন (${editingExpense.voucherNo})`
+                        : `Edit Expense Voucher (${editingExpense.voucherNo})`
+                      : language === 'bn'
+                      ? 'নতুন প্রাতিষ্ঠানিক ব্যয় ভাউচার (একাধিক আইটেমসহ)'
+                      : 'New Multi-Item Expense Voucher'}
+                  </span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {language === 'bn'
+                    ? 'একটি ভাউচারে একাধিক ব্যয়ের আইটেম, পরিমাণ ও দর যোগ করে সরাসরি অনুমোদন ও প্রিন্ট করুন'
+                    : 'Add one or multiple expense line items with quantity and unit price in a single voucher'}
+                </p>
+              </div>
               <button
+                type="button"
                 onClick={() => {
                   setShowExpenseModal(false);
-                  setEditingExpense(null);
+                  resetExpenseForm();
                 }}
-                className="text-slate-400 hover:text-slate-600 p-1"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleCreateExpense} className="mt-4 space-y-3">
-              <div>
-                <label className="block font-semibold mb-1">
-                  {language === 'bn' ? 'ব্যয়ের বিবরণ / খাত *' : 'Expense Title / Description *'}
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Science Lab Chemical Purchase"
-                  value={expenseTitle}
-                  onChange={(e) => setExpenseTitle(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg"
-                />
+
+            <form onSubmit={handleCreateExpense} className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+              {expenseFormError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 font-semibold">
+                  {expenseFormError}
+                </div>
+              )}
+
+              {/* Quick Preset Chips */}
+              <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-3 space-y-2">
+                <div className="text-[11px] font-bold text-slate-600">
+                  {language === 'bn' ? 'দ্রুত সাধারণ ব্যয়ের আইটেম যোগ করুন (এক ক্লিকে):' : 'Quick Add Common Expense Items:'}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {QUICK_EXPENSE_PRESETS.map((preset) => (
+                    <button
+                      key={preset.description}
+                      type="button"
+                      onClick={() => handleAddPresetExpenseItem(preset)}
+                      className="px-2.5 py-1 bg-white hover:bg-rose-50 border border-slate-200 hover:border-rose-300 rounded-lg text-[11px] font-semibold text-slate-700 transition-colors"
+                    >
+                      + {preset.description} ({formatTaka(preset.unitPrice)})
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div>
-                <label className="block font-semibold mb-1">
-                  {language === 'bn' ? 'ক্যাটাগরি' : 'Category'}
-                </label>
-                <select
-                  value={expenseCategory}
-                  onChange={(e) => setExpenseCategory(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg"
-                >
-                  <option value="Electricity & Utilities">Electricity & Utilities</option>
-                  <option value="Printing & Stationery">Printing & Stationery</option>
-                  <option value="Science Laboratory">Science Laboratory</option>
-                  <option value="Maintenance & Repairs">Maintenance & Repairs</option>
-                  <option value="Sports & Cultural">Sports & Cultural</option>
-                  <option value="Teacher Welfare">Teacher Welfare</option>
-                </select>
+
+              {/* Multi-item Expense Line Items Table */}
+              <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
+                <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                  <span className="font-bold text-slate-800">
+                    {language === 'bn'
+                      ? `ব্যয়ের আইটেম তালিকা (${toBnNumber(expenseItems.length)}টি)`
+                      : `Expense Line Items (${expenseItems.length})`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleAddExpenseRow}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[11px] font-bold"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{language === 'bn' ? 'আরেকটি আইটেম যোগ করুন' : 'Add Item Row'}</span>
+                  </button>
+                </div>
+
+                <div className="divide-y divide-slate-100">
+                  {expenseItems.map((row, idx) => (
+                    <div key={row.id} className="p-3 grid grid-cols-1 sm:grid-cols-12 gap-2 items-end bg-white hover:bg-slate-50/40">
+                      <div className="sm:col-span-4">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                          #{idx + 1} {language === 'bn' ? 'আইটেম / ব্যয়ের বিবরণ *' : 'Item Description *'}
+                        </label>
+                        <input
+                          type="text"
+                          placeholder={language === 'bn' ? 'যেমন: মার্কার পেন / বিদ্যুৎ বিল' : 'e.g. Lab Chemical / Marker'}
+                          value={row.description}
+                          onChange={(e) => handleUpdateExpenseRow(row.id, { description: e.target.value })}
+                          className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs"
+                        />
+                      </div>
+                      <div className="sm:col-span-3">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                          {language === 'bn' ? 'খাত / ক্যাটাগরি' : 'Category'}
+                        </label>
+                        <select
+                          value={row.category || expenseCategory}
+                          onChange={(e) => handleUpdateExpenseRow(row.id, { category: e.target.value })}
+                          className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs bg-white"
+                        >
+                          {EXPENSE_CATEGORIES.map((c) => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-3 sm:col-span-4 gap-1.5 items-end">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                            {language === 'bn' ? 'পরিমাণ' : 'Qty'}
+                          </label>
+                          <DigitInput
+                            min={1}
+                            value={row.quantity}
+                            onValueChange={(val) => handleUpdateExpenseRow(row.id, { quantity: val })}
+                            className="w-full px-2 py-1.5 border border-slate-200 rounded-lg font-bold text-center text-xs"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                            {language === 'bn' ? 'দর (৳) *' : 'Rate (৳) *'}
+                          </label>
+                          <DigitInput
+                            min={0}
+                            emptyWhenZero
+                            value={row.unitPrice || ''}
+                            onValueChange={(val) => handleUpdateExpenseRow(row.id, { unitPrice: val })}
+                            className="w-full px-2 py-1.5 border border-slate-200 rounded-lg font-bold text-right text-xs"
+                          />
+                        </div>
+                        <div className="text-right pb-1.5">
+                          <span className="block text-[9px] text-slate-400">{language === 'bn' ? 'মোট' : 'Total'}</span>
+                          <span className="font-extrabold text-rose-700 tabular-nums">{formatTaka(row.amount)}</span>
+                        </div>
+                      </div>
+                      <div className="sm:col-span-1 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveExpenseRow(row.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
+                          title={language === 'bn' ? 'আইটেম সরান' : 'Remove Row'}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="px-4 py-2.5 bg-rose-50/70 border-t border-rose-100 flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAddExpenseRow}
+                    className="inline-flex items-center gap-1 text-rose-700 hover:text-rose-900 font-bold text-xs"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>{language === 'bn' ? '+ আরও একটি আইটেম যোগ করুন' : '+ Add Another Item'}</span>
+                  </button>
+                  <div className="text-right">
+                    <span className="text-slate-600 font-semibold mr-2">
+                      {language === 'bn' ? 'সর্বমোট ব্যয়:' : 'Grand Total:'}
+                    </span>
+                    <span className="text-base font-black text-rose-700 tabular-nums">
+                      {formatTaka(expenseModalGrandTotal)}
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+
+              {/* Voucher Metadata */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-slate-50/70 border border-slate-200 rounded-2xl">
                 <div>
-                  <label className="block font-semibold mb-1">
-                    {language === 'bn' ? 'টাকার পরিমাণ (৳) *' : 'Amount (৳) *'}
+                  <label className="block font-semibold mb-1 text-slate-700">
+                    {language === 'bn' ? 'প্রাপক (Vendor / Person) *' : 'Paid To (Vendor / Person) *'}
                   </label>
-                  <DigitInput
+                  <input
+                    type="text"
                     required
-                    min={1}
-                    emptyWhenZero
-                    value={expenseAmount || ''}
-                    onValueChange={(val) => setExpenseAmount(val)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg font-bold"
+                    placeholder="e.g. Bengal Scientific Co. / DESCO"
+                    value={expensePaidTo}
+                    onChange={(e) => setExpensePaidTo(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold mb-1">
+                  <label className="block font-semibold mb-1 text-slate-700">
+                    {language === 'bn' ? 'মূল ক্যাটাগরি' : 'Primary Category'}
+                  </label>
+                  <select
+                    value={expenseCategory}
+                    onChange={(e) => setExpenseCategory(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
+                  >
+                    {EXPENSE_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1 text-slate-700">
+                    {language === 'bn' ? 'তারিখ' : 'Date'}
+                  </label>
+                  <input
+                    type="date"
+                    value={expenseDate}
+                    onChange={(e) => setExpenseDate(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1 text-slate-700">
                     {language === 'bn' ? 'পেমেন্ট মাধ্যম' : 'Payment Method'}
                   </label>
                   <select
                     value={expenseMethod}
                     onChange={(e) => setExpenseMethod(e.target.value as any)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
                   >
                     <option value="Cash">Cash (নগদ)</option>
-                    <option value="Bank">Bank / Cheque (ব্যাংক)</option>
                     <option value="bKash">bKash (বিকাশ)</option>
+                    <option value="Nagad">Nagad (নগদ)</option>
+                    <option value="Bank">Bank (ব্যাংক)</option>
+                    <option value="Cheque">Cheque (চেক)</option>
                   </select>
                 </div>
+                <div>
+                  <label className="block font-semibold mb-1 text-slate-700">
+                    {language === 'bn' ? 'ভাউচার শিরোনাম (ঐচ্ছিক)' : 'Voucher Title (Auto if blank)'}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={language === 'bn' ? 'ফাঁকা রাখলে আইটেম থেকে অটো তৈরি হবে' : 'Auto-generated from items if blank'}
+                    value={expenseTitle}
+                    onChange={(e) => setExpenseTitle(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1 text-slate-700">
+                    {language === 'bn' ? 'বিল / রেফারেন্স নং (ঐচ্ছিক)' : 'Ref / Bill No (Optional)'}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. BILL-409 / TrxID"
+                    value={expenseRefNo}
+                    onChange={(e) => setExpenseRefNo(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold mb-1 text-slate-700">
+                    {language === 'bn' ? 'নোট / মন্তব্য (ঐচ্ছিক)' : 'Notes (Optional)'}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={language === 'bn' ? 'অতিরিক্ত বিবরণ...' : 'Remarks...'}
+                    value={expenseNotes}
+                    onChange={(e) => setExpenseNotes(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block font-semibold mb-1">
-                  {language === 'bn' ? 'প্রাপক (Vendor / Person) *' : 'Paid To (Vendor / Person) *'}
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Bengal Scientific Co."
-                  value={expensePaidTo}
-                  onChange={(e) => setExpensePaidTo(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg"
-                />
-              </div>
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowExpenseModal(false);
-                    setEditingExpense(null);
-                  }}
-                  className="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-700"
-                >
-                  {language === 'bn' ? 'বাতিল' : 'Cancel'}
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold shadow-xs"
-                >
-                  {editingExpense
-                    ? language === 'bn'
-                      ? 'পরিবর্তন সংরক্ষণ করুন'
-                      : 'Save Changes'
-                    : language === 'bn'
-                    ? 'ভাউচার অনুমোদন করুন'
-                    : 'Approve Voucher'}
-                </button>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                <div className="text-[11px] text-slate-500">
+                  {expenseModalGrandTotal > 0 ? amountInWords(expenseModalGrandTotal) : ''}
+                </div>
+                <div className="flex items-center space-x-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowExpenseModal(false);
+                      resetExpenseForm();
+                    }}
+                    className="px-3.5 py-2 border border-slate-200 rounded-xl text-slate-700 font-semibold"
+                  >
+                    {language === 'bn' ? 'বাতিল' : 'Cancel'}
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold shadow-xs"
+                  >
+                    {editingExpense
+                      ? language === 'bn'
+                        ? 'পরিবর্তন সংরক্ষণ করুন'
+                        : 'Save Changes'
+                      : language === 'bn'
+                      ? 'ভাউচার অনুমোদন ও প্রিন্ট'
+                      : 'Approve & Print Voucher'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -5430,6 +6186,53 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
             </div>
           </div>
         </div>
+      )}
+
+      {/* OFFICIAL PRINTABLE MULTI-ITEM EXPENSE VOUCHER MODAL */}
+      {printingExpense && (
+        <ExpenseVoucherPrintModal
+          expense={printingExpense}
+          school={school}
+          language={language}
+          formatTaka={formatTaka}
+          toBnNumber={toBnNumber}
+          formatDate={formatDate}
+          amountInWords={amountInWords}
+          onClose={() => setPrintingExpense(null)}
+        />
+      )}
+
+      {/* OFFICIAL PRINTABLE COLLECTION REPORT MODAL */}
+      {showCollectionPrintModal && (
+        <CollectionReportPrintModal
+          payments={filteredReceipts}
+          periodLabel={getPeriodDisplayLabel(receiptPeriodFilter, language, receiptCustomStart, receiptCustomEnd)}
+          methodFilterLabel={receiptMethodFilter === 'all' ? (language === 'bn' ? 'সকল মাধ্যম' : 'All Methods') : receiptMethodFilter}
+          school={school}
+          language={language}
+          formatTaka={formatTaka}
+          toBnNumber={toBnNumber}
+          formatDate={formatDate}
+          amountInWords={amountInWords}
+          onClose={() => setShowCollectionPrintModal(false)}
+        />
+      )}
+
+      {/* OFFICIAL PRINTABLE CASHBOOK / INCOME-EXPENSE STATEMENT MODAL */}
+      {showCashbookPrintModal && (
+        <CashbookStatementPrintModal
+          payments={cashbookFilteredPayments}
+          incomeVouchers={cashbookFilteredIncomeVouchers}
+          expenses={cashbookFilteredExpenses}
+          periodLabel={getPeriodDisplayLabel(cashbookPeriodFilter, language, cashbookCustomStart, cashbookCustomEnd)}
+          school={school}
+          language={language}
+          formatTaka={formatTaka}
+          toBnNumber={toBnNumber}
+          formatDate={formatDate}
+          amountInWords={amountInWords}
+          onClose={() => setShowCashbookPrintModal(false)}
+        />
       )}
     </div>
   );

@@ -7,6 +7,7 @@ import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName, toEnNumber } from '../../utils/i18n';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { compareStudentsByClassAndRoll } from '../../utils/studentSort';
+import { exportStudentsAdmissionExcel } from '../../utils/studentExcelExport';
 import { LiveCameraModal } from '../common/LiveCameraModal';
 import { buildPrincipalSignatureHtml } from '../../utils/signatureHelper';
 import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
@@ -391,7 +392,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
     nameBn: '',
     gender: 'Male',
     dob: '2012-05-10',
-    bloodGroup: 'B+',
+    bloodGroup: 'Unknown',
     religion: 'Islam',
     className: 'Class 10',
     section: 'A',
@@ -542,7 +543,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
       nameBn: '',
       gender: 'Male',
       dob: '2012-05-10',
-      bloodGroup: 'B+',
+      bloodGroup: 'Unknown',
       religion: 'Islam',
       className: 'Class 10',
       section: 'A',
@@ -658,6 +659,30 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
     document.body.removeChild(link);
   };
 
+  const handleDownloadAllStudentsExcel = () => {
+    if (students.length === 0) {
+      setActionToast(
+        language === 'bn'
+          ? 'ডাউনলোড করার মতো কোনো শিক্ষার্থী পাওয়া যায়নি!'
+          : 'No student records available to export.'
+      );
+      setTimeout(() => setActionToast(''), 3500);
+      return;
+    }
+    exportStudentsAdmissionExcel({
+      allStudents: students,
+      filteredStudents,
+      schoolName: school?.nameEn,
+      schoolCode: activeSchoolCode,
+    });
+    setActionToast(
+      language === 'bn'
+        ? `মোট ${toBnNumber(students.length)} জন শিক্ষার্থীর সম্পূর্ণ ভর্তি তথ্য Excel (.xlsx) ডাউনলোড সম্পন্ন হয়েছে!`
+        : `Downloaded Excel (.xlsx) admission info for all ${students.length} students!`
+    );
+    setTimeout(() => setActionToast(''), 4000);
+  };
+
   const studentLauncherItems: LauncherTileItem[] = [
     {
       id: 'all',
@@ -687,6 +712,14 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
       onClick: () => setSelectedShift('Day'),
     },
     {
+      id: 'excel_export',
+      label: language === 'bn' ? 'Excel ডাউনলোড' : 'Excel Export',
+      icon: FileSpreadsheet,
+      color: 'green',
+      badge: students.length || undefined,
+      onClick: handleDownloadAllStudentsExcel,
+    },
+    {
       id: 'csv',
       label: language === 'bn' ? 'CSV টেমপ্লেট' : 'CSV Template',
       icon: Download,
@@ -699,7 +732,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
             id: 'add',
             label: language === 'bn' ? 'নতুন ভর্তি' : 'New Admission',
             icon: Plus,
-            color: 'green' as const,
+            color: 'sky' as const,
             onClick: handleOpenAdd,
           },
         ]
@@ -725,16 +758,30 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
+            type="button"
+            onClick={handleDownloadAllStudentsExcel}
+            className="flex items-center space-x-1.5 px-3.5 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition-colors shadow-xs cursor-pointer"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>
+              {language === 'bn'
+                ? 'সকল তথ্য Excel ডাউনলোড'
+                : 'Download All Excel (.xlsx)'}
+            </span>
+          </button>
+          <button
+            type="button"
             onClick={handleDownloadCsvTemplate}
-            className="flex items-center space-x-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors"
+            className="flex items-center space-x-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors cursor-pointer"
           >
             <Download className="w-4 h-4 text-slate-500" />
             <span>{language === 'bn' ? 'CSV টেমপ্লেট' : 'CSV Template'}</span>
           </button>
           {canEdit && (
             <button
+              type="button"
               onClick={handleOpenAdd}
-              className="flex items-center space-x-1.5 px-3.5 py-2 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-xs"
+              className="flex items-center space-x-1.5 px-3.5 py-2 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-colors shadow-xs cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>{language === 'bn' ? 'নতুন শিক্ষার্থী ভর্তি' : 'New Admission'}</span>
@@ -1330,12 +1377,14 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Blood Group / রক্তের গ্রুপ</label>
                   <select
-                    value={formData.bloodGroup || 'B+'}
+                    value={formData.bloodGroup || 'Unknown'}
                     onChange={(e) => setFormData({ ...formData, bloodGroup: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   >
-                    {['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'].map((bg) => (
-                      <option key={bg} value={bg}>{bg}</option>
+                    {['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-', 'Unknown'].map((bg) => (
+                      <option key={bg} value={bg}>
+                        {bg === 'Unknown' ? 'Unknown / অজানা' : bg}
+                      </option>
                     ))}
                   </select>
                 </div>

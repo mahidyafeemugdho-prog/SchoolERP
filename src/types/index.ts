@@ -491,15 +491,26 @@ export interface FeePayment {
   remarks?: string;
 }
 
+export interface ExpenseLineItem {
+  id: string;
+  description: string;
+  category?: string;
+  unit?: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+}
+
 export interface Expense {
   id: string;
   voucherNo: string;
   category: string;
   title: string;
   amount: number;
+  items?: ExpenseLineItem[];
   date: string;
   paidTo: string;
-  paymentMethod: 'Cash' | 'Bank' | 'Cheque' | 'bKash';
+  paymentMethod: 'Cash' | 'Bank' | 'Cheque' | 'bKash' | 'Nagad';
   referenceNo?: string;
   approvedBy: string;
   notes?: string;

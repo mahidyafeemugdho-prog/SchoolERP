@@ -7,6 +7,7 @@ import { AdmissionEnquiry, ClassLevel, GroupType, Student } from '../../types';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
 import { toEnNumber } from '../../utils/i18n';
+import { exportStudentsAdmissionExcel } from '../../utils/studentExcelExport';
 import {
   ModernStudentIDCardFront,
   ModernStudentIDCardBack,
@@ -42,6 +43,7 @@ import {
   QrCode,
   ShieldCheck,
   FileText,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 export const AdmissionsView: React.FC = () => {
@@ -82,7 +84,7 @@ export const AdmissionsView: React.FC = () => {
   const [applyingClass, setApplyingClass] = useState<ClassLevel>('Nursery');
   const [gender, setGender] = useState<'Male' | 'Female'>('Male');
   const [dob, setDob] = useState<string>('2021-02-14');
-  const [bloodGroup, setBloodGroup] = useState<string>('B+');
+  const [bloodGroup, setBloodGroup] = useState<string>('Unknown');
   const [guardianName, setGuardianName] = useState<string>('');
   const [phone, setPhone] = useState<string>('');
   const [email, setEmail] = useState<string>('');
@@ -231,7 +233,7 @@ export const AdmissionsView: React.FC = () => {
     setEnrollSection('A');
     setEnrollShift(enq.applyingClass === 'Nursery' || enq.applyingClass === 'KG' ? 'Morning' : 'Day');
     setEnrollGroup(['Class 9', 'Class 10'].includes(enq.applyingClass) ? 'Science' : 'General');
-    setEnrollBloodGroup(enq.bloodGroup || 'B+');
+    setEnrollBloodGroup(enq.bloodGroup || 'Unknown');
     setEnrollPhotoUrl(enq.photoUrl || '');
     setBirthCertificateNo('');
     setBirthCertificateUrl('');
@@ -359,15 +361,33 @@ export const AdmissionsView: React.FC = () => {
               : 'Student admission with photo upload, auto ID number generation & instant printable Student ID Card'}
           </p>
         </div>
-        {canManage && (
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={handleOpenAddModal}
-            className="flex items-center space-x-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+            type="button"
+            onClick={() => {
+              const allStudents = StorageService.getStudents();
+              if (allStudents.length === 0) return;
+              exportStudentsAdmissionExcel({
+                allStudents,
+                schoolName: schoolProfile?.nameEn,
+                schoolCode: activeSchoolCode,
+              });
+            }}
+            className="flex items-center space-x-1.5 px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
           >
-            <Plus className="w-4 h-4" />
-            <span>{language === 'bn' ? '+ নতুন ভর্তি আবেদন' : '+ New Admission'}</span>
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>{language === 'bn' ? 'সকল শিক্ষার্থীর Excel' : 'All Students Excel'}</span>
           </button>
-        )}
+          {canManage && (
+            <button
+              onClick={handleOpenAddModal}
+              className="flex items-center space-x-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>{language === 'bn' ? '+ নতুন ভর্তি আবেদন' : '+ New Admission'}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Search & Status Filter */}
@@ -691,8 +711,10 @@ export const AdmissionsView: React.FC = () => {
                     onChange={(e) => setBloodGroup(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white font-bold"
                   >
-                    {['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'].map((bg) => (
-                      <option key={bg} value={bg}>{bg}</option>
+                    {['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-', 'Unknown'].map((bg) => (
+                      <option key={bg} value={bg}>
+                        {bg === 'Unknown' ? (language === 'bn' ? 'Unknown / অজানা' : 'Unknown') : bg}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -961,8 +983,10 @@ export const AdmissionsView: React.FC = () => {
                     onChange={(e) => setEnrollBloodGroup(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white font-bold"
                   >
-                    {['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'].map((bg) => (
-                      <option key={bg} value={bg}>{bg}</option>
+                    {['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-', 'Unknown'].map((bg) => (
+                      <option key={bg} value={bg}>
+                        {bg === 'Unknown' ? (language === 'bn' ? 'Unknown / অজানা' : 'Unknown') : bg}
+                      </option>
                     ))}
                   </select>
                 </div>

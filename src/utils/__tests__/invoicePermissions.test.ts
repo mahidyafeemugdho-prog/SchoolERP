@@ -199,6 +199,35 @@ describe('Finance Edit/Delete Role Permissions (Invoices, Receipts, Expenses, Ca
     expect(StorageService.getExpenses().find((e) => e.id === exp.id)).toBeUndefined();
   });
 
+  it('persists multi-item expense vouchers and preserves accountant audit lock', () => {
+    const multiVoucherNo = StorageService.generateNextExpenseVoucherNo('2026-11-19');
+    expect(multiVoucherNo.startsWith('VOUCH-2026-')).toBe(true);
+
+    const multiExp = makeExpense({
+      id: 'exp_multi_1',
+      voucherNo: multiVoucherNo,
+      title: 'মার্কার পেন ×5, A4 কাগজ ×2',
+      amount: 1160,
+      items: [
+        { id: 'li_1', description: 'মার্কার পেন', category: 'Printing & Stationery', quantity: 5, unitPrice: 40, amount: 200 },
+        { id: 'li_2', description: 'A4 কাগজ', category: 'Printing & Stationery', quantity: 2, unitPrice: 480, amount: 960 },
+      ],
+    });
+    StorageService.addExpense(multiExp);
+
+    const saved = StorageService.getExpenses().find((e) => e.id === 'exp_multi_1');
+    expect(saved?.items).toHaveLength(2);
+    expect(saved?.amount).toBe(1160);
+
+    // Accountant cannot edit or delete
+    expect(StorageService.updateExpense({ ...multiExp, amount: 500 }, 'accountant')).toBe(false);
+    expect(StorageService.deleteExpense('exp_multi_1', 'accountant')).toBe(false);
+
+    // Super Admin can edit multi-item expense
+    expect(StorageService.updateExpense({ ...multiExp, amount: 1200 }, 'super_admin')).toBe(true);
+    expect(StorageService.getExpenses().find((e) => e.id === 'exp_multi_1')?.amount).toBe(1200);
+  });
+
   it('tracks catalog stock on income voucher sales and enforces Super Admin-only edit/delete', () => {
     StorageService.addSaleItem({
       id: 'sale_khata_1',
