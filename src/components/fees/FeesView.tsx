@@ -11,6 +11,7 @@ import { StudentFeeStatementTab } from './StudentFeeStatementTab';
 import { StaffSalaryPayrollTab } from '../staff/StaffSalaryPayrollTab';
 import { IncomeVouchersSection } from './IncomeVouchersSection';
 import { PeriodFilterBar } from './PeriodFilterBar';
+import { CollectorCollectionTab } from './CollectorCollectionTab';
 import {
   ExpenseVoucherPrintModal,
   CollectionReportPrintModal,
@@ -26,6 +27,11 @@ import {
   summarizeExpenseTitle,
   toLocalIsoDate,
 } from '../../utils/financeFilters';
+import {
+  canViewAllCollectorReports,
+  filterCollectorTransactions,
+  normalizeCollectorTransactions,
+} from '../../utils/collectorReports';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
 import { findDuplicatePaidFee } from '../../utils/feeDuplicateCheck';
@@ -169,6 +175,7 @@ export type FeesSubTab =
   | 'transport_fees'
   | 'collection'
   | 'invoices'
+  | 'collector_report'
   | 'dues'
   | 'expenses'
   | 'payroll'
@@ -390,6 +397,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const [receiptCustomStart, setReceiptCustomStart] = useState<string>(localToday);
   const [receiptCustomEnd, setReceiptCustomEnd] = useState<string>(localToday);
   const [receiptMethodFilter, setReceiptMethodFilter] = useState<string>('all');
+  const [receiptCollectorFilter, setReceiptCollectorFilter] = useState<string>('all');
   const [receiptSearch, setReceiptSearch] = useState<string>('');
   const [showCollectionPrintModal, setShowCollectionPrintModal] = useState<boolean>(false);
 
@@ -516,6 +524,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                 paymentMethod: req.paymentMethod as any,
                 transactionId: req.transactionId,
                 collectedBy: `${req.paymentMethod} Online (Approved by ${currentUser.name})`,
+                collectedById: currentUser.linkedStaffId || currentUser.id,
+                collectedByEmail: currentUser.email,
+                collectedByRole: activeRole,
                 notes: `${inv.feeType} - অনলাইন পেমেন্ট অনুমোদন। প্রেরক: ${req.senderPhone}, TrxID: ${req.transactionId}`,
               };
               StorageService.addPayment(oldPayment);
@@ -551,6 +562,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
             paymentMethod: req.paymentMethod as any,
             transactionId: req.transactionId,
             collectedBy: `${req.paymentMethod} Online (Approved by ${currentUser.name})`,
+            collectedById: currentUser.linkedStaffId || currentUser.id,
+            collectedByEmail: currentUser.email,
+            collectedByRole: activeRole,
             notes: `${req.feeTitle} - অনলাইন পেমেন্ট অনুমোদন। প্রেরক: ${req.senderPhone}, TrxID: ${req.transactionId}`,
           };
           StorageService.addPayment(linkedPayment);
@@ -607,6 +621,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           paymentMethod: req.paymentMethod as any,
           transactionId: req.transactionId,
           collectedBy: `${req.paymentMethod} Online (Approved by ${currentUser.name})`,
+          collectedById: currentUser.linkedStaffId || currentUser.id,
+          collectedByEmail: currentUser.email,
+          collectedByRole: activeRole,
           notes: `${req.feeTitle} - অনলাইন পেমেন্ট অনুমোদন। প্রেরক: ${req.senderPhone}, TrxID: ${req.transactionId}`,
         };
         StorageService.addPayment(newPayment);
@@ -808,11 +825,44 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
     [expenses]
   );
 
+  const staffList = useMemo(() => StorageService.getStaff(), [syncTick]);
+  const canViewAllCollectors = canViewAllCollectorReports(activeRole);
+
+  const { transactions: collectorNormalizedTxs, directory: collectorDirectory } = useMemo(
+    () => normalizeCollectorTransactions(payments, incomeVouchers, staffList, currentUser),
+    [payments, incomeVouchers, staffList, currentUser]
+  );
+  const currentCollectorKey = useMemo(
+    () => collectorDirectory.resolveUserKey(currentUser),
+    [collectorDirectory, currentUser]
+  );
+  const myTodayStats = useMemo(() => {
+    const myToday = filterCollectorTransactions(collectorNormalizedTxs, {
+      period: 'today',
+      collectorKey: currentCollectorKey,
+    });
+    const m = summarizeByPaymentMethod(myToday);
+    return {
+      total: m.total,
+      cash: m.Cash,
+      count: myToday.length,
+    };
+  }, [collectorNormalizedTxs, currentCollectorKey]);
+
   // Filtered Fee Collection Receipts (রসিদ রেজিস্ট্রি)
   const filteredReceipts = useMemo(() => {
     return payments.filter((p) => {
       if (!isDateInPeriod(p.paidDate, receiptPeriodFilter, receiptCustomStart, receiptCustomEnd)) return false;
       if (receiptMethodFilter !== 'all' && p.paymentMethod !== receiptMethodFilter) return false;
+      if (canViewAllCollectors && receiptCollectorFilter !== 'all') {
+        const resolved = collectorDirectory.resolve({
+          actorId: p.collectedById,
+          actorEmail: p.collectedByEmail,
+          actorRole: p.collectedByRole,
+          rawLabel: p.collectedBy,
+        });
+        if (resolved.collectorKey !== receiptCollectorFilter) return false;
+      }
       if (receiptSearch.trim() !== '') {
         const q = receiptSearch.toLowerCase().trim();
         return (
@@ -820,13 +870,24 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           p.studentName.toLowerCase().includes(q) ||
           (p.className || '').toLowerCase().includes(q) ||
           String(p.roll || '').toLowerCase().includes(q) ||
+          (p.collectedBy || '').toLowerCase().includes(q) ||
           (p.transactionId || '').toLowerCase().includes(q) ||
           (p.notes || '').toLowerCase().includes(q)
         );
       }
       return true;
     });
-  }, [payments, receiptPeriodFilter, receiptCustomStart, receiptCustomEnd, receiptMethodFilter, receiptSearch]);
+  }, [
+    payments,
+    receiptPeriodFilter,
+    receiptCustomStart,
+    receiptCustomEnd,
+    receiptMethodFilter,
+    receiptCollectorFilter,
+    canViewAllCollectors,
+    collectorDirectory,
+    receiptSearch,
+  ]);
 
   const receiptMethodSummary = useMemo(() => summarizeByPaymentMethod(filteredReceipts), [filteredReceipts]);
 
@@ -1330,6 +1391,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       paymentMethod,
       transactionId: transactionId || (paymentMethod !== 'Cash' ? `TXN-${Date.now().toString().slice(-6)}` : undefined),
       collectedBy: currentUser.name,
+      collectedById: currentUser.linkedStaffId || currentUser.id,
+      collectedByEmail: currentUser.email,
+      collectedByRole: activeRole,
       notes: paymentNotes || `${invoiceItems.length} items collected (Discount: ৳ ${discountAmount})`,
     };
 
@@ -1399,6 +1463,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       paymentMethod,
       transactionId: transactionId || (paymentMethod !== 'Cash' ? `TXN-${Date.now().toString().slice(-6)}` : undefined),
       collectedBy: currentUser.name,
+      collectedById: currentUser.linkedStaffId || currentUser.id,
+      collectedByEmail: currentUser.email,
+      collectedByRole: activeRole,
       notes: paymentNotes || 'Fee Collection Desk',
     };
 
@@ -2101,6 +2168,24 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       active: activeTab === 'invoices',
       onClick: () => setActiveTab('invoices'),
     },
+    ...(canManage
+      ? [
+          {
+            id: 'collector_report',
+            label: canViewAllCollectors
+              ? language === 'bn'
+                ? 'কালেক্টর হিসাব'
+                : 'Collector Audit'
+              : language === 'bn'
+              ? 'আমার কালেকশন'
+              : 'My Collection',
+            icon: UserCheck,
+            color: 'indigo' as const,
+            active: activeTab === 'collector_report',
+            onClick: () => setActiveTab('collector_report'),
+          },
+        ]
+      : []),
     {
       id: 'dues',
       label: language === 'bn' ? 'বকেয়া তালিকা' : 'Due List',
@@ -2268,6 +2353,30 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
               ? 'ক্যাশ, বিকাশ ও ব্যাংক প্রাপ্তি'
               : 'Cash, bKash & Bank receipts'}
           </div>
+          {canManage && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('collector_report')}
+              className="mt-2 w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 text-[10px] font-bold text-indigo-800 transition-colors cursor-pointer"
+            >
+              <span>
+                {canViewAllCollectors
+                  ? language === 'bn'
+                    ? 'হিসাবরক্ষক ভিত্তিক (কে কত):'
+                    : 'Collector Breakdown:'
+                  : language === 'bn'
+                  ? 'আজকে আমার কালেকশন:'
+                  : 'My Today Total:'}
+              </span>
+              <span className="tabular-nums text-indigo-700">
+                {canViewAllCollectors
+                  ? language === 'bn'
+                    ? 'দেখুন →'
+                    : 'View →'
+                  : `${formatTaka(myTodayStats.total)} →`}
+              </span>
+            </button>
+          )}
         </div>
 
         <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
@@ -3887,6 +3996,20 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                   <option value="Rocket">Rocket (রকেট)</option>
                   <option value="Bank">Bank (ব্যাংক)</option>
                 </select>
+                {canViewAllCollectors && (
+                  <select
+                    value={receiptCollectorFilter}
+                    onChange={(e) => setReceiptCollectorFilter(e.target.value)}
+                    className="px-3 py-1.5 text-xs border border-indigo-200 rounded-xl bg-indigo-50/70 font-bold text-indigo-950"
+                  >
+                    <option value="all">{language === 'bn' ? 'সকল সংগ্রহকারী' : 'All Collectors'}</option>
+                    {collectorDirectory.identities.map((id) => (
+                      <option key={id.collectorKey} value={id.collectorKey}>
+                        {id.displayNameBn || id.displayName}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               <button
                 type="button"
@@ -3922,6 +4045,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                   <th className="py-3 px-4">Receipt No</th>
                   <th className="py-3 px-4">Student</th>
                   <th className="py-3 px-4">Method</th>
+                  <th className="py-3 px-4">{language === 'bn' ? 'সংগ্রহকারী' : 'Collector'}</th>
                   <th className="py-3 px-4">TrxID / Note</th>
                   <th className="py-3 px-4">Date</th>
                   <th className="py-3 px-4 text-right">Amount</th>
@@ -3940,6 +4064,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
                         {p.paymentMethod}
                       </span>
+                    </td>
+                    <td className="py-3 px-4 text-[11px] font-semibold text-slate-700">
+                      {p.collectedBy || '—'}
                     </td>
                     <td className="py-3 px-4 text-slate-600 text-[11px]">
                       {p.transactionId ? <span className="font-mono text-blue-600">{p.transactionId}</span> : p.notes}
@@ -4000,7 +4127,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                 ))}
                 {filteredReceipts.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
+                    <td colSpan={8} className="py-8 text-center text-slate-400">
                       {language === 'bn'
                         ? 'নির্বাচিত সময়কাল বা ফিল্টারে কোনো ফি রসিদ পাওয়া যায়নি।'
                         : 'No payment receipts found for the selected filter.'}
@@ -4012,6 +4139,31 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           </div>
           </div>
         </div>
+      )}
+
+      {/* TAB: ACCOUNTANT / COLLECTOR-WISE COLLECTION REPORT */}
+      {activeTab === 'collector_report' && canManage && (
+        <CollectorCollectionTab
+          payments={payments}
+          incomeVouchers={incomeVouchers}
+          staffList={staffList}
+          currentUser={currentUser}
+          activeRole={activeRole}
+          school={school}
+          language={language}
+          formatTaka={formatTaka}
+          toBnNumber={toBnNumber}
+          formatDate={formatDate}
+          amountInWords={amountInWords}
+          onInspectFeeReceipt={(_receiptNo, paymentId) => {
+            const pay = payments.find((p) => p.id === paymentId);
+            if (!pay) return;
+            const inv = invoices.find((i) => i.id === pay.invoiceId) || null;
+            setSelectedReceipt(pay);
+            setSelectedReceiptInvoice(inv);
+            setShowReceiptModal(true);
+          }}
+        />
       )}
 
       {/* TAB: OUTSTANDING DUES LIST */}
@@ -4397,6 +4549,8 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
         <IncomeVouchersSection
           activeRole={activeRole}
           currentUserName={currentUser.name}
+          currentUserId={currentUser.linkedStaffId || currentUser.id}
+          currentUserEmail={currentUser.email}
           school={school}
           language={language}
           students={students}

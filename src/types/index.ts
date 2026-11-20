@@ -487,6 +487,9 @@ export interface FeePayment {
   paymentMethod: 'Cash' | 'bKash' | 'Nagad' | 'Rocket' | 'Bank';
   transactionId?: string;
   collectedBy: string;
+  collectedById?: string;
+  collectedByEmail?: string;
+  collectedByRole?: string;
   notes?: string;
   remarks?: string;
 }
@@ -559,6 +562,9 @@ export interface IncomeVoucher {
   paymentMethod: 'Cash' | 'bKash' | 'Nagad' | 'Bank';
   transactionId?: string;
   receivedBy: string;
+  receivedById?: string;
+  receivedByEmail?: string;
+  receivedByRole?: string;
   notes?: string;
   createdAt?: string;
   updatedAt?: string;

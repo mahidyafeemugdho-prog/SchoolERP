@@ -8,6 +8,7 @@ import {
   normalizeExpenseItems,
   summarizeByPaymentMethod,
 } from '../../utils/financeFilters';
+import { CollectorSummary, CollectorTransaction } from '../../utils/collectorReports';
 
 const escapeHtml = (value: string | number | undefined | null): string =>
   String(value ?? '')
@@ -1246,6 +1247,401 @@ export const IncomeSummaryPrintModal: React.FC<IncomeSummaryPrintModalProps> = (
             <div className="text-center">
               <PrincipalSignatureDisplay school={school} />
               <div className="border-t border-slate-400 pt-1 px-6 font-semibold">প্রধান শিক্ষক / অধ্যক্ষ</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ============================================================================
+ * 6. COLLECTOR-WISE & ACCOUNTANT COLLECTION REPORT PRINT MODAL
+ * ========================================================================== */
+interface CollectorReportPrintModalProps extends CommonPrintProps {
+  transactions: CollectorTransaction[];
+  collectorSummaries: CollectorSummary[];
+  periodLabel: string;
+  selectedCollectorLabel: string;
+  canViewAllCollectors: boolean;
+  onClose: () => void;
+}
+
+export const CollectorReportPrintModal: React.FC<CollectorReportPrintModalProps> = ({
+  transactions,
+  collectorSummaries,
+  periodLabel,
+  selectedCollectorLabel,
+  canViewAllCollectors,
+  school,
+  language,
+  formatTaka,
+  toBnNumber,
+  formatDate,
+  amountInWords,
+  onClose,
+}) => {
+  const methodSummary = summarizeByPaymentMethod(transactions);
+  const feeTotal = transactions
+    .filter((t) => t.source === 'fee_receipt')
+    .reduce((s, t) => s + t.amount, 0);
+  const voucherTotal = transactions
+    .filter((t) => t.source === 'income_voucher')
+    .reduce((s, t) => s + t.amount, 0);
+
+  const handleDownloadCsv = () => {
+    const header = 'SL,Date,Ref No,Type,Collector,Student/Payer,Details,Method,TrxID,Amount\n';
+    const body = transactions
+      .map((t, idx) =>
+        [
+          idx + 1,
+          `"${escapeHtml(t.date)}"`,
+          `"${escapeHtml(t.refNo)}"`,
+          t.source === 'fee_receipt' ? 'Fee Receipt' : 'Income Voucher',
+          `"${String(t.collectorName).replace(/"/g, '""')}"`,
+          `"${String(t.partyName).replace(/"/g, '""')}"`,
+          `"${String(t.subtitle).replace(/"/g, '""')}"`,
+          t.paymentMethod,
+          `"${t.transactionId || ''}"`,
+          t.amount,
+        ].join(',')
+      )
+      .join('\n');
+    downloadBlob(
+      '\uFEFF' + header + body,
+      'text/csv;charset=utf-8;',
+      `Collector_Collection_Report_${new Date().toISOString().slice(0, 10)}.csv`
+    );
+  };
+
+  const handleDownloadHtml = () => {
+    const summaryRowsHtml = canViewAllCollectors
+      ? collectorSummaries
+          .map(
+            (c, idx) => `
+          <tr>
+            <td style="text-align:center;">${idx + 1}</td>
+            <td><strong>${escapeHtml(c.displayNameBn || c.displayName)}</strong><br/><span style="font-size:10px;color:#475569;">${escapeHtml(c.roleLabelBn)}</span></td>
+            <td style="text-align:center;">${c.feeCount}</td>
+            <td style="text-align:right;">৳${c.feeAmount.toLocaleString()}</td>
+            <td style="text-align:center;">${c.voucherCount}</td>
+            <td style="text-align:right;">৳${c.voucherAmount.toLocaleString()}</td>
+            <td style="text-align:right;">৳${c.cashAmount.toLocaleString()}</td>
+            <td style="text-align:right;">৳${c.mfsAndBankAmount.toLocaleString()}</td>
+            <td style="text-align:right;font-weight:800;color:#047857;">৳${c.totalAmount.toLocaleString()}</td>
+          </tr>`
+          )
+          .join('')
+      : '';
+
+    const txRowsHtml = transactions
+      .map(
+        (t, idx) => `
+      <tr>
+        <td style="text-align:center;">${idx + 1}</td>
+        <td>${escapeHtml(formatDate(t.date))}</td>
+        <td style="font-family:monospace;font-weight:700;">${escapeHtml(t.refNo)}</td>
+        <td>${t.source === 'fee_receipt' ? 'ফি রসিদ' : 'আয় ভাউচার'}</td>
+        <td>${escapeHtml(t.collectorNameBn || t.collectorName)}</td>
+        <td><strong>${escapeHtml(t.partyName)}</strong><br/><span style="font-size:10px;color:#475569;">${escapeHtml(t.subtitle)}</span></td>
+        <td>${escapeHtml(t.paymentMethod)}</td>
+        <td style="text-align:right;font-weight:700;color:#047857;">৳${t.amount.toLocaleString()}</td>
+      </tr>`
+      )
+      .join('');
+
+    const htmlDoc = `<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8" />
+<title>Collector Report - ${escapeHtml(school.nameEn)}</title>
+<style>
+  @page { size: A4 portrait; margin: 12mm; }
+  body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #0f172a; margin: 0; padding: 16px; }
+  .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 10px; margin-bottom: 12px; }
+  .header h1 { margin: 0; font-size: 18px; }
+  .header h2 { margin: 2px 0; font-size: 13px; color: #1e3a8a; }
+  .header p { margin: 2px 0; font-size: 11px; color: #475569; }
+  .badge { display: inline-block; margin-top: 6px; background: #0f172a; color: #fff; padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+  .card { border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px; background: #f8fafc; font-size: 11px; }
+  .card strong { display: block; font-size: 14px; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 10.5px; margin-bottom: 14px; }
+  th, td { border: 1px solid #cbd5e1; padding: 6px 7px; text-align: left; }
+  th { background: #f1f5f9; font-weight: 700; font-size: 10px; }
+  .footer { margin-top: 34px; display: flex; justify-content: space-between; font-size: 11px; }
+  .sig { border-top: 1px solid #334155; padding-top: 4px; min-width: 150px; text-align: center; font-weight: 600; }
+  .print-bar { text-align: right; margin-bottom: 10px; }
+  @media print { .print-bar { display: none; } body { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="print-bar"><button onclick="window.print()" style="padding:8px 16px;background:#047857;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;">Print / Save PDF</button></div>
+<div class="header">
+  <h1>${escapeHtml(school.nameBn)}</h1>
+  <h2>${escapeHtml(school.nameEn)}</h2>
+  <p>${escapeHtml(school.addressBn || school.addressEn)} • EIIN: ${escapeHtml(school.eiin)}</p>
+  <div class="badge">COLLECTOR COLLECTION REPORT • ${escapeHtml(selectedCollectorLabel)} (${escapeHtml(periodLabel)})</div>
+</div>
+<div class="cards">
+  <div class="card"><span>মোট কালেকশন (${transactions.length})</span><strong style="color:#047857;">৳${methodSummary.total.toLocaleString()}</strong></div>
+  <div class="card"><span>নগদ (Cash)</span><strong style="color:#1d4ed8;">৳${methodSummary.Cash.toLocaleString()}</strong></div>
+  <div class="card"><span>বিকাশ / নগদ / ব্যাংক</span><strong style="color:#6d28d9;">৳${(methodSummary.bKash + methodSummary.Nagad + methodSummary.Rocket + methodSummary.Bank).toLocaleString()}</strong></div>
+  <div class="card"><span>ফি + আয় ভাউচার</span><strong>৳${feeTotal.toLocaleString()} + ৳${voucherTotal.toLocaleString()}</strong></div>
+</div>
+${
+  canViewAllCollectors && collectorSummaries.length > 0
+    ? `<h4>হিসাবরক্ষক / কালেক্টর ভিত্তিক সারসংক্ষেপ</h4><table><thead><tr><th>SL</th><th>নাম ও পদবি</th><th>ফি রসিদ</th><th>ফি (৳)</th><th>ভাউচার</th><th>ভাউচার (৳)</th><th>নগদ Cash</th><th>ডিজিটাল/ব্যাংক</th><th>মোট (৳)</th></tr></thead><tbody>${summaryRowsHtml}</tbody></table>`
+    : ''
+}
+<h4>বিস্তারিত লেনদেন রেজিস্টার</h4>
+<table><thead><tr><th>SL</th><th>তারিখ</th><th>রসিদ/ভাউচার</th><th>ধরন</th><th>সংগ্রহকারী</th><th>প্রদানকারী</th><th>মাধ্যম</th><th style="text-align:right;">পরিমাণ</th></tr></thead><tbody>${txRowsHtml || '<tr><td colspan="8" style="text-align:center;">কোনো লেনদেন পাওয়া যায়নি</td></tr>'}</tbody></table>
+<div style="padding:8px 10px;background:#f8fafc;border:1px solid #cbd5e1;font-size:11px;font-weight:700;">মোট (কথায়): ${escapeHtml(amountInWords(methodSummary.total))}</div>
+<div class="footer">
+  <div class="sig">হিসাবরক্ষক / Collector</div>
+  <div class="sig">${buildPrincipalSignatureHtml(school)}সুপার অ্যাডমিন / অধ্যক্ষ</div>
+</div>
+</body>
+</html>`;
+    downloadBlob(
+      htmlDoc,
+      'text/html;charset=utf-8;',
+      `Collector_Collection_Report_${new Date().toISOString().slice(0, 10)}.html`
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto print:static print:bg-white print:p-0 print:overflow-visible">
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-5xl w-full p-4 sm:p-8 text-xs my-4 sm:my-8 max-h-[95vh] overflow-y-auto print:max-h-none print:overflow-visible print:p-0 print:border-none print:shadow-none print:my-0 print:max-w-none">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-slate-200 mb-5 print:hidden">
+          <div>
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Printer className="w-5 h-5 text-emerald-600" />
+              <span>
+                {language === 'bn'
+                  ? 'হিসাবরক্ষক কালেকশন রিপোর্ট প্রিন্ট'
+                  : 'Collector Collection Report Preview'}
+              </span>
+            </h3>
+            <p className="text-[11px] text-slate-500">
+              {selectedCollectorLabel} • {periodLabel}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-xs"
+            >
+              <Printer className="w-4 h-4" />
+              <span>{language === 'bn' ? 'প্রিন্ট করুন' : 'Print'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadHtml}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-semibold flex items-center gap-1.5 shadow-xs"
+            >
+              <Download className="w-4 h-4 text-emerald-400" />
+              <span>{language === 'bn' ? 'প্রিন্ট শীট (.html)' : 'Save (.html)'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadCsv}
+              className="px-3 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl font-semibold flex items-center gap-1"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-600" />
+              <span>CSV</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="border border-slate-300 p-4 sm:p-6 rounded-xl bg-white space-y-4 print:border-none print:p-0">
+          <div className="text-center border-b-2 border-slate-800 pb-3">
+            <div className="flex items-center justify-center gap-3 mb-1">
+              <img src={school.logoUrl || DEFAULT_SCHOOL_LOGO} alt="School Logo" className="w-12 h-12 object-contain" />
+              <div>
+                <h2 className="text-lg sm:text-xl font-black text-slate-900">{school.nameBn}</h2>
+                <h3 className="text-xs sm:text-sm font-bold text-blue-800">{school.nameEn}</h3>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-600">
+              {school.addressBn || school.addressEn} • Phone: {school.phone} • EIIN: {school.eiin}
+            </p>
+            <div className="inline-block mt-2 px-3 py-1 bg-slate-900 text-white rounded font-bold uppercase text-[11px] print:bg-black">
+              {selectedCollectorLabel} • {periodLabel}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <div className="p-3 border border-emerald-200 bg-emerald-50/50 rounded-xl">
+              <span className="text-[10px] text-slate-600 block">
+                {language === 'bn' ? 'মোট কালেকশন' : 'Total Collected'}
+              </span>
+              <strong className="text-sm font-extrabold text-emerald-700 tabular-nums">
+                {formatTaka(methodSummary.total)}
+              </strong>
+              <span className="text-[10px] text-slate-500 block">
+                {toBnNumber(transactions.length)} টি লেনদেন
+              </span>
+            </div>
+            <div className="p-3 border border-blue-200 bg-blue-50/50 rounded-xl">
+              <span className="text-[10px] text-slate-600 block">
+                {language === 'bn' ? 'নগদ (Cash in Hand)' : 'Cash in Hand'}
+              </span>
+              <strong className="text-sm font-extrabold text-blue-700 tabular-nums">
+                {formatTaka(methodSummary.Cash)}
+              </strong>
+              <span className="text-[10px] text-slate-500 block">ক্যাশ জমা হিসাব</span>
+            </div>
+            <div className="p-3 border border-purple-200 bg-purple-50/50 rounded-xl">
+              <span className="text-[10px] text-slate-600 block">
+                {language === 'bn' ? 'বিকাশ / নগদ / রকেট / ব্যাংক' : 'MFS & Bank'}
+              </span>
+              <strong className="text-sm font-extrabold text-purple-700 tabular-nums">
+                {formatTaka(
+                  methodSummary.bKash + methodSummary.Nagad + methodSummary.Rocket + methodSummary.Bank
+                )}
+              </strong>
+              <span className="text-[10px] text-slate-500 block">
+                bKash: {formatTaka(methodSummary.bKash)} • Nagad: {formatTaka(methodSummary.Nagad)}
+              </span>
+            </div>
+            <div className="p-3 border border-slate-200 bg-slate-50 rounded-xl">
+              <span className="text-[10px] text-slate-600 block">
+                {language === 'bn' ? 'ফি রসিদ বনাম আয় ভাউচার' : 'Fees vs Vouchers'}
+              </span>
+              <strong className="text-xs font-extrabold text-slate-800 tabular-nums">
+                {formatTaka(feeTotal)} + {formatTaka(voucherTotal)}
+              </strong>
+              <span className="text-[10px] text-slate-500 block">সম্মিলিত আয়</span>
+            </div>
+          </div>
+
+          {canViewAllCollectors && collectorSummaries.length > 0 && (
+            <div>
+              <h4 className="font-bold text-slate-800 text-xs uppercase mb-2">
+                {language === 'bn'
+                  ? 'হিসাবরক্ষক / কালেক্টর ভিত্তিক সারসংক্ষেপ (কে কত কালেকশন করেছে)'
+                  : 'Collector-Wise Breakdown Summary'}
+              </h4>
+              <table className="w-full text-left border-collapse border border-slate-300 text-[11px]">
+                <thead>
+                  <tr className="bg-slate-100 font-bold">
+                    <th className="border border-slate-300 py-1.5 px-2 text-center">SL</th>
+                    <th className="border border-slate-300 py-1.5 px-2">কালেক্টর ও পদবি</th>
+                    <th className="border border-slate-300 py-1.5 px-2 text-center">ফি রসিদ</th>
+                    <th className="border border-slate-300 py-1.5 px-2 text-right">ফি (৳)</th>
+                    <th className="border border-slate-300 py-1.5 px-2 text-center">আয় ভাউচার</th>
+                    <th className="border border-slate-300 py-1.5 px-2 text-right">ভাউচার (৳)</th>
+                    <th className="border border-slate-300 py-1.5 px-2 text-right">নগদ (Cash)</th>
+                    <th className="border border-slate-300 py-1.5 px-2 text-right">বিকাশ/ব্যাংক</th>
+                    <th className="border border-slate-300 py-1.5 px-2 text-right">মোট (৳)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {collectorSummaries.map((c, idx) => (
+                    <tr key={c.collectorKey}>
+                      <td className="border border-slate-300 py-1.5 px-2 text-center font-mono">
+                        {toBnNumber(idx + 1)}
+                      </td>
+                      <td className="border border-slate-300 py-1.5 px-2">
+                        <div className="font-bold text-slate-900">{c.displayNameBn || c.displayName}</div>
+                        <div className="text-[10px] text-slate-500">{c.roleLabelBn}</div>
+                      </td>
+                      <td className="border border-slate-300 py-1.5 px-2 text-center">{toBnNumber(c.feeCount)}</td>
+                      <td className="border border-slate-300 py-1.5 px-2 text-right tabular-nums">
+                        {formatTaka(c.feeAmount)}
+                      </td>
+                      <td className="border border-slate-300 py-1.5 px-2 text-center">{toBnNumber(c.voucherCount)}</td>
+                      <td className="border border-slate-300 py-1.5 px-2 text-right tabular-nums">
+                        {formatTaka(c.voucherAmount)}
+                      </td>
+                      <td className="border border-slate-300 py-1.5 px-2 text-right tabular-nums text-blue-700 font-semibold">
+                        {formatTaka(c.cashAmount)}
+                      </td>
+                      <td className="border border-slate-300 py-1.5 px-2 text-right tabular-nums text-purple-700 font-semibold">
+                        {formatTaka(c.mfsAndBankAmount)}
+                      </td>
+                      <td className="border border-slate-300 py-1.5 px-2 text-right font-extrabold text-emerald-700 tabular-nums">
+                        {formatTaka(c.totalAmount)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div>
+            <h4 className="font-bold text-slate-800 text-xs uppercase mb-2">
+              {language === 'bn' ? 'বিস্তারিত লেনদেন রেজিস্টার' : 'Transaction Register'}
+            </h4>
+            <table className="w-full text-left border-collapse border border-slate-300 text-[11px]">
+              <thead>
+                <tr className="bg-slate-100 font-bold">
+                  <th className="border border-slate-300 py-1.5 px-2 text-center">SL</th>
+                  <th className="border border-slate-300 py-1.5 px-2">তারিখ</th>
+                  <th className="border border-slate-300 py-1.5 px-2">রসিদ / ভাউচার</th>
+                  <th className="border border-slate-300 py-1.5 px-2">ধরন</th>
+                  <th className="border border-slate-300 py-1.5 px-2">সংগ্রহকারী</th>
+                  <th className="border border-slate-300 py-1.5 px-2">শিক্ষার্থী / প্রেরক</th>
+                  <th className="border border-slate-300 py-1.5 px-2">মাধ্যম</th>
+                  <th className="border border-slate-300 py-1.5 px-2 text-right">টাকা</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transactions.map((t, idx) => (
+                  <tr key={`${t.source}_${t.id}`}>
+                    <td className="border border-slate-300 py-1.5 px-2 text-center font-mono">
+                      {toBnNumber(idx + 1)}
+                    </td>
+                    <td className="border border-slate-300 py-1.5 px-2 whitespace-nowrap">{formatDate(t.date)}</td>
+                    <td className="border border-slate-300 py-1.5 px-2 font-mono font-bold text-blue-700">
+                      {t.refNo}
+                    </td>
+                    <td className="border border-slate-300 py-1.5 px-2">
+                      {t.source === 'fee_receipt' ? 'ফি রসিদ' : 'আয় ভাউচার'}
+                    </td>
+                    <td className="border border-slate-300 py-1.5 px-2 font-semibold">
+                      {t.collectorNameBn || t.collectorName}
+                    </td>
+                    <td className="border border-slate-300 py-1.5 px-2">
+                      <div className="font-semibold text-slate-900">{t.partyName}</div>
+                      <div className="text-[10px] text-slate-500">{t.subtitle}</div>
+                    </td>
+                    <td className="border border-slate-300 py-1.5 px-2">{t.paymentMethod}</td>
+                    <td className="border border-slate-300 py-1.5 px-2 text-right font-bold text-emerald-700 tabular-nums">
+                      {formatTaka(t.amount)}
+                    </td>
+                  </tr>
+                ))}
+                {transactions.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="border border-slate-300 py-6 text-center text-slate-400">
+                      {language === 'bn' ? 'নির্বাচিত সময়কালে কোনো লেনদেন পাওয়া যায়নি।' : 'No transactions found.'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-800">
+            মোট আদায় (কথায়): {amountInWords(methodSummary.total)}
+          </div>
+
+          <div className="pt-10 flex items-end justify-between text-[11px] text-slate-700">
+            <div className="border-t border-slate-400 pt-1 px-6 font-semibold">হিসাবরক্ষক / Collector</div>
+            <div className="text-center">
+              <PrincipalSignatureDisplay school={school} />
+              <div className="border-t border-slate-400 pt-1 px-6 font-semibold">সুপার অ্যাডমিন / অধ্যক্ষ</div>
             </div>
           </div>
         </div>

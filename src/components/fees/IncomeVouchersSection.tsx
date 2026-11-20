@@ -52,6 +52,8 @@ import {
 interface IncomeVouchersSectionProps {
   activeRole: UserRole | null;
   currentUserName: string;
+  currentUserId?: string;
+  currentUserEmail?: string;
   school: SchoolProfile;
   language: 'bn' | 'en';
   students: Student[];
@@ -348,6 +350,8 @@ const STARTER_CATALOG_PRESETS: Array<Omit<SaleItem, 'id'>> = [
 export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
   activeRole,
   currentUserName,
+  currentUserId,
+  currentUserEmail,
   school,
   language,
   students,
@@ -919,6 +923,9 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
       paymentMethod: paymentMethodInput,
       transactionId: transactionIdInput.trim() || undefined,
       receivedBy: currentUserName,
+      receivedById: currentUserId,
+      receivedByEmail: currentUserEmail,
+      receivedByRole: activeRole || undefined,
       notes: voucherNotesInput.trim() || undefined,
       createdAt: new Date().toISOString(),
     };
