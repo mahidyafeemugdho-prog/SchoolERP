@@ -1,4 +1,4 @@
-import { FeePayment, IncomeVoucher, Staff, UserProfile, UserRole } from '../types';
+import { Expense, FeePayment, IncomeVoucher, Staff, UserProfile, UserRole } from '../types';
 import {
   DateFilterPeriod,
   PaymentMethodSummary,
@@ -7,7 +7,8 @@ import {
   summarizeByPaymentMethod,
 } from './financeFilters';
 
-export type CollectorTransactionSource = 'fee_receipt' | 'income_voucher';
+export type CollectorTransactionSource = 'fee_receipt' | 'income_voucher' | 'expense_voucher';
+export type CollectorTransactionDirection = 'income' | 'expense';
 
 export interface CollectorIdentity {
   collectorKey: string;
@@ -21,6 +22,7 @@ export interface CollectorIdentity {
 export interface CollectorTransaction {
   id: string;
   source: CollectorTransactionSource;
+  direction: CollectorTransactionDirection;
   refNo: string;
   date: string;
   partyName: string;
@@ -48,13 +50,39 @@ export interface CollectorSummary {
   feeAmount: number;
   voucherCount: number;
   voucherAmount: number;
+  expenseCount: number;
+  expenseAmount: number;
   totalCount: number;
-  totalAmount: number;
-  cashAmount: number;
-  mfsAndBankAmount: number;
-  methodSummary: PaymentMethodSummary;
+  txCount: number;
+  totalAmount: number; // Total Income (Fees + Income Vouchers)
+  cashAmount: number; // Cash Income
+  cashExpenseAmount: number; // Cash Expense
+  mfsAndBankAmount: number; // Digital/Bank Income
+  mfsAndBankExpenseAmount: number; // Digital/Bank Expense
+  netCashInHand: number; // Cash Income - Cash Expense
+  netBalance: number; // Total Income - Total Expense
+  methodSummary: PaymentMethodSummary; // Income method summary
+  expenseMethodSummary: PaymentMethodSummary;
   sharePercent: number;
   isCurrentUser: boolean;
+}
+
+export interface IncomeExpenseStats {
+  incomeTotal: number;
+  feeTotal: number;
+  incomeVoucherTotal: number;
+  incomeCount: number;
+  cashIncome: number;
+  digitalIncome: number;
+  expenseTotal: number;
+  expenseCount: number;
+  cashExpense: number;
+  digitalExpense: number;
+  netBalance: number;
+  netCashInHand: number;
+  netDigitalBalance: number;
+  incomeMethodSummary: PaymentMethodSummary;
+  expenseMethodSummary: PaymentMethodSummary;
 }
 
 export const canViewAllCollectorReports = (role?: UserRole | null): boolean => {
@@ -132,7 +160,7 @@ export const buildCollectorDirectory = (
     });
   };
 
-  // 1. Register staff who can collect fees (accountants first, then fee-authorized staff)
+  // 1. Register staff who can manage fees / expenses
   const eligibleStaff = staffList.filter(
     (st) =>
       st.status !== 'resigned' &&
@@ -286,7 +314,8 @@ export const normalizeCollectorTransactions = (
   payments: FeePayment[],
   incomeVouchers: IncomeVoucher[],
   staffList: Staff[],
-  currentUser?: UserProfile | null
+  currentUser?: UserProfile | null,
+  expenses: Expense[] = []
 ): {
   transactions: CollectorTransaction[];
   directory: CollectorDirectory;
@@ -304,6 +333,7 @@ export const normalizeCollectorTransactions = (
     transactions.push({
       id: p.id,
       source: 'fee_receipt',
+      direction: 'income',
       refNo: p.receiptNo,
       date: normalizeRecordDate(p.paidDate || p.paymentDate) || p.paidDate || '',
       partyName: p.studentName,
@@ -330,6 +360,7 @@ export const normalizeCollectorTransactions = (
     transactions.push({
       id: v.id,
       source: 'income_voucher',
+      direction: 'income',
       refNo: v.voucherNo,
       date: normalizeRecordDate(v.date) || v.date || '',
       partyName: v.receivedFrom || 'Walk-in',
@@ -343,6 +374,33 @@ export const normalizeCollectorTransactions = (
       collectorRole: identity.role,
       rawCollectedBy: v.receivedBy || identity.displayName,
       notes: v.notes,
+    });
+  });
+
+  expenses.forEach((e) => {
+    const identity = directory.resolve({
+      actorId: e.approvedById,
+      actorEmail: e.approvedByEmail,
+      actorRole: e.approvedByRole,
+      rawLabel: e.approvedBy,
+    });
+    transactions.push({
+      id: e.id,
+      source: 'expense_voucher',
+      direction: 'expense',
+      refNo: e.voucherNo,
+      date: normalizeRecordDate(e.date) || e.date || '',
+      partyName: e.paidTo || 'Vendor / Staff',
+      subtitle: e.title || e.category,
+      paymentMethod: e.paymentMethod || 'Cash',
+      transactionId: e.referenceNo,
+      amount: Number(e.amount) || 0,
+      collectorKey: identity.collectorKey,
+      collectorName: identity.displayName,
+      collectorNameBn: identity.displayNameBn,
+      collectorRole: identity.role,
+      rawCollectedBy: e.approvedBy || identity.displayName,
+      notes: e.notes,
     });
   });
 
@@ -361,7 +419,7 @@ export interface CollectorFilterOptions {
   customStart?: string;
   customEnd?: string;
   methodFilter?: string;
-  sourceFilter?: 'all' | CollectorTransactionSource;
+  sourceFilter?: 'all' | 'income_all' | CollectorTransactionSource;
   collectorKey?: string;
   search?: string;
   referenceDate?: Date;
@@ -384,8 +442,12 @@ export const filterCollectorTransactions = (
     ) {
       return false;
     }
-    if (options.sourceFilter && options.sourceFilter !== 'all' && tx.source !== options.sourceFilter) {
-      return false;
+    if (options.sourceFilter && options.sourceFilter !== 'all') {
+      if (options.sourceFilter === 'income_all') {
+        if (tx.direction !== 'income') return false;
+      } else if (tx.source !== options.sourceFilter) {
+        return false;
+      }
     }
     if (options.methodFilter && options.methodFilter !== 'all' && tx.paymentMethod !== options.methodFilter) {
       return false;
@@ -405,6 +467,57 @@ export const filterCollectorTransactions = (
     }
     return true;
   });
+};
+
+export const computeIncomeExpenseStats = (
+  transactions: CollectorTransaction[]
+): IncomeExpenseStats => {
+  const feeTxs = transactions.filter((t) => t.source === 'fee_receipt');
+  const incomeVoucherTxs = transactions.filter((t) => t.source === 'income_voucher');
+  const incomeTxs = transactions.filter((t) => t.direction === 'income');
+  const expenseTxs = transactions.filter((t) => t.direction === 'expense');
+
+  const feeTotal = feeTxs.reduce((s, t) => s + t.amount, 0);
+  const incomeVoucherTotal = incomeVoucherTxs.reduce((s, t) => s + t.amount, 0);
+  const incomeTotal = feeTotal + incomeVoucherTotal;
+  const expenseTotal = expenseTxs.reduce((s, t) => s + t.amount, 0);
+
+  const incomeMethodSummary = summarizeByPaymentMethod(incomeTxs);
+  const expenseMethodSummary = summarizeByPaymentMethod(expenseTxs);
+
+  const cashIncome = incomeMethodSummary.Cash;
+  const digitalIncome =
+    incomeMethodSummary.bKash +
+    incomeMethodSummary.Nagad +
+    incomeMethodSummary.Rocket +
+    incomeMethodSummary.Bank +
+    incomeMethodSummary.Other;
+
+  const cashExpense = expenseMethodSummary.Cash;
+  const digitalExpense =
+    expenseMethodSummary.bKash +
+    expenseMethodSummary.Nagad +
+    expenseMethodSummary.Rocket +
+    expenseMethodSummary.Bank +
+    expenseMethodSummary.Other;
+
+  return {
+    incomeTotal,
+    feeTotal,
+    incomeVoucherTotal,
+    incomeCount: incomeTxs.length,
+    cashIncome,
+    digitalIncome,
+    expenseTotal,
+    expenseCount: expenseTxs.length,
+    cashExpense,
+    digitalExpense,
+    netBalance: incomeTotal - expenseTotal,
+    netCashInHand: cashIncome - cashExpense,
+    netDigitalBalance: digitalIncome - digitalExpense,
+    incomeMethodSummary,
+    expenseMethodSummary,
+  };
 };
 
 export const summarizeByCollector = (
@@ -444,15 +557,15 @@ export const summarizeByCollector = (
     }
   });
 
-  const grandTotal = transactions.reduce((sum, tx) => sum + tx.amount, 0);
+  const grandIncomeTotal = transactions
+    .filter((tx) => tx.direction === 'income')
+    .reduce((sum, tx) => sum + tx.amount, 0);
 
   const summaries: CollectorSummary[] = Array.from(bucketMap.values()).map(({ identity, txs }) => {
     const feeTxs = txs.filter((t) => t.source === 'fee_receipt');
     const voucherTxs = txs.filter((t) => t.source === 'income_voucher');
-    const feeAmount = feeTxs.reduce((s, t) => s + t.amount, 0);
-    const voucherAmount = voucherTxs.reduce((s, t) => s + t.amount, 0);
-    const totalAmount = feeAmount + voucherAmount;
-    const methodSummary = summarizeByPaymentMethod(txs);
+    const expenseTxs = txs.filter((t) => t.source === 'expense_voucher');
+    const stats = computeIncomeExpenseStats(txs);
     const roleLabels = getCollectorRoleLabels(identity.role);
     return {
       collectorKey: identity.collectorKey,
@@ -463,22 +576,32 @@ export const summarizeByCollector = (
       roleLabelEn: roleLabels.en,
       email: identity.email,
       feeCount: feeTxs.length,
-      feeAmount,
+      feeAmount: stats.feeTotal,
       voucherCount: voucherTxs.length,
-      voucherAmount,
-      totalCount: txs.length,
-      totalAmount,
-      cashAmount: methodSummary.Cash,
-      mfsAndBankAmount:
-        methodSummary.bKash + methodSummary.Nagad + methodSummary.Rocket + methodSummary.Bank + methodSummary.Other,
-      methodSummary,
-      sharePercent: grandTotal > 0 ? Math.round((totalAmount / grandTotal) * 100) : 0,
+      voucherAmount: stats.incomeVoucherTotal,
+      expenseCount: expenseTxs.length,
+      expenseAmount: stats.expenseTotal,
+      totalCount: stats.incomeCount,
+      txCount: txs.length,
+      totalAmount: stats.incomeTotal,
+      cashAmount: stats.cashIncome,
+      cashExpenseAmount: stats.cashExpense,
+      mfsAndBankAmount: stats.digitalIncome,
+      mfsAndBankExpenseAmount: stats.digitalExpense,
+      netCashInHand: stats.netCashInHand,
+      netBalance: stats.netBalance,
+      methodSummary: stats.incomeMethodSummary,
+      expenseMethodSummary: stats.expenseMethodSummary,
+      sharePercent: grandIncomeTotal > 0 ? Math.round((stats.incomeTotal / grandIncomeTotal) * 100) : 0,
       isCurrentUser: identity.collectorKey === currentUserKey,
     };
   });
 
   summaries.sort((a, b) => {
+    const activityA = a.totalAmount + a.expenseAmount;
+    const activityB = b.totalAmount + b.expenseAmount;
     if (b.totalAmount !== a.totalAmount) return b.totalAmount - a.totalAmount;
+    if (activityB !== activityA) return activityB - activityA;
     if (a.isCurrentUser !== b.isCurrentUser) return a.isCurrentUser ? -1 : 1;
     return a.displayName.localeCompare(b.displayName);
   });

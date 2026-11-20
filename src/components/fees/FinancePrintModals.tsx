@@ -8,7 +8,11 @@ import {
   normalizeExpenseItems,
   summarizeByPaymentMethod,
 } from '../../utils/financeFilters';
-import { CollectorSummary, CollectorTransaction } from '../../utils/collectorReports';
+import {
+  CollectorSummary,
+  CollectorTransaction,
+  computeIncomeExpenseStats,
+} from '../../utils/collectorReports';
 
 const escapeHtml = (value: string | number | undefined | null): string =>
   String(value ?? '')
@@ -1281,36 +1285,37 @@ export const CollectorReportPrintModal: React.FC<CollectorReportPrintModalProps>
   amountInWords,
   onClose,
 }) => {
-  const methodSummary = summarizeByPaymentMethod(transactions);
-  const feeTotal = transactions
-    .filter((t) => t.source === 'fee_receipt')
-    .reduce((s, t) => s + t.amount, 0);
-  const voucherTotal = transactions
-    .filter((t) => t.source === 'income_voucher')
-    .reduce((s, t) => s + t.amount, 0);
+  const stats = computeIncomeExpenseStats(transactions);
+  const formatSignedTaka = (val: number) =>
+    val < 0 ? `-${formatTaka(Math.abs(val))}` : formatTaka(val);
 
   const handleDownloadCsv = () => {
-    const header = 'SL,Date,Ref No,Type,Collector,Student/Payer,Details,Method,TrxID,Amount\n';
+    const header = 'SL,Date,Ref No,Direction,Type,Recorded By,Party,Details,Method,TrxID,Amount\n';
     const body = transactions
       .map((t, idx) =>
         [
           idx + 1,
           `"${escapeHtml(t.date)}"`,
           `"${escapeHtml(t.refNo)}"`,
-          t.source === 'fee_receipt' ? 'Fee Receipt' : 'Income Voucher',
+          t.direction === 'expense' ? 'Expense' : 'Income',
+          t.source === 'fee_receipt'
+            ? 'Fee Receipt'
+            : t.source === 'income_voucher'
+            ? 'Income Voucher'
+            : 'Expense Voucher',
           `"${String(t.collectorName).replace(/"/g, '""')}"`,
           `"${String(t.partyName).replace(/"/g, '""')}"`,
           `"${String(t.subtitle).replace(/"/g, '""')}"`,
           t.paymentMethod,
           `"${t.transactionId || ''}"`,
-          t.amount,
+          t.direction === 'expense' ? -t.amount : t.amount,
         ].join(',')
       )
       .join('\n');
     downloadBlob(
       '\uFEFF' + header + body,
       'text/csv;charset=utf-8;',
-      `Collector_Collection_Report_${new Date().toISOString().slice(0, 10)}.csv`
+      `Collector_Income_Expense_Report_${new Date().toISOString().slice(0, 10)}.csv`
     );
   };
 
@@ -1322,13 +1327,12 @@ export const CollectorReportPrintModal: React.FC<CollectorReportPrintModalProps>
           <tr>
             <td style="text-align:center;">${idx + 1}</td>
             <td><strong>${escapeHtml(c.displayNameBn || c.displayName)}</strong><br/><span style="font-size:10px;color:#475569;">${escapeHtml(c.roleLabelBn)}</span></td>
-            <td style="text-align:center;">${c.feeCount}</td>
-            <td style="text-align:right;">৳${c.feeAmount.toLocaleString()}</td>
-            <td style="text-align:center;">${c.voucherCount}</td>
-            <td style="text-align:right;">৳${c.voucherAmount.toLocaleString()}</td>
-            <td style="text-align:right;">৳${c.cashAmount.toLocaleString()}</td>
-            <td style="text-align:right;">৳${c.mfsAndBankAmount.toLocaleString()}</td>
-            <td style="text-align:right;font-weight:800;color:#047857;">৳${c.totalAmount.toLocaleString()}</td>
+            <td style="text-align:right;">৳${c.feeAmount.toLocaleString()} (${c.feeCount})</td>
+            <td style="text-align:right;">৳${c.voucherAmount.toLocaleString()} (${c.voucherCount})</td>
+            <td style="text-align:right;font-weight:700;color:#047857;">৳${c.totalAmount.toLocaleString()}</td>
+            <td style="text-align:right;font-weight:700;color:#be123c;">৳${c.expenseAmount.toLocaleString()} (${c.expenseCount})</td>
+            <td style="text-align:right;font-weight:700;color:#1d4ed8;">${c.netCashInHand < 0 ? '-' : ''}৳${Math.abs(c.netCashInHand).toLocaleString()}</td>
+            <td style="text-align:right;font-weight:800;color:#0f172a;">${c.netBalance < 0 ? '-' : ''}৳${Math.abs(c.netBalance).toLocaleString()}</td>
           </tr>`
           )
           .join('')
@@ -1341,11 +1345,11 @@ export const CollectorReportPrintModal: React.FC<CollectorReportPrintModalProps>
         <td style="text-align:center;">${idx + 1}</td>
         <td>${escapeHtml(formatDate(t.date))}</td>
         <td style="font-family:monospace;font-weight:700;">${escapeHtml(t.refNo)}</td>
-        <td>${t.source === 'fee_receipt' ? 'ফি রসিদ' : 'আয় ভাউচার'}</td>
+        <td>${t.source === 'fee_receipt' ? 'ফি রসিদ (আয়)' : t.source === 'income_voucher' ? 'আয় ভাউচার' : 'ব্যয় ভাউচার'}</td>
         <td>${escapeHtml(t.collectorNameBn || t.collectorName)}</td>
         <td><strong>${escapeHtml(t.partyName)}</strong><br/><span style="font-size:10px;color:#475569;">${escapeHtml(t.subtitle)}</span></td>
         <td>${escapeHtml(t.paymentMethod)}</td>
-        <td style="text-align:right;font-weight:700;color:#047857;">৳${t.amount.toLocaleString()}</td>
+        <td style="text-align:right;font-weight:700;color:${t.direction === 'expense' ? '#be123c' : '#047857'};">${t.direction === 'expense' ? '-' : '+'}৳${t.amount.toLocaleString()}</td>
       </tr>`
       )
       .join('');
@@ -1354,7 +1358,7 @@ export const CollectorReportPrintModal: React.FC<CollectorReportPrintModalProps>
 <html lang="bn">
 <head>
 <meta charset="utf-8" />
-<title>Collector Report - ${escapeHtml(school.nameEn)}</title>
+<title>Accountant Income & Expense Report - ${escapeHtml(school.nameEn)}</title>
 <style>
   @page { size: A4 portrait; margin: 12mm; }
   body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #0f172a; margin: 0; padding: 16px; }
@@ -1381,22 +1385,22 @@ export const CollectorReportPrintModal: React.FC<CollectorReportPrintModalProps>
   <h1>${escapeHtml(school.nameBn)}</h1>
   <h2>${escapeHtml(school.nameEn)}</h2>
   <p>${escapeHtml(school.addressBn || school.addressEn)} • EIIN: ${escapeHtml(school.eiin)}</p>
-  <div class="badge">COLLECTOR COLLECTION REPORT • ${escapeHtml(selectedCollectorLabel)} (${escapeHtml(periodLabel)})</div>
+  <div class="badge">INCOME & EXPENSE AUDIT • ${escapeHtml(selectedCollectorLabel)} (${escapeHtml(periodLabel)})</div>
 </div>
 <div class="cards">
-  <div class="card"><span>মোট কালেকশন (${transactions.length})</span><strong style="color:#047857;">৳${methodSummary.total.toLocaleString()}</strong></div>
-  <div class="card"><span>নগদ (Cash)</span><strong style="color:#1d4ed8;">৳${methodSummary.Cash.toLocaleString()}</strong></div>
-  <div class="card"><span>বিকাশ / নগদ / ব্যাংক</span><strong style="color:#6d28d9;">৳${(methodSummary.bKash + methodSummary.Nagad + methodSummary.Rocket + methodSummary.Bank).toLocaleString()}</strong></div>
-  <div class="card"><span>ফি + আয় ভাউচার</span><strong>৳${feeTotal.toLocaleString()} + ৳${voucherTotal.toLocaleString()}</strong></div>
+  <div class="card"><span>মোট আয় (${stats.incomeCount})</span><strong style="color:#047857;">৳${stats.incomeTotal.toLocaleString()}</strong></div>
+  <div class="card"><span>মোট ব্যয় (${stats.expenseCount})</span><strong style="color:#be123c;">৳${stats.expenseTotal.toLocaleString()}</strong></div>
+  <div class="card"><span>হাতে নিট নগদ (Cash)</span><strong style="color:#1d4ed8;">${stats.netCashInHand < 0 ? '-' : ''}৳${Math.abs(stats.netCashInHand).toLocaleString()}</strong></div>
+  <div class="card"><span>নিট ব্যালেন্স (আয় - ব্যয়)</span><strong>${stats.netBalance < 0 ? '-' : ''}৳${Math.abs(stats.netBalance).toLocaleString()}</strong></div>
 </div>
 ${
   canViewAllCollectors && collectorSummaries.length > 0
-    ? `<h4>হিসাবরক্ষক / কালেক্টর ভিত্তিক সারসংক্ষেপ</h4><table><thead><tr><th>SL</th><th>নাম ও পদবি</th><th>ফি রসিদ</th><th>ফি (৳)</th><th>ভাউচার</th><th>ভাউচার (৳)</th><th>নগদ Cash</th><th>ডিজিটাল/ব্যাংক</th><th>মোট (৳)</th></tr></thead><tbody>${summaryRowsHtml}</tbody></table>`
+    ? `<h4>হিসাবরক্ষক / স্টাফ ভিত্তিক আয়-ব্যয় সারসংক্ষেপ</h4><table><thead><tr><th>SL</th><th>নাম ও পদবি</th><th>ফি (৳)</th><th>আয় ভাউচার</th><th>মোট আয়</th><th>মোট ব্যয়</th><th>নিট নগদ Cash</th><th>নিট ব্যালেন্স</th></tr></thead><tbody>${summaryRowsHtml}</tbody></table>`
     : ''
 }
-<h4>বিস্তারিত লেনদেন রেজিস্টার</h4>
-<table><thead><tr><th>SL</th><th>তারিখ</th><th>রসিদ/ভাউচার</th><th>ধরন</th><th>সংগ্রহকারী</th><th>প্রদানকারী</th><th>মাধ্যম</th><th style="text-align:right;">পরিমাণ</th></tr></thead><tbody>${txRowsHtml || '<tr><td colspan="8" style="text-align:center;">কোনো লেনদেন পাওয়া যায়নি</td></tr>'}</tbody></table>
-<div style="padding:8px 10px;background:#f8fafc;border:1px solid #cbd5e1;font-size:11px;font-weight:700;">মোট (কথায়): ${escapeHtml(amountInWords(methodSummary.total))}</div>
+<h4>বিস্তারিত আয় ও ব্যয় লেনদেন রেজিস্টার</h4>
+<table><thead><tr><th>SL</th><th>তারিখ</th><th>রসিদ/ভাউচার</th><th>ধরন</th><th>সংগ্রহকারী / ব্যয়কারী</th><th>বিবরণ</th><th>মাধ্যম</th><th style="text-align:right;">টাকা</th></tr></thead><tbody>${txRowsHtml || '<tr><td colspan="8" style="text-align:center;">কোনো লেনদেন পাওয়া যায়নি</td></tr>'}</tbody></table>
+<div style="padding:8px 10px;background:#f8fafc;border:1px solid #cbd5e1;font-size:11px;font-weight:700;">নিট ব্যালেন্স (কথায়): ${stats.netBalance < 0 ? '(-) ' : ''}${escapeHtml(amountInWords(Math.abs(stats.netBalance)))}</div>
 <div class="footer">
   <div class="sig">হিসাবরক্ষক / Collector</div>
   <div class="sig">${buildPrincipalSignatureHtml(school)}সুপার অ্যাডমিন / অধ্যক্ষ</div>
@@ -1406,7 +1410,7 @@ ${
     downloadBlob(
       htmlDoc,
       'text/html;charset=utf-8;',
-      `Collector_Collection_Report_${new Date().toISOString().slice(0, 10)}.html`
+      `Collector_Income_Expense_Report_${new Date().toISOString().slice(0, 10)}.html`
     );
   };
 
@@ -1419,8 +1423,8 @@ ${
               <Printer className="w-5 h-5 text-emerald-600" />
               <span>
                 {language === 'bn'
-                  ? 'হিসাবরক্ষক কালেকশন রিপোর্ট প্রিন্ট'
-                  : 'Collector Collection Report Preview'}
+                  ? 'হিসাবরক্ষক আয়-ব্যয় অডিট রিপোর্ট প্রিন্ট'
+                  : 'Accountant Income & Expense Audit Print'}
               </span>
             </h3>
             <p className="text-[11px] text-slate-500">
@@ -1482,45 +1486,47 @@ ${
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
             <div className="p-3 border border-emerald-200 bg-emerald-50/50 rounded-xl">
               <span className="text-[10px] text-slate-600 block">
-                {language === 'bn' ? 'মোট কালেকশন' : 'Total Collected'}
+                {language === 'bn' ? 'মোট আয় (Income)' : 'Total Income'}
               </span>
               <strong className="text-sm font-extrabold text-emerald-700 tabular-nums">
-                {formatTaka(methodSummary.total)}
+                {formatTaka(stats.incomeTotal)}
               </strong>
               <span className="text-[10px] text-slate-500 block">
-                {toBnNumber(transactions.length)} টি লেনদেন
+                ফি: {formatTaka(stats.feeTotal)} • ভাউচার: {formatTaka(stats.incomeVoucherTotal)}
+              </span>
+            </div>
+            <div className="p-3 border border-rose-200 bg-rose-50/50 rounded-xl">
+              <span className="text-[10px] text-slate-600 block">
+                {language === 'bn' ? 'মোট ব্যয় (Expense)' : 'Total Expense'}
+              </span>
+              <strong className="text-sm font-extrabold text-rose-700 tabular-nums">
+                {formatTaka(stats.expenseTotal)}
+              </strong>
+              <span className="text-[10px] text-slate-500 block">
+                {toBnNumber(stats.expenseCount)}টি ভাউচার • নগদ: {formatTaka(stats.cashExpense)}
               </span>
             </div>
             <div className="p-3 border border-blue-200 bg-blue-50/50 rounded-xl">
               <span className="text-[10px] text-slate-600 block">
-                {language === 'bn' ? 'নগদ (Cash in Hand)' : 'Cash in Hand'}
+                {language === 'bn' ? 'হাতে নিট নগদ (Cash Handover)' : 'Net Cash in Hand'}
               </span>
               <strong className="text-sm font-extrabold text-blue-700 tabular-nums">
-                {formatTaka(methodSummary.Cash)}
-              </strong>
-              <span className="text-[10px] text-slate-500 block">ক্যাশ জমা হিসাব</span>
-            </div>
-            <div className="p-3 border border-purple-200 bg-purple-50/50 rounded-xl">
-              <span className="text-[10px] text-slate-600 block">
-                {language === 'bn' ? 'বিকাশ / নগদ / রকেট / ব্যাংক' : 'MFS & Bank'}
-              </span>
-              <strong className="text-sm font-extrabold text-purple-700 tabular-nums">
-                {formatTaka(
-                  methodSummary.bKash + methodSummary.Nagad + methodSummary.Rocket + methodSummary.Bank
-                )}
+                {formatSignedTaka(stats.netCashInHand)}
               </strong>
               <span className="text-[10px] text-slate-500 block">
-                bKash: {formatTaka(methodSummary.bKash)} • Nagad: {formatTaka(methodSummary.Nagad)}
+                নগদ আয় {formatTaka(stats.cashIncome)} - ব্যয় {formatTaka(stats.cashExpense)}
               </span>
             </div>
             <div className="p-3 border border-slate-200 bg-slate-50 rounded-xl">
               <span className="text-[10px] text-slate-600 block">
-                {language === 'bn' ? 'ফি রসিদ বনাম আয় ভাউচার' : 'Fees vs Vouchers'}
+                {language === 'bn' ? 'নিট ব্যালেন্স (আয় - ব্যয়)' : 'Net Balance'}
               </span>
-              <strong className="text-xs font-extrabold text-slate-800 tabular-nums">
-                {formatTaka(feeTotal)} + {formatTaka(voucherTotal)}
+              <strong className="text-sm font-extrabold text-slate-900 tabular-nums">
+                {formatSignedTaka(stats.netBalance)}
               </strong>
-              <span className="text-[10px] text-slate-500 block">সম্মিলিত আয়</span>
+              <span className="text-[10px] text-slate-500 block">
+                ডিজিটাল নিট: {formatSignedTaka(stats.netDigitalBalance)}
+              </span>
             </div>
           </div>
 
@@ -1528,21 +1534,20 @@ ${
             <div>
               <h4 className="font-bold text-slate-800 text-xs uppercase mb-2">
                 {language === 'bn'
-                  ? 'হিসাবরক্ষক / কালেক্টর ভিত্তিক সারসংক্ষেপ (কে কত কালেকশন করেছে)'
-                  : 'Collector-Wise Breakdown Summary'}
+                  ? 'হিসাবরক্ষক / স্টাফ ভিত্তিক আয়-ব্যয় সারসংক্ষেপ (কে কত আয় ও ব্যয় করেছে)'
+                  : 'Collector-Wise Income & Expense Summary'}
               </h4>
               <table className="w-full text-left border-collapse border border-slate-300 text-[11px]">
                 <thead>
                   <tr className="bg-slate-100 font-bold">
                     <th className="border border-slate-300 py-1.5 px-2 text-center">SL</th>
-                    <th className="border border-slate-300 py-1.5 px-2">কালেক্টর ও পদবি</th>
-                    <th className="border border-slate-300 py-1.5 px-2 text-center">ফি রসিদ</th>
+                    <th className="border border-slate-300 py-1.5 px-2">নাম ও পদবি</th>
                     <th className="border border-slate-300 py-1.5 px-2 text-right">ফি (৳)</th>
-                    <th className="border border-slate-300 py-1.5 px-2 text-center">আয় ভাউচার</th>
-                    <th className="border border-slate-300 py-1.5 px-2 text-right">ভাউচার (৳)</th>
-                    <th className="border border-slate-300 py-1.5 px-2 text-right">নগদ (Cash)</th>
-                    <th className="border border-slate-300 py-1.5 px-2 text-right">বিকাশ/ব্যাংক</th>
-                    <th className="border border-slate-300 py-1.5 px-2 text-right">মোট (৳)</th>
+                    <th className="border border-slate-300 py-1.5 px-2 text-right">আয় ভাউচার</th>
+                    <th className="border border-slate-300 py-1.5 px-2 text-right">মোট আয়</th>
+                    <th className="border border-slate-300 py-1.5 px-2 text-right">মোট ব্যয়</th>
+                    <th className="border border-slate-300 py-1.5 px-2 text-right">নিট নগদ (Cash)</th>
+                    <th className="border border-slate-300 py-1.5 px-2 text-right">নিট ব্যালেন্স</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1555,22 +1560,23 @@ ${
                         <div className="font-bold text-slate-900">{c.displayNameBn || c.displayName}</div>
                         <div className="text-[10px] text-slate-500">{c.roleLabelBn}</div>
                       </td>
-                      <td className="border border-slate-300 py-1.5 px-2 text-center">{toBnNumber(c.feeCount)}</td>
                       <td className="border border-slate-300 py-1.5 px-2 text-right tabular-nums">
-                        {formatTaka(c.feeAmount)}
+                        {formatTaka(c.feeAmount)} ({toBnNumber(c.feeCount)})
                       </td>
-                      <td className="border border-slate-300 py-1.5 px-2 text-center">{toBnNumber(c.voucherCount)}</td>
                       <td className="border border-slate-300 py-1.5 px-2 text-right tabular-nums">
-                        {formatTaka(c.voucherAmount)}
+                        {formatTaka(c.voucherAmount)} ({toBnNumber(c.voucherCount)})
+                      </td>
+                      <td className="border border-slate-300 py-1.5 px-2 text-right font-bold text-emerald-700 tabular-nums">
+                        {formatTaka(c.totalAmount)}
+                      </td>
+                      <td className="border border-slate-300 py-1.5 px-2 text-right font-bold text-rose-700 tabular-nums">
+                        {formatTaka(c.expenseAmount)} ({toBnNumber(c.expenseCount)})
                       </td>
                       <td className="border border-slate-300 py-1.5 px-2 text-right tabular-nums text-blue-700 font-semibold">
-                        {formatTaka(c.cashAmount)}
+                        {formatSignedTaka(c.netCashInHand)}
                       </td>
-                      <td className="border border-slate-300 py-1.5 px-2 text-right tabular-nums text-purple-700 font-semibold">
-                        {formatTaka(c.mfsAndBankAmount)}
-                      </td>
-                      <td className="border border-slate-300 py-1.5 px-2 text-right font-extrabold text-emerald-700 tabular-nums">
-                        {formatTaka(c.totalAmount)}
+                      <td className="border border-slate-300 py-1.5 px-2 text-right font-extrabold text-slate-900 tabular-nums">
+                        {formatSignedTaka(c.netBalance)}
                       </td>
                     </tr>
                   ))}
@@ -1581,7 +1587,7 @@ ${
 
           <div>
             <h4 className="font-bold text-slate-800 text-xs uppercase mb-2">
-              {language === 'bn' ? 'বিস্তারিত লেনদেন রেজিস্টার' : 'Transaction Register'}
+              {language === 'bn' ? 'বিস্তারিত আয় ও ব্যয় লেনদেন রেজিস্টার' : 'Income & Expense Register'}
             </h4>
             <table className="w-full text-left border-collapse border border-slate-300 text-[11px]">
               <thead>
@@ -1590,8 +1596,8 @@ ${
                   <th className="border border-slate-300 py-1.5 px-2">তারিখ</th>
                   <th className="border border-slate-300 py-1.5 px-2">রসিদ / ভাউচার</th>
                   <th className="border border-slate-300 py-1.5 px-2">ধরন</th>
-                  <th className="border border-slate-300 py-1.5 px-2">সংগ্রহকারী</th>
-                  <th className="border border-slate-300 py-1.5 px-2">শিক্ষার্থী / প্রেরক</th>
+                  <th className="border border-slate-300 py-1.5 px-2">সংগ্রহকারী / ব্যয়কারী</th>
+                  <th className="border border-slate-300 py-1.5 px-2">বিবরণ / প্রেরক / প্রাপক</th>
                   <th className="border border-slate-300 py-1.5 px-2">মাধ্যম</th>
                   <th className="border border-slate-300 py-1.5 px-2 text-right">টাকা</th>
                 </tr>
@@ -1603,11 +1609,19 @@ ${
                       {toBnNumber(idx + 1)}
                     </td>
                     <td className="border border-slate-300 py-1.5 px-2 whitespace-nowrap">{formatDate(t.date)}</td>
-                    <td className="border border-slate-300 py-1.5 px-2 font-mono font-bold text-blue-700">
+                    <td
+                      className={`border border-slate-300 py-1.5 px-2 font-mono font-bold ${
+                        t.direction === 'expense' ? 'text-rose-700' : 'text-blue-700'
+                      }`}
+                    >
                       {t.refNo}
                     </td>
                     <td className="border border-slate-300 py-1.5 px-2">
-                      {t.source === 'fee_receipt' ? 'ফি রসিদ' : 'আয় ভাউচার'}
+                      {t.source === 'fee_receipt'
+                        ? 'ফি রসিদ (আয়)'
+                        : t.source === 'income_voucher'
+                        ? 'আয় ভাউচার'
+                        : 'ব্যয় ভাউচার'}
                     </td>
                     <td className="border border-slate-300 py-1.5 px-2 font-semibold">
                       {t.collectorNameBn || t.collectorName}
@@ -1617,8 +1631,12 @@ ${
                       <div className="text-[10px] text-slate-500">{t.subtitle}</div>
                     </td>
                     <td className="border border-slate-300 py-1.5 px-2">{t.paymentMethod}</td>
-                    <td className="border border-slate-300 py-1.5 px-2 text-right font-bold text-emerald-700 tabular-nums">
-                      {formatTaka(t.amount)}
+                    <td
+                      className={`border border-slate-300 py-1.5 px-2 text-right font-bold tabular-nums ${
+                        t.direction === 'expense' ? 'text-rose-700' : 'text-emerald-700'
+                      }`}
+                    >
+                      {t.direction === 'expense' ? `-${formatTaka(t.amount)}` : `+${formatTaka(t.amount)}`}
                     </td>
                   </tr>
                 ))}
@@ -1633,8 +1651,14 @@ ${
             </table>
           </div>
 
-          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-800">
-            মোট আদায় (কথায়): {amountInWords(methodSummary.total)}
+          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-800 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              মোট আয়: {formatTaka(stats.incomeTotal)} • মোট ব্যয়: {formatTaka(stats.expenseTotal)}
+            </span>
+            <span>
+              নিট ব্যালেন্স (কথায়): {stats.netBalance < 0 ? '(-) ' : ''}
+              {amountInWords(Math.abs(stats.netBalance))}
+            </span>
           </div>
 
           <div className="pt-10 flex items-end justify-between text-[11px] text-slate-700">

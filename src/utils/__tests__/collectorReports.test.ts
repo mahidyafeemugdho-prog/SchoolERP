@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   canViewAllCollectorReports,
+  computeIncomeExpenseStats,
   extractCollectorDisplayName,
   filterCollectorTransactions,
   normalizeCollectorTransactions,
   summarizeByCollector,
 } from '../collectorReports';
-import { FeePayment, IncomeVoucher, Staff, UserProfile } from '../../types';
+import { Expense, FeePayment, IncomeVoucher, Staff, UserProfile } from '../../types';
 
 const makeStaff = (overrides: Partial<Staff> & Pick<Staff, 'id' | 'nameEn' | 'nameBn' | 'email' | 'role'>): Staff => ({
   id: overrides.id,
@@ -30,7 +31,7 @@ const makeStaff = (overrides: Partial<Staff> & Pick<Staff, 'id' | 'nameEn' | 'na
   permissions: overrides.permissions,
 });
 
-describe('collectorReports utilities (Accountant personal & Super Admin audit)', () => {
+describe('collectorReports utilities (Accountant personal & Super Admin Income + Expense audit)', () => {
   const refDate = new Date(2026, 10, 19); // 2026-11-19 (Thursday)
 
   const staffList: Staff[] = [
@@ -153,6 +154,34 @@ describe('collectorReports utilities (Accountant personal & Super Admin audit)',
     },
   ];
 
+  const expenses: Expense[] = [
+    {
+      id: 'exp1',
+      voucherNo: 'EXP-2026-01',
+      category: 'Stationery',
+      title: 'Marker & Paper',
+      amount: 500,
+      date: '2026-11-19',
+      paidTo: 'Dhaka Stationery',
+      paymentMethod: 'Cash',
+      approvedBy: 'Md. Rahim Uddin',
+      approvedById: 'st_acc1',
+      approvedByEmail: 'rahim@school.edu',
+      approvedByRole: 'accountant',
+    },
+    {
+      id: 'exp2',
+      voucherNo: 'EXP-2026-02',
+      category: 'Entertainment',
+      title: 'Tea & Snacks',
+      amount: 400,
+      date: '2026-11-19',
+      paidTo: 'Canteen',
+      paymentMethod: 'Cash',
+      approvedBy: 'করিম মিয়া',
+    },
+  ];
+
   it('grants full collector audit access only to super_admin and master_admin', () => {
     expect(canViewAllCollectorReports('super_admin')).toBe(true);
     expect(canViewAllCollectorReports('master_admin')).toBe(true);
@@ -169,26 +198,31 @@ describe('collectorReports utilities (Accountant personal & Super Admin audit)',
     expect(extractCollectorDisplayName('')).toBe('');
   });
 
-  it('attributes receipts, online approvals, and income vouchers cleanly across 4 accountants', () => {
+  it('attributes income receipts, vouchers, and expenses cleanly across 4 accountants with net cash handover', () => {
     const { transactions, directory } = normalizeCollectorTransactions(
       payments,
       incomeVouchers,
       staffList,
-      accountant1User
+      accountant1User,
+      expenses
     );
     const rahimKey = directory.resolveUserKey(accountant1User);
     expect(rahimKey).toBe('staff:st_acc1');
 
-    // Today's collection for Rahim: p1 (1500 Fee Cash) + iv1 (300 Income Voucher Cash) = 1800
+    // Today's transactions for Rahim: p1 (+1500 Cash) + iv1 (+300 Cash) + exp1 (-500 Cash)
     const rahimToday = filterCollectorTransactions(transactions, {
       period: 'today',
       collectorKey: rahimKey,
       referenceDate: refDate,
     });
-    expect(rahimToday).toHaveLength(2);
-    expect(rahimToday.reduce((s, t) => s + t.amount, 0)).toBe(1800);
+    expect(rahimToday).toHaveLength(3);
+    const rahimStats = computeIncomeExpenseStats(rahimToday);
+    expect(rahimStats.incomeTotal).toBe(1800);
+    expect(rahimStats.expenseTotal).toBe(500);
+    expect(rahimStats.netCashInHand).toBe(1300);
+    expect(rahimStats.netBalance).toBe(1300);
 
-    // Super Admin today summary across all 4 accountants (including Sumon Das with 0 collection)
+    // Super Admin today summary across all 4 accountants
     const saKey = directory.resolveUserKey(superAdminUser);
     const allToday = filterCollectorTransactions(transactions, {
       period: 'today',
@@ -203,42 +237,70 @@ describe('collectorReports utilities (Accountant personal & Super Admin audit)',
     const sumon = summaries.find((s) => s.collectorKey === 'staff:st_acc4');
 
     expect(fatema?.totalAmount).toBe(2000);
+    expect(fatema?.expenseAmount).toBe(0);
     expect(fatema?.mfsAndBankAmount).toBe(2000);
-    expect(fatema?.cashAmount).toBe(0);
+    expect(fatema?.netBalance).toBe(2000);
 
     expect(rahim?.totalAmount).toBe(1800);
-    expect(rahim?.feeAmount).toBe(1500);
-    expect(rahim?.voucherAmount).toBe(300);
-    expect(rahim?.cashAmount).toBe(1800);
+    expect(rahim?.expenseAmount).toBe(500);
+    expect(rahim?.netCashInHand).toBe(1300);
+    expect(rahim?.netBalance).toBe(1300);
 
-    // Karim & Sumon have 0 today, yet remain visible in Super Admin audit table
+    // Karim made 0 income today, but 400 Cash expense today => netCashInHand -400
     expect(karim?.totalAmount).toBe(0);
+    expect(karim?.expenseAmount).toBe(400);
+    expect(karim?.netCashInHand).toBe(-400);
+    expect(karim?.netBalance).toBe(-400);
+
+    // Sumon has 0 activity today, yet remains visible in Super Admin audit table
     expect(sumon?.totalAmount).toBe(0);
+    expect(sumon?.expenseAmount).toBe(0);
   });
 
-  it('filters accurately by today, week, month, year, and custom From–To date ranges', () => {
+  it('filters accurately by today, week, month, year, custom From–To date ranges, and source types', () => {
     const { transactions } = normalizeCollectorTransactions(
       payments,
       incomeVouchers,
       staffList,
-      superAdminUser
+      superAdminUser,
+      expenses
     );
 
-    const todaySum = filterCollectorTransactions(transactions, { period: 'today', referenceDate: refDate })
-      .reduce((s, t) => s + t.amount, 0);
-    expect(todaySum).toBe(1500 + 2000 + 300);
+    const todayStats = computeIncomeExpenseStats(
+      filterCollectorTransactions(transactions, { period: 'today', referenceDate: refDate })
+    );
+    expect(todayStats.incomeTotal).toBe(1500 + 2000 + 300);
+    expect(todayStats.expenseTotal).toBe(500 + 400);
+    expect(todayStats.netBalance).toBe(2900);
 
-    const weekSum = filterCollectorTransactions(transactions, { period: 'week', referenceDate: refDate })
-      .reduce((s, t) => s + t.amount, 0);
-    expect(weekSum).toBe(1500 + 2000 + 300 + 1000);
+    const onlyExpensesToday = filterCollectorTransactions(transactions, {
+      period: 'today',
+      sourceFilter: 'expense_voucher',
+      referenceDate: refDate,
+    });
+    expect(onlyExpensesToday).toHaveLength(2);
+    expect(onlyExpensesToday.reduce((s, t) => s + t.amount, 0)).toBe(900);
 
-    const monthSum = filterCollectorTransactions(transactions, { period: 'month', referenceDate: refDate })
-      .reduce((s, t) => s + t.amount, 0);
-    expect(monthSum).toBe(1500 + 2000 + 300 + 1000 + 3000);
+    const allIncomeWeek = filterCollectorTransactions(transactions, {
+      period: 'week',
+      sourceFilter: 'income_all',
+      referenceDate: refDate,
+    });
+    expect(allIncomeWeek.reduce((s, t) => s + t.amount, 0)).toBe(1500 + 2000 + 300 + 1000);
 
-    const yearSum = filterCollectorTransactions(transactions, { period: 'year', referenceDate: refDate })
-      .reduce((s, t) => s + t.amount, 0);
-    expect(yearSum).toBe(1500 + 2000 + 300 + 1000 + 3000 + 1200);
+    const monthIncome = filterCollectorTransactions(transactions, {
+      period: 'month',
+      sourceFilter: 'income_all',
+      referenceDate: refDate,
+    }).reduce((s, t) => s + t.amount, 0);
+    expect(monthIncome).toBe(1500 + 2000 + 300 + 1000 + 3000);
+
+    const yearIncome = filterCollectorTransactions(transactions, {
+      period: 'year',
+      sourceFilter: 'income_all',
+      referenceDate: refDate,
+    }).reduce((s, t) => s + t.amount, 0);
+    expect(yearIncome).toBe(1500 + 2000 + 300 + 1000 + 3000 + 1200);
 
     const customSum = filterCollectorTransactions(transactions, {
       period: 'custom',

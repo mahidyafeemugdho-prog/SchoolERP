@@ -516,6 +516,9 @@ export interface Expense {
   paymentMethod: 'Cash' | 'Bank' | 'Cheque' | 'bKash' | 'Nagad';
   referenceNo?: string;
   approvedBy: string;
+  approvedById?: string;
+  approvedByEmail?: string;
+  approvedByRole?: string;
   notes?: string;
 }
 

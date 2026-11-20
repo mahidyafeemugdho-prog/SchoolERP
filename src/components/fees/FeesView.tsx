@@ -29,6 +29,7 @@ import {
 } from '../../utils/financeFilters';
 import {
   canViewAllCollectorReports,
+  computeIncomeExpenseStats,
   filterCollectorTransactions,
   normalizeCollectorTransactions,
 } from '../../utils/collectorReports';
@@ -829,8 +830,8 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const canViewAllCollectors = canViewAllCollectorReports(activeRole);
 
   const { transactions: collectorNormalizedTxs, directory: collectorDirectory } = useMemo(
-    () => normalizeCollectorTransactions(payments, incomeVouchers, staffList, currentUser),
-    [payments, incomeVouchers, staffList, currentUser]
+    () => normalizeCollectorTransactions(payments, incomeVouchers, staffList, currentUser, expenses),
+    [payments, incomeVouchers, staffList, currentUser, expenses]
   );
   const currentCollectorKey = useMemo(
     () => collectorDirectory.resolveUserKey(currentUser),
@@ -841,10 +842,13 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       period: 'today',
       collectorKey: currentCollectorKey,
     });
-    const m = summarizeByPaymentMethod(myToday);
+    const st = computeIncomeExpenseStats(myToday);
     return {
-      total: m.total,
-      cash: m.Cash,
+      total: st.incomeTotal,
+      expense: st.expenseTotal,
+      netCashInHand: st.netCashInHand,
+      netBalance: st.netBalance,
+      cash: st.cashIncome,
       count: myToday.length,
     };
   }, [collectorNormalizedTxs, currentCollectorKey]);
@@ -1634,6 +1638,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       paymentMethod: expenseMethod,
       referenceNo: expenseRefNo.trim() || undefined,
       approvedBy: currentUser.name,
+      approvedById: currentUser.linkedStaffId || currentUser.id,
+      approvedByEmail: currentUser.email,
+      approvedByRole: activeRole,
       notes: expenseNotes.trim() || undefined,
     };
 
@@ -2174,11 +2181,11 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
             id: 'collector_report',
             label: canViewAllCollectors
               ? language === 'bn'
-                ? 'কালেক্টর হিসাব'
+                ? 'কালেক্টর আয়-ব্যয়'
                 : 'Collector Audit'
               : language === 'bn'
-              ? 'আমার কালেকশন'
-              : 'My Collection',
+              ? 'আমার আয়-ব্যয়'
+              : 'My Ledger',
             icon: UserCheck,
             color: 'indigo' as const,
             active: activeTab === 'collector_report',
@@ -2362,18 +2369,18 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
               <span>
                 {canViewAllCollectors
                   ? language === 'bn'
-                    ? 'হিসাবরক্ষক ভিত্তিক (কে কত):'
-                    : 'Collector Breakdown:'
+                    ? 'হিসাবরক্ষক আয়-ব্যয় (কে কত):'
+                    : 'Collector Audit:'
                   : language === 'bn'
-                  ? 'আজকে আমার কালেকশন:'
-                  : 'My Today Total:'}
+                  ? 'আজ আমার আয় / ব্যয়:'
+                  : 'My Today In / Out:'}
               </span>
               <span className="tabular-nums text-indigo-700">
                 {canViewAllCollectors
                   ? language === 'bn'
                     ? 'দেখুন →'
                     : 'View →'
-                  : `${formatTaka(myTodayStats.total)} →`}
+                  : `${formatTaka(myTodayStats.total)} / ${formatTaka(myTodayStats.expense)} →`}
               </span>
             </button>
           )}
@@ -4141,11 +4148,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
         </div>
       )}
 
-      {/* TAB: ACCOUNTANT / COLLECTOR-WISE COLLECTION REPORT */}
+      {/* TAB: ACCOUNTANT / COLLECTOR-WISE INCOME & EXPENSE REPORT */}
       {activeTab === 'collector_report' && canManage && (
         <CollectorCollectionTab
           payments={payments}
           incomeVouchers={incomeVouchers}
+          expenses={expenses}
           staffList={staffList}
           currentUser={currentUser}
           activeRole={activeRole}
@@ -4162,6 +4170,10 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
             setSelectedReceipt(pay);
             setSelectedReceiptInvoice(inv);
             setShowReceiptModal(true);
+          }}
+          onInspectExpenseVoucher={(expenseId) => {
+            const exp = expenses.find((e) => e.id === expenseId);
+            if (exp) setPrintingExpense(exp);
           }}
         />
       )}
@@ -4827,7 +4839,10 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                             </span>
                           )}
                         </div>
-                        <div className="text-[10px] text-slate-400">{e.date} • {e.voucherNo} • {e.paymentMethod}</div>
+                        <div className="text-[10px] text-slate-400">
+                          {e.date} • {e.voucherNo} • {e.paymentMethod}
+                          {e.approvedBy ? ` • ${language === 'bn' ? 'ব্যয়কারী' : 'By'}: ${e.approvedBy}` : ''}
+                        </div>
                         {lineItems.length > 1 && (
                           <div className="text-[10px] text-slate-500 mt-0.5">
                             {lineItems.map((it) => `${it.description} (×${it.quantity})`).join(' • ')}
