@@ -8,6 +8,16 @@ import { formatGroupName, toEnNumber } from '../../utils/i18n';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { compareStudentsByClassAndRoll } from '../../utils/studentSort';
 import { exportStudentsAdmissionExcel } from '../../utils/studentExcelExport';
+import {
+  computeStudentDemographics,
+  computeClassWiseDemographics,
+  normalizeStudentGender,
+  normalizeStudentReligion,
+  formatGenderLabel,
+  formatReligionLabel,
+  NormalizedGender,
+  NormalizedReligion,
+} from '../../utils/studentDemographics';
 import { LiveCameraModal } from '../common/LiveCameraModal';
 import { buildPrincipalSignatureHtml } from '../../utils/signatureHelper';
 import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
@@ -53,6 +63,10 @@ import {
   Image as ImageIcon,
   Wifi,
   Mail,
+  BarChart3,
+  ChevronDown,
+  ChevronUp,
+  RotateCcw,
 } from 'lucide-react';
 import { useSchool } from '../../context/SchoolContext';
 import QRCode from 'qrcode';
@@ -80,6 +94,9 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
   const [selectedShift, setSelectedShift] = useState<string>('all');
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
   const [selectedSessionFilter, setSelectedSessionFilter] = useState<'all' | '2026' | '2027' | '2028'>('all');
+  const [selectedGender, setSelectedGender] = useState<'all' | NormalizedGender>('all');
+  const [selectedReligion, setSelectedReligion] = useState<'all' | NormalizedReligion>('all');
+  const [showClassBreakdown, setShowClassBreakdown] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>('');
 
   // Modals state
@@ -456,10 +473,9 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
     reader.readAsDataURL(file);
   };
 
-  // Filters
-  const filteredStudents = students.filter((s) => {
+  // Base scope for class-wise breakdown (respects session, section, shift, group, search)
+  const classBreakdownScope = students.filter((s) => {
     if (selectedSessionFilter !== 'all' && (s.session || '2026') !== selectedSessionFilter) return false;
-    if (selectedClass !== 'all' && s.className !== selectedClass) return false;
     if (selectedSection !== 'all' && s.section !== selectedSection) return false;
     if (selectedShift !== 'all' && s.shift !== selectedShift) return false;
     if (selectedGroup !== 'all') {
@@ -478,7 +494,163 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
       return matchName || matchId || matchRoll || matchPhone;
     }
     return true;
-  }).sort(compareStudentsByClassAndRoll);
+  });
+
+  // Filters
+  const filteredStudents = classBreakdownScope
+    .filter((s) => {
+      if (selectedClass !== 'all' && s.className !== selectedClass) return false;
+      if (selectedGender !== 'all' && normalizeStudentGender(s.gender) !== selectedGender) return false;
+      if (selectedReligion !== 'all' && normalizeStudentReligion(s.religion) !== selectedReligion) return false;
+      return true;
+    })
+    .sort(compareStudentsByClassAndRoll);
+
+  const filteredDemographics = computeStudentDemographics(filteredStudents);
+  const classBreakdown = computeClassWiseDemographics(classBreakdownScope);
+  const hasOtherDemographics =
+    classBreakdown.totals.otherGender > 0 || classBreakdown.totals.otherReligion > 0;
+
+  const hasActiveFilters =
+    selectedClass !== 'all' ||
+    selectedSection !== 'all' ||
+    selectedShift !== 'all' ||
+    selectedGroup !== 'all' ||
+    selectedSessionFilter !== 'all' ||
+    selectedGender !== 'all' ||
+    selectedReligion !== 'all' ||
+    searchTerm.trim() !== '';
+
+  const handleResetFilters = () => {
+    setSelectedClass('all');
+    setSelectedSection('all');
+    setSelectedShift('all');
+    setSelectedGroup('all');
+    setSelectedSessionFilter('all');
+    setSelectedGender('all');
+    setSelectedReligion('all');
+    setSearchTerm('');
+  };
+
+  const escapeHtml = (value: string) =>
+    String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+  const handlePrintDemographicReport = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      window.print();
+      return;
+    }
+
+    const formatNum = (val: number) => (language === 'bn' ? toBnNumber(val) : String(val));
+    const showOtherCol = hasOtherDemographics;
+    const rowsHtml = classBreakdown.rows
+      .map(
+        (row, idx) => `
+          <tr>
+            <td style="text-align:center;">${formatNum(idx + 1)}</td>
+            <td style="font-weight:600;">${escapeHtml(row.className)}</td>
+            <td style="text-align:center;font-weight:700;">${formatNum(row.total)}</td>
+            <td style="text-align:center;">${formatNum(row.male)}</td>
+            <td style="text-align:center;">${formatNum(row.female)}</td>
+            <td style="text-align:center;">${formatNum(row.islam)}</td>
+            <td style="text-align:center;">${formatNum(row.hinduism)}</td>
+            <td style="text-align:center;">${formatNum(row.christianity)}</td>
+            <td style="text-align:center;">${formatNum(row.buddhism)}</td>
+            ${showOtherCol ? `<td style="text-align:center;">${formatNum(row.otherReligion)}</td>` : ''}
+          </tr>
+        `
+      )
+      .join('');
+
+    const tTotals = classBreakdown.totals;
+    const schoolTitle = escapeHtml(school.nameBn || school.nameEn || 'School');
+    const schoolMeta = escapeHtml(
+      `EIIN: ${school.eiin || 'N/A'} • ${school.addressBn || school.addressEn || ''}`
+    );
+    const scopeParts = [
+      selectedSessionFilter === 'all' ? 'সকল শিক্ষাবর্ষ' : `শিক্ষাবর্ষ ${selectedSessionFilter}`,
+      selectedShift === 'all' ? 'সকল শিফট' : `${selectedShift} Shift`,
+      selectedSection === 'all' ? 'সকল শাখা' : `শাখা ${selectedSection}`,
+      selectedGroup === 'all' ? 'সকল বিভাগ' : selectedGroup,
+    ];
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>শ্রেণিভিত্তিক শিক্ষার্থী ও ধর্মীয় পরিসংখ্যান</title>
+          <style>
+            body { font-family: 'Hind Siliguri', Arial, sans-serif; margin: 24px; color: #0f172a; }
+            .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 10px; margin-bottom: 14px; }
+            .title { font-size: 16px; font-weight: 700; margin-top: 6px; }
+            .meta { font-size: 12px; color: #475569; margin-top: 4px; }
+            table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 12px; }
+            th, td { border: 1px solid #cbd5e1; padding: 7px 8px; }
+            th { background: #f1f5f9; font-weight: 700; text-align: center; }
+            tfoot td { background: #f8fafc; font-weight: 800; border-top: 2px solid #334155; }
+            .footer { margin-top: 32px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h2 style="margin:0;font-size:20px;">${schoolTitle}</h2>
+            <div class="meta">${schoolMeta}</div>
+            <div class="title">শ্রেণিভিত্তিক ছাত্র-ছাত্রী ও ধর্মীয় পরিসংখ্যান রিপোর্ট</div>
+            <div class="meta">${escapeHtml(scopeParts.join(' • '))}</div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>ক্রমিক</th>
+                <th style="text-align:left;">শ্রেণি (Class)</th>
+                <th>মোট (Total)</th>
+                <th>ছাত্র (Boy)</th>
+                <th>ছাত্রী (Girl)</th>
+                <th>মুসলিম (Muslim)</th>
+                <th>হিন্দু (Hindu)</th>
+                <th>খ্রিস্টান (Christian)</th>
+                <th>বৌদ্ধ (Buddhist)</th>
+                ${showOtherCol ? '<th>অন্যান্য (Other)</th>' : ''}
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml || `<tr><td colspan="${showOtherCol ? 10 : 9}" style="text-align:center;">কোনো তথ্য পাওয়া যায়নি</td></tr>`}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="2" style="text-align:left;">সর্বমোট (TOTAL)</td>
+                <td style="text-align:center;">${formatNum(tTotals.total)}</td>
+                <td style="text-align:center;">${formatNum(tTotals.male)}</td>
+                <td style="text-align:center;">${formatNum(tTotals.female)}</td>
+                <td style="text-align:center;">${formatNum(tTotals.islam)}</td>
+                <td style="text-align:center;">${formatNum(tTotals.hinduism)}</td>
+                <td style="text-align:center;">${formatNum(tTotals.christianity)}</td>
+                <td style="text-align:center;">${formatNum(tTotals.buddhism)}</td>
+                ${showOtherCol ? `<td style="text-align:center;">${formatNum(tTotals.otherReligion)}</td>` : ''}
+              </tr>
+            </tfoot>
+          </table>
+          <div class="footer">
+            <div>মুদ্রণের তারিখ: ${escapeHtml(new Date().toLocaleDateString('bn-BD'))}</div>
+            <div style="text-align:center;">
+              ${buildPrincipalSignatureHtml(school)}
+              <div style="border-top:1px solid #0f172a;width:180px;padding-top:4px;margin-top:4px;">অধ্যক্ষের স্বাক্ষর ও সিল</div>
+            </div>
+          </div>
+          <script>
+            window.onload = function() { window.print(); };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
 
   const handleUploadHardCopy = async (e: React.ChangeEvent<HTMLInputElement>, category: string, defaultTitle?: string) => {
     const file = e.target.files?.[0];
@@ -790,11 +962,368 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
         </div>
       </div>
 
+      {/* Live Demographic Summary Strip (Boy / Girl / Religion Counts for Active Filter) */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center space-x-2">
+            <Users className="w-4 h-4 text-blue-600 shrink-0" />
+            <h3 className="text-xs font-bold text-slate-800">
+              {language === 'bn'
+                ? selectedClass === 'all'
+                  ? 'ছাত্র-ছাত্রী ও ধর্মীয় পরিসংখ্যান (ফিল্টার অনুযায়ী)'
+                  : `${selectedClass} — ছাত্র-ছাত্রী ও ধর্মীয় পরিসংখ্যান`
+                : selectedClass === 'all'
+                ? 'Student Gender & Religion Summary'
+                : `${selectedClass} — Gender & Religion Summary`}
+            </h3>
+            <span className="text-[11px] text-slate-500">
+              {selectedShift !== 'all' ? `· ${selectedShift}` : ''}
+              {selectedSection !== 'all' ? ` · Sec ${selectedSection}` : ''}
+              {selectedSessionFilter !== 'all' ? ` · ${selectedSessionFilter}` : ''}
+            </span>
+          </div>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              className="inline-flex items-center space-x-1 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200/70 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>{language === 'bn' ? 'ফিল্টার রিসেট' : 'Reset Filters'}</span>
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
+          {/* Total */}
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedGender('all');
+              setSelectedReligion('all');
+            }}
+            className={`text-left p-2.5 rounded-xl border transition-colors cursor-pointer ${
+              selectedGender === 'all' && selectedReligion === 'all'
+                ? 'border-slate-900 bg-slate-900 text-white'
+                : 'border-slate-200 bg-slate-50/70 hover:bg-slate-100 text-slate-800'
+            }`}
+          >
+            <div className={`text-[11px] font-medium ${selectedGender === 'all' && selectedReligion === 'all' ? 'text-slate-300' : 'text-slate-500'}`}>
+              {language === 'bn' ? 'মোট শিক্ষার্থী' : 'Total'}
+            </div>
+            <div className="text-lg font-extrabold tabular-nums mt-0.5">
+              {language === 'bn' ? toBnNumber(filteredDemographics.total) : filteredDemographics.total}
+            </div>
+          </button>
+
+          {/* Boy / Male */}
+          <button
+            type="button"
+            onClick={() => setSelectedGender((prev) => (prev === 'male' ? 'all' : 'male'))}
+            className={`text-left p-2.5 rounded-xl border transition-colors cursor-pointer ${
+              selectedGender === 'male'
+                ? 'border-blue-600 bg-blue-50 text-blue-900 ring-1 ring-blue-500'
+                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-800'
+            }`}
+          >
+            <div className="text-[11px] font-medium text-blue-700">
+              {language === 'bn' ? 'ছাত্র (Boy)' : 'Boy (Male)'}
+            </div>
+            <div className="text-lg font-extrabold tabular-nums mt-0.5">
+              {language === 'bn' ? toBnNumber(filteredDemographics.male) : filteredDemographics.male}
+            </div>
+          </button>
+
+          {/* Girl / Female */}
+          <button
+            type="button"
+            onClick={() => setSelectedGender((prev) => (prev === 'female' ? 'all' : 'female'))}
+            className={`text-left p-2.5 rounded-xl border transition-colors cursor-pointer ${
+              selectedGender === 'female'
+                ? 'border-rose-600 bg-rose-50 text-rose-900 ring-1 ring-rose-500'
+                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-800'
+            }`}
+          >
+            <div className="text-[11px] font-medium text-rose-700">
+              {language === 'bn' ? 'ছাত্রী (Girl)' : 'Girl (Female)'}
+            </div>
+            <div className="text-lg font-extrabold tabular-nums mt-0.5">
+              {language === 'bn' ? toBnNumber(filteredDemographics.female) : filteredDemographics.female}
+            </div>
+          </button>
+
+          {/* Muslim / Islam */}
+          <button
+            type="button"
+            onClick={() => setSelectedReligion((prev) => (prev === 'islam' ? 'all' : 'islam'))}
+            className={`text-left p-2.5 rounded-xl border transition-colors cursor-pointer ${
+              selectedReligion === 'islam'
+                ? 'border-emerald-600 bg-emerald-50 text-emerald-900 ring-1 ring-emerald-500'
+                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-800'
+            }`}
+          >
+            <div className="text-[11px] font-medium text-emerald-700">
+              {language === 'bn' ? 'মুসলিম (Islam)' : 'Muslim'}
+            </div>
+            <div className="text-lg font-extrabold tabular-nums mt-0.5">
+              {language === 'bn' ? toBnNumber(filteredDemographics.islam) : filteredDemographics.islam}
+            </div>
+          </button>
+
+          {/* Hindu / Hinduism */}
+          <button
+            type="button"
+            onClick={() => setSelectedReligion((prev) => (prev === 'hinduism' ? 'all' : 'hinduism'))}
+            className={`text-left p-2.5 rounded-xl border transition-colors cursor-pointer ${
+              selectedReligion === 'hinduism'
+                ? 'border-amber-600 bg-amber-50 text-amber-900 ring-1 ring-amber-500'
+                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-800'
+            }`}
+          >
+            <div className="text-[11px] font-medium text-amber-700">
+              {language === 'bn' ? 'হিন্দু (Hindu)' : 'Hindu'}
+            </div>
+            <div className="text-lg font-extrabold tabular-nums mt-0.5">
+              {language === 'bn' ? toBnNumber(filteredDemographics.hinduism) : filteredDemographics.hinduism}
+            </div>
+          </button>
+
+          {/* Christian / Christianity */}
+          <button
+            type="button"
+            onClick={() => setSelectedReligion((prev) => (prev === 'christianity' ? 'all' : 'christianity'))}
+            className={`text-left p-2.5 rounded-xl border transition-colors cursor-pointer ${
+              selectedReligion === 'christianity'
+                ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-500'
+                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-800'
+            }`}
+          >
+            <div className="text-[11px] font-medium text-indigo-700">
+              {language === 'bn' ? 'খ্রিস্টান (Christian)' : 'Christian'}
+            </div>
+            <div className="text-lg font-extrabold tabular-nums mt-0.5">
+              {language === 'bn' ? toBnNumber(filteredDemographics.christianity) : filteredDemographics.christianity}
+            </div>
+          </button>
+
+          {/* Buddhist / Buddhism */}
+          <button
+            type="button"
+            onClick={() => setSelectedReligion((prev) => (prev === 'buddhism' ? 'all' : 'buddhism'))}
+            className={`text-left p-2.5 rounded-xl border transition-colors cursor-pointer ${
+              selectedReligion === 'buddhism'
+                ? 'border-teal-600 bg-teal-50 text-teal-900 ring-1 ring-teal-500'
+                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-800'
+            }`}
+          >
+            <div className="text-[11px] font-medium text-teal-700">
+              {language === 'bn' ? 'বৌদ্ধ (Buddhist)' : 'Buddhist'}
+            </div>
+            <div className="text-lg font-extrabold tabular-nums mt-0.5">
+              {language === 'bn' ? toBnNumber(filteredDemographics.buddhism) : filteredDemographics.buddhism}
+            </div>
+          </button>
+        </div>
+      </div>
+
+      {/* Class-wise Demographic Breakdown Table */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+        <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100">
+          <div className="flex items-start space-x-2.5">
+            <div className="p-2 rounded-xl bg-blue-50 text-blue-600 shrink-0">
+              <BarChart3 className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-xs sm:text-sm font-bold text-slate-900">
+                {language === 'bn'
+                  ? 'শ্রেণিভিত্তিক ছাত্র-ছাত্রী ও ধর্মীয় পরিসংখ্যান'
+                  : 'Class-wise Gender & Religion Breakdown'}
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {language === 'bn'
+                  ? 'যেকোনো শ্রেণির সারিতে ক্লিক করে ঐ শ্রেণির শিক্ষার্থী ফিল্টার করুন'
+                  : 'Click any class row to filter students for that class'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handlePrintDemographicReport}
+              className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5 text-slate-500" />
+              <span>{language === 'bn' ? 'রিপোর্ট প্রিন্ট' : 'Print Report'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowClassBreakdown((prev) => !prev)}
+              className="inline-flex items-center space-x-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200/70 text-slate-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              {showClassBreakdown ? (
+                <>
+                  <ChevronUp className="w-3.5 h-3.5" />
+                  <span>{language === 'bn' ? 'লুকান' : 'Hide'}</span>
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="w-3.5 h-3.5" />
+                  <span>{language === 'bn' ? 'দেখান' : 'Show'}</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {showClassBreakdown && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                  <th className="py-2.5 px-3.5 whitespace-nowrap">
+                    {language === 'bn' ? 'শ্রেণি (Class)' : 'Class'}
+                  </th>
+                  <th className="py-2.5 px-3 text-center whitespace-nowrap">
+                    {language === 'bn' ? 'মোট' : 'Total'}
+                  </th>
+                  <th className="py-2.5 px-3 text-center text-blue-700 whitespace-nowrap">
+                    {language === 'bn' ? 'ছাত্র (Boy)' : 'Boy'}
+                  </th>
+                  <th className="py-2.5 px-3 text-center text-rose-700 whitespace-nowrap">
+                    {language === 'bn' ? 'ছাত্রী (Girl)' : 'Girl'}
+                  </th>
+                  <th className="py-2.5 px-3 text-center text-emerald-700 whitespace-nowrap">
+                    {language === 'bn' ? 'মুসলিম' : 'Muslim'}
+                  </th>
+                  <th className="py-2.5 px-3 text-center text-amber-700 whitespace-nowrap">
+                    {language === 'bn' ? 'হিন্দু' : 'Hindu'}
+                  </th>
+                  <th className="py-2.5 px-3 text-center text-indigo-700 whitespace-nowrap">
+                    {language === 'bn' ? 'খ্রিস্টান' : 'Christian'}
+                  </th>
+                  <th className="py-2.5 px-3 text-center text-teal-700 whitespace-nowrap">
+                    {language === 'bn' ? 'বৌদ্ধ' : 'Buddhist'}
+                  </th>
+                  {hasOtherDemographics && (
+                    <th className="py-2.5 px-3 text-center text-slate-600 whitespace-nowrap">
+                      {language === 'bn' ? 'অন্যান্য' : 'Other'}
+                    </th>
+                  )}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {classBreakdown.rows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={hasOtherDemographics ? 9 : 8}
+                      className="py-6 text-center text-slate-500 text-xs"
+                    >
+                      {language === 'bn'
+                        ? 'বর্তমান ফিল্টারে শ্রেণিভিত্তিক কোনো শিক্ষার্থী নেই'
+                        : 'No student records match the current scope'}
+                    </td>
+                  </tr>
+                ) : (
+                  classBreakdown.rows.map((row) => {
+                    const isSelectedRow = selectedClass === row.className;
+                    const fmt = (val: number) => (language === 'bn' ? toBnNumber(val) : val);
+                    return (
+                      <tr
+                        key={row.className}
+                        onClick={() =>
+                          setSelectedClass((prev) => (prev === row.className ? 'all' : row.className))
+                        }
+                        className={`cursor-pointer transition-colors ${
+                          isSelectedRow
+                            ? 'bg-blue-50/80 font-semibold text-blue-950'
+                            : 'hover:bg-slate-50/80 text-slate-700'
+                        }`}
+                      >
+                        <td className="py-2.5 px-3.5 whitespace-nowrap">
+                          <span className="font-bold text-slate-900">{row.className}</span>
+                          {row.sections.length > 0 && (
+                            <span className="ml-1.5 text-[11px] text-slate-500">
+                              ({row.sections.join(', ')})
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-extrabold text-slate-900 tabular-nums">
+                          {fmt(row.total)}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-semibold text-blue-700 tabular-nums">
+                          {fmt(row.male)}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-semibold text-rose-700 tabular-nums">
+                          {fmt(row.female)}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-semibold text-emerald-700 tabular-nums">
+                          {fmt(row.islam)}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-semibold text-amber-700 tabular-nums">
+                          {fmt(row.hinduism)}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-semibold text-indigo-700 tabular-nums">
+                          {fmt(row.christianity)}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-semibold text-teal-700 tabular-nums">
+                          {fmt(row.buddhism)}
+                        </td>
+                        {hasOtherDemographics && (
+                          <td className="py-2.5 px-3 text-center text-slate-600 tabular-nums">
+                            {fmt(row.otherReligion)}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+              {classBreakdown.rows.length > 0 && (
+                <tfoot>
+                  <tr className="bg-slate-50 border-t-2 border-slate-200 font-extrabold text-slate-900">
+                    <td className="py-2.5 px-3.5 whitespace-nowrap">
+                      {language === 'bn' ? 'সর্বমোট (TOTAL)' : 'TOTAL'}
+                    </td>
+                    <td className="py-2.5 px-3 text-center tabular-nums">
+                      {language === 'bn' ? toBnNumber(classBreakdown.totals.total) : classBreakdown.totals.total}
+                    </td>
+                    <td className="py-2.5 px-3 text-center text-blue-700 tabular-nums">
+                      {language === 'bn' ? toBnNumber(classBreakdown.totals.male) : classBreakdown.totals.male}
+                    </td>
+                    <td className="py-2.5 px-3 text-center text-rose-700 tabular-nums">
+                      {language === 'bn' ? toBnNumber(classBreakdown.totals.female) : classBreakdown.totals.female}
+                    </td>
+                    <td className="py-2.5 px-3 text-center text-emerald-700 tabular-nums">
+                      {language === 'bn' ? toBnNumber(classBreakdown.totals.islam) : classBreakdown.totals.islam}
+                    </td>
+                    <td className="py-2.5 px-3 text-center text-amber-700 tabular-nums">
+                      {language === 'bn' ? toBnNumber(classBreakdown.totals.hinduism) : classBreakdown.totals.hinduism}
+                    </td>
+                    <td className="py-2.5 px-3 text-center text-indigo-700 tabular-nums">
+                      {language === 'bn' ? toBnNumber(classBreakdown.totals.christianity) : classBreakdown.totals.christianity}
+                    </td>
+                    <td className="py-2.5 px-3 text-center text-teal-700 tabular-nums">
+                      {language === 'bn' ? toBnNumber(classBreakdown.totals.buddhism) : classBreakdown.totals.buddhism}
+                    </td>
+                    {hasOtherDemographics && (
+                      <td className="py-2.5 px-3 text-center text-slate-700 tabular-nums">
+                        {language === 'bn' ? toBnNumber(classBreakdown.totals.otherReligion) : classBreakdown.totals.otherReligion}
+                      </td>
+                    )}
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Filter and Search Controls */}
-      <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {/* Search box */}
-          <div className="relative md:col-span-2">
+          <div className="relative sm:col-span-2">
             <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
             <input
               type="text"
@@ -805,6 +1334,23 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
             />
           </div>
 
+          {/* Session Filter */}
+          <div>
+            <select
+              aria-label="Filter by session"
+              value={selectedSessionFilter}
+              onChange={(e) => setSelectedSessionFilter(e.target.value as any)}
+              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white font-semibold text-blue-900"
+            >
+              <option value="all">{language === 'bn' ? 'সকল শিক্ষাবর্ষ (All Sessions)' : 'All Sessions'}</option>
+              <option value="2026">শিক্ষাবর্ষ ২০২৬ (রানিং)</option>
+              <option value="2027">শিক্ষাবর্ষ ২০২৭ (অগ্রিম ভর্তি)</option>
+              <option value="2028">শিক্ষাবর্ষ ২০২৮</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {/* Class Filter */}
           <div>
             <select
@@ -868,18 +1414,35 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
             </select>
           </div>
 
-          {/* Session Filter */}
+          {/* Gender Filter */}
           <div>
             <select
-              aria-label="Filter by session"
-              value={selectedSessionFilter}
-              onChange={(e) => setSelectedSessionFilter(e.target.value as any)}
-              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white font-semibold text-blue-900"
+              aria-label="Filter by gender"
+              value={selectedGender}
+              onChange={(e) => setSelectedGender(e.target.value as 'all' | NormalizedGender)}
+              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
             >
-              <option value="all">{language === 'bn' ? 'সকল শিক্ষাবর্ষ (All Sessions)' : 'All Sessions'}</option>
-              <option value="2026">শিক্ষাবর্ষ ২০২৬ (রানিং)</option>
-              <option value="2027">শিক্ষাবর্ষ ২০২৭ (অগ্রিম ভর্তি)</option>
-              <option value="2028">শিক্ষাবর্ষ ২০২৮</option>
+              <option value="all">{language === 'bn' ? 'সকল লিঙ্গ (Boy / Girl)' : 'All Genders (Boy / Girl)'}</option>
+              <option value="male">{language === 'bn' ? 'ছাত্র (Boy / Male)' : 'Boy (Male)'}</option>
+              <option value="female">{language === 'bn' ? 'ছাত্রী (Girl / Female)' : 'Girl (Female)'}</option>
+              <option value="other">{language === 'bn' ? 'অন্যান্য (Other)' : 'Other'}</option>
+            </select>
+          </div>
+
+          {/* Religion Filter */}
+          <div>
+            <select
+              aria-label="Filter by religion"
+              value={selectedReligion}
+              onChange={(e) => setSelectedReligion(e.target.value as 'all' | NormalizedReligion)}
+              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="all">{language === 'bn' ? 'সকল ধর্ম (All Religions)' : 'All Religions'}</option>
+              <option value="islam">{language === 'bn' ? 'মুসলিম (Islam)' : 'Muslim (Islam)'}</option>
+              <option value="hinduism">{language === 'bn' ? 'হিন্দু (Hindu)' : 'Hindu (Hinduism)'}</option>
+              <option value="christianity">{language === 'bn' ? 'খ্রিস্টান (Christian)' : 'Christian (Christianity)'}</option>
+              <option value="buddhism">{language === 'bn' ? 'বৌদ্ধ (Buddhist)' : 'Buddhist (Buddhism)'}</option>
+              <option value="other">{language === 'bn' ? 'অন্যান্য (Other)' : 'Other'}</option>
             </select>
           </div>
         </div>
@@ -946,6 +1509,9 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                         <div>
                           <div className="font-semibold text-slate-900">{s.nameEn}</div>
                           <div className="text-[11px] text-slate-500">{s.nameBn}</div>
+                          <div className="text-[11px] text-slate-400 mt-0.5">
+                            {formatGenderLabel(s.gender, language)} · {formatReligionLabel(s.religion, language)}
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -1400,6 +1966,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                     <option value="Hinduism">Hinduism / হিন্দু</option>
                     <option value="Buddhism">Buddhism / বৌদ্ধ</option>
                     <option value="Christianity">Christianity / খ্রিষ্টান</option>
+                    <option value="Other">Other / অন্যান্য</option>
                   </select>
                 </div>
               </div>

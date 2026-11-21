@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import { AdmissionEnquiry, Student } from '../types';
 import { compareStudentsByClassAndRoll } from './studentSort';
 import { formatSchoolScopedId } from './schoolIdFormatter';
+import { computeClassWiseDemographics } from './studentDemographics';
 
 export interface StudentAdmissionExportRow {
   'SL': number;
@@ -132,57 +133,46 @@ export interface StudentSummaryRow {
   'Active': number;
   'Male': number;
   'Female': number;
+  'Islam (Muslim)': number;
+  'Hinduism (Hindu)': number;
+  'Christianity (Christian)': number;
+  'Buddhism (Buddhist)': number;
+  'Other Religion': number;
   'Morning Shift': number;
   'Day Shift': number;
 }
 
 export const buildClassSummaryRows = (students: Student[]): StudentSummaryRow[] => {
-  const classOrder = [
-    'Nursery',
-    'KG',
-    'Class 1',
-    'Class 2',
-    'Class 3',
-    'Class 4',
-    'Class 5',
-    'Class 6',
-    'Class 7',
-    'Class 8',
-    'Class 9',
-    'Class 10',
-  ];
-  const map = new Map<string, Student[]>();
-  for (const s of students) {
-    const cls = s.className || 'Other';
-    if (!map.has(cls)) map.set(cls, []);
-    map.get(cls)!.push(s);
-  }
-  const orderedClasses = [
-    ...classOrder.filter((c) => map.has(c)),
-    ...[...map.keys()].filter((c) => !classOrder.includes(c)),
-  ];
+  const { rows: classRows, totals } = computeClassWiseDemographics(students);
 
-  const rows: StudentSummaryRow[] = orderedClasses.map((cls) => {
-    const list = map.get(cls) || [];
-    return {
-      'Class': cls,
-      'Total Students': list.length,
-      'Active': list.filter((s) => s.status === 'active').length,
-      'Male': list.filter((s) => s.gender === 'Male').length,
-      'Female': list.filter((s) => s.gender === 'Female').length,
-      'Morning Shift': list.filter((s) => s.shift === 'Morning').length,
-      'Day Shift': list.filter((s) => s.shift === 'Day').length,
-    };
-  });
+  const rows: StudentSummaryRow[] = classRows.map((row) => ({
+    'Class': row.className,
+    'Total Students': row.total,
+    'Active': row.active,
+    'Male': row.male,
+    'Female': row.female,
+    'Islam (Muslim)': row.islam,
+    'Hinduism (Hindu)': row.hinduism,
+    'Christianity (Christian)': row.christianity,
+    'Buddhism (Buddhist)': row.buddhism,
+    'Other Religion': row.otherReligion,
+    'Morning Shift': row.morningShift,
+    'Day Shift': row.dayShift,
+  }));
 
   rows.push({
     'Class': 'TOTAL',
-    'Total Students': students.length,
-    'Active': students.filter((s) => s.status === 'active').length,
-    'Male': students.filter((s) => s.gender === 'Male').length,
-    'Female': students.filter((s) => s.gender === 'Female').length,
-    'Morning Shift': students.filter((s) => s.shift === 'Morning').length,
-    'Day Shift': students.filter((s) => s.shift === 'Day').length,
+    'Total Students': totals.total,
+    'Active': totals.active,
+    'Male': totals.male,
+    'Female': totals.female,
+    'Islam (Muslim)': totals.islam,
+    'Hinduism (Hindu)': totals.hinduism,
+    'Christianity (Christian)': totals.christianity,
+    'Buddhism (Buddhist)': totals.buddhism,
+    'Other Religion': totals.otherReligion,
+    'Morning Shift': totals.morningShift,
+    'Day Shift': totals.dayShift,
   });
 
   return rows;

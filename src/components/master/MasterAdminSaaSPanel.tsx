@@ -83,6 +83,8 @@ export const MasterAdminSaaSPanel: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [firestoreFallbackActive, setFirestoreFallbackActive] = useState(false);
   const [serverDiagnostics, setServerDiagnostics] = useState<SaaSHealthDiagnostics | null>(null);
+  const [fallbackTriggerCode, setFallbackTriggerCode] = useState<string | null>(null);
+  const [healthProbeError, setHealthProbeError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Platform data
@@ -142,6 +144,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
     subscriptionHistory: SaaSSubscriptionHistoryDTO[];
     users: SaaSUserDTO[];
     adminCredentials: SaaSSchoolAdminCredentialDTO[];
+    vaultError?: string | null;
   } | null>(null);
   const [revealedVaultUids, setRevealedVaultUids] = useState<Record<string, boolean>>({});
   const [copiedVaultKey, setCopiedVaultKey] = useState<string | null>(null);
@@ -278,6 +281,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
   const refreshServerDiagnostics = async () => {
     try {
       const h = await SaaSApi.getHealth();
+      setHealthProbeError(null);
       setServerDiagnostics(
         h.diagnostics || {
           adminSdkReady: Boolean(h.adminSdkReady),
@@ -291,8 +295,8 @@ export const MasterAdminSaaSPanel: React.FC = () => {
           isNetlifyRuntime: false,
         }
       );
-    } catch {
-      // Ignore health probe errors
+    } catch (healthErr: any) {
+      setHealthProbeError(healthErr?.code || (healthErr?.status ? `HTTP_${healthErr.status}` : 'NETWORK_ERROR'));
     }
   };
 
@@ -314,8 +318,11 @@ export const MasterAdminSaaSPanel: React.FC = () => {
       }
       setFirestoreFallbackActive(false);
       setServerDiagnostics(null);
+      setFallbackTriggerCode(null);
+      setHealthProbeError(null);
     } catch (err: any) {
       if (isSaaSBackendUnavailableError(err)) {
+        setFallbackTriggerCode(err?.code || (err?.status ? `HTTP_${err.status}` : 'UNAVAILABLE'));
         refreshServerDiagnostics();
         try {
           await loadFromFirestoreFallback();
@@ -668,9 +675,13 @@ export const MasterAdminSaaSPanel: React.FC = () => {
     setVaultResetPass('');
     setVaultResetMsg(null);
     try {
+      let vaultErrMsg: string | null = null;
       const [res, vaultRes] = await Promise.all([
         SaaSApi.masterGetSchoolDetails(schoolId),
-        SaaSApi.masterGetSchoolAdminCredentials(schoolId).catch(() => ({ credentials: [] })),
+        SaaSApi.masterGetSchoolAdminCredentials(schoolId).catch((vErr: any) => {
+          vaultErrMsg = vErr?.message || 'Could not load Super Admin vault credentials.';
+          return { credentials: [] as SaaSSchoolAdminCredentialDTO[] };
+        }),
       ]);
       setDetailsData({
         school: res.school,
@@ -678,6 +689,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
         subscriptionHistory: res.subscriptionHistory,
         users: res.users,
         adminCredentials: vaultRes.credentials || [],
+        vaultError: vaultErrMsg,
       });
     } catch (err: any) {
       if (isSaaSBackendUnavailableError(err)) {
@@ -1370,7 +1382,15 @@ export const MasterAdminSaaSPanel: React.FC = () => {
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <div className="font-extrabold">
-                  {serverDiagnostics?.initStatus === 'invalid_json'
+                  {serverDiagnostics?.adminSdkReady
+                    ? language === 'bn'
+                      ? `সার্ভার সংযুক্ত আছে, তবে প্রথম লোডে সময় লেগেছে (${fallbackTriggerCode || 'TIMEOUT'})`
+                      : `Backend Admin SDK is ready, but initial data load timed out (${fallbackTriggerCode || 'TIMEOUT'})`
+                    : healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE'
+                    ? language === 'bn'
+                      ? 'Netlify Functions (/api/saas/*) পাওয়া যাচ্ছে না — সাইটটি শুধু স্ট্যাটিক ফোল্ডার হিসেবে ডিপ্লয় হয়েছে'
+                      : 'Netlify Functions (/api/saas/*) returned HTML instead of API JSON'
+                    : serverDiagnostics?.initStatus === 'invalid_json'
                     ? language === 'bn'
                       ? 'সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON ফরম্যাটে ত্রুটি (invalid_json)'
                       : 'Server FIREBASE_SERVICE_ACCOUNT_JSON Parse Error (invalid_json)'
@@ -1383,44 +1403,63 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                     : 'Server Firebase Admin SDK Unavailable — Creating Schools & Provisioning Users Disabled'}
                 </div>
                 <p className="text-[11px] text-amber-900 leading-relaxed">
-                  {language === 'bn'
+                  {serverDiagnostics?.adminSdkReady
+                    ? language === 'bn'
+                      ? 'ডাটা সাময়িকভাবে Firestore থেকে লোড হয়েছে। সার্ভার কাজ করছে — নিচের "পুনরায় সংযোগ করুন" বাটনে চাপ দিন।'
+                      : 'Records loaded via Firestore fallback due to a slow cold start or temporary network timeout. Click Retry below to reconnect.'
+                    : healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE'
+                    ? language === 'bn'
+                      ? 'আপনি যদি শুধু build/dist ফোল্ডার Netlify-তে Drop করে থাকেন, তাহলে সার্ভার ফাংশন (netlify/functions/api.ts) ডিপ্লয় হয়নি। পুরো প্রোজেক্ট GitHub বা Netlify CLI থেকে ডিপ্লয় করুন।'
+                      : 'If you deployed only the static dist folder, serverless functions (netlify/functions/api.ts) were not deployed. Deploy the full repository via GitHub or Netlify CLI.'
+                    : language === 'bn'
                     ? 'স্কুল ও পেমেন্ট তথ্য সরাসরি Firestore থেকে লোড হয়েছে। কিন্তু নতুন স্কুল তৈরি, সুপার অ্যাডমিনের পাসওয়ার্ড রিসেট বা নতুন ইউজার তৈরি করতে সার্ভার এনভায়রনমেন্টে Firebase Admin Credential থাকা বাধ্যতামূলক।'
                     : 'Live school records are shown via Firestore fallback, but creating new schools, provisioning user logins, or resetting passwords requires Firebase Admin credentials on the backend server.'}
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setFirestoreFallbackActive(false)}
-              className="px-2 font-bold shrink-0 text-amber-700 hover:text-amber-950"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="p-2.5 rounded-xl bg-white/80 border border-amber-200 text-[11px] text-slate-800 space-y-1">
-            <div className="font-bold text-slate-900">
-              {language === 'bn'
-                ? 'Netlify-এ সমাধান করার সহজ ৩টি ধাপ:'
-                : '3-Step Fix on Netlify:'}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={loadAll}
+                className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px]"
+              >
+                {language === 'bn' ? 'পুনরায় সংযোগ করুন' : 'Retry'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setFirestoreFallbackActive(false)}
+                className="px-2 font-bold text-amber-700 hover:text-amber-950"
+              >
+                ✕
+              </button>
             </div>
-            <ol className="list-decimal list-inside space-y-0.5">
-              <li>
-                {language === 'bn'
-                  ? 'Netlify Dashboard → Site configuration → Environment variables-এ যান এবং FIREBASE_SERVICE_ACCOUNT_JSON (অথবা FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) যোগ করুন।'
-                  : 'Open Netlify → Site configuration → Environment variables and add FIREBASE_SERVICE_ACCOUNT_JSON (or split FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY).'}
-              </li>
-              <li>
-                {language === 'bn'
-                  ? 'Scopes অপশনে অবশ্যই "All scopes" (অথবা "Functions") টিক দিন।'
-                  : 'Set Scopes to "All scopes" (Functions runtime must have access).'}
-              </li>
-              <li>
-                {language === 'bn'
-                  ? 'Deploys ট্যাব থেকে "Trigger deploy → Clear cache and deploy site" দিন।'
-                  : 'Open Deploys → Trigger deploy → "Clear cache and deploy site".'}
-              </li>
-            </ol>
           </div>
+          {!serverDiagnostics?.adminSdkReady &&
+            healthProbeError !== 'NON_JSON_RESPONSE' &&
+            fallbackTriggerCode !== 'NON_JSON_RESPONSE' && (
+              <div className="p-2.5 rounded-xl bg-white/80 border border-amber-200 text-[11px] text-slate-800 space-y-1">
+                <div className="font-bold text-slate-900">
+                  {language === 'bn' ? 'Netlify-এ সমাধান করার সহজ ৩টি ধাপ:' : '3-Step Fix on Netlify:'}
+                </div>
+                <ol className="list-decimal list-inside space-y-0.5">
+                  <li>
+                    {language === 'bn'
+                      ? 'Netlify Dashboard → Site configuration → Environment variables-এ যান এবং FIREBASE_SERVICE_ACCOUNT_JSON (অথবা FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) যোগ করুন।'
+                      : 'Open Netlify → Site configuration → Environment variables and add FIREBASE_SERVICE_ACCOUNT_JSON (or split FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY).'}
+                  </li>
+                  <li>
+                    {language === 'bn'
+                      ? 'Scopes অপশনে অবশ্যই "All scopes" (অথবা "Functions") টিক দিন।'
+                      : 'Set Scopes to "All scopes" (Functions runtime must have access).'}
+                  </li>
+                  <li>
+                    {language === 'bn'
+                      ? 'Deploys ট্যাব থেকে "Trigger deploy → Clear cache and deploy site" দিন।'
+                      : 'Open Deploys → Trigger deploy → "Clear cache and deploy site".'}
+                  </li>
+                </ol>
+              </div>
+            )}
         </div>
       )}
 
@@ -2990,6 +3029,19 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                   }`}
                 >
                   {vaultResetMsg.text}
+                </div>
+              )}
+
+              {detailsData.vaultError && (
+                <div className="p-2.5 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-[11px] font-semibold flex items-center justify-between gap-2">
+                  <span>{detailsData.vaultError}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleViewDetails(detailsData.school.schoolId)}
+                    className="px-2 py-1 rounded bg-rose-600 text-white font-bold text-[10px] shrink-0"
+                  >
+                    {language === 'bn' ? 'আবার চেষ্টা' : 'Retry'}
+                  </button>
                 </div>
               )}
 

@@ -443,7 +443,7 @@ async function saasFetch<T>(path: string, options: RequestInit = {}, requireAuth
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+  const timeoutId = setTimeout(() => controller.abort(), 25_000);
   let res: Response;
   try {
     res = await fetch(`${SAAS_API_BASE}${path}`, {

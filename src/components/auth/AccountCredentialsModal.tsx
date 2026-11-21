@@ -123,6 +123,9 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
   const [usersFeedback, setUsersFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [serverAdminUnavailable, setServerAdminUnavailable] = useState<boolean>(false);
   const [serverDiagnostics, setServerDiagnostics] = useState<SaaSHealthDiagnostics | null>(null);
+  const [fallbackTriggerCode, setFallbackTriggerCode] = useState<string | null>(null);
+  const [healthProbeError, setHealthProbeError] = useState<string | null>(null);
+  const [vaultFetchError, setVaultFetchError] = useState<string | null>(null);
   const [adminVaultCreds, setAdminVaultCreds] = useState<Record<string, SaaSSchoolAdminCredentialDTO>>({});
   const [revealedAdminUids, setRevealedAdminUids] = useState<Record<string, boolean>>({});
   const [copiedUid, setCopiedUid] = useState<string | null>(null);
@@ -182,6 +185,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
   const refreshServerDiagnostics = async () => {
     try {
       const h = await SaaSApi.getHealth();
+      setHealthProbeError(null);
       setServerDiagnostics(
         h.diagnostics || {
           adminSdkReady: Boolean(h.adminSdkReady),
@@ -195,8 +199,8 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
           isNetlifyRuntime: false,
         }
       );
-    } catch {
-      // Ignore health probe errors
+    } catch (healthErr: any) {
+      setHealthProbeError(healthErr?.code || (healthErr?.status ? `HTTP_${healthErr.status}` : 'NETWORK_ERROR'));
     }
   };
 
@@ -211,6 +215,8 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
           setSchools(res.schools);
           setServerAdminUnavailable(false);
           setServerDiagnostics(null);
+          setFallbackTriggerCode(null);
+          setHealthProbeError(null);
           const defaultSid =
             initialSchoolId ||
             selectedSchoolId ||
@@ -221,6 +227,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
         } catch (err: any) {
           if (isSaaSBackendUnavailableError(err)) {
             setServerAdminUnavailable(true);
+            setFallbackTriggerCode(err?.code || (err?.status ? `HTTP_${err.status}` : 'UNAVAILABLE'));
             refreshServerDiagnostics();
             try {
               const snap = await getDocs(collection(db, 'schools'));
@@ -271,14 +278,20 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
     }
     setLoadingUsers(true);
     setUsersFeedback(null);
+    setVaultFetchError(null);
     try {
+      let localVaultErr: string | null = null;
       const [res, vaultRes] = await Promise.all([
         SaaSApi.listUsers(isMaster ? schoolIdToLoad : undefined),
         isMaster
-          ? SaaSApi.masterGetSchoolAdminCredentials(schoolIdToLoad).catch(() => null)
+          ? SaaSApi.masterGetSchoolAdminCredentials(schoolIdToLoad).catch((vErr: any) => {
+              localVaultErr = vErr?.message || 'Failed to load Master Admin vault credentials.';
+              return null;
+            })
           : Promise.resolve(null),
       ]);
       setUsersList(res.users || []);
+      setVaultFetchError(localVaultErr);
       if (isMaster && vaultRes?.credentials) {
         const nextMap: Record<string, SaaSSchoolAdminCredentialDTO> = {};
         for (const cred of vaultRes.credentials) {
@@ -290,9 +303,12 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
       }
       setServerAdminUnavailable(false);
       setServerDiagnostics(null);
+      setFallbackTriggerCode(null);
+      setHealthProbeError(null);
     } catch (err: any) {
       if (isSaaSBackendUnavailableError(err)) {
         setServerAdminUnavailable(true);
+        setFallbackTriggerCode(err?.code || (err?.status ? `HTTP_${err.status}` : 'UNAVAILABLE'));
         setAdminVaultCreds({});
         refreshServerDiagnostics();
         try {
@@ -1360,25 +1376,67 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
 
               {serverAdminUnavailable && (
                 <div className="p-3.5 rounded-xl border bg-amber-50 border-amber-300 text-amber-950 text-[11px] space-y-1.5 leading-relaxed">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <div className="font-extrabold">
-                        {serverDiagnostics?.initStatus === 'invalid_json'
-                          ? language === 'bn'
-                            ? 'সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON ফরম্যাটে ত্রুটি (invalid_json)'
-                            : 'Server FIREBASE_SERVICE_ACCOUNT_JSON Parse Error'
-                          : language === 'bn'
-                          ? 'সার্ভারে Firebase Admin SDK (FIREBASE_SERVICE_ACCOUNT_JSON) সংযুক্ত না থাকায় নতুন ইউজার তৈরি, পাসওয়ার্ড পরিবর্তন বা লগইন চালু/বন্ধ করা যাচ্ছে না।'
-                          : 'Server Firebase Admin SDK is not configured yet — creating users, changing another user’s password, or toggling logins is currently unavailable.'}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <div className="font-extrabold">
+                          {serverDiagnostics?.adminSdkReady
+                            ? language === 'bn'
+                              ? `সার্ভার সংযুক্ত আছে, তবে রিকোয়েস্টে সময় লেগেছে (${fallbackTriggerCode || 'TIMEOUT'})`
+                              : `Server Admin SDK is ready, but loading timed out (${fallbackTriggerCode || 'TIMEOUT'})`
+                            : healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE'
+                            ? language === 'bn'
+                              ? 'Netlify Functions (/api/saas/*) পাওয়া যাচ্ছে না — শুধু স্ট্যাটিক ফোল্ডার ডিপ্লয় হয়েছে'
+                              : 'Netlify Functions (/api/saas/*) returned HTML instead of API JSON'
+                            : serverDiagnostics?.initStatus === 'invalid_json'
+                            ? language === 'bn'
+                              ? 'সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON ফরম্যাটে ত্রুটি (invalid_json)'
+                              : 'Server FIREBASE_SERVICE_ACCOUNT_JSON Parse Error'
+                            : language === 'bn'
+                            ? 'সার্ভারে Firebase Admin SDK (FIREBASE_SERVICE_ACCOUNT_JSON) সংযুক্ত না থাকায় নতুন ইউজার তৈরি, পাসওয়ার্ড পরিবর্তন বা লগইন চালু/বন্ধ করা যাচ্ছে না।'
+                            : 'Server Firebase Admin SDK is not configured yet — creating users, changing another user’s password, or toggling logins is currently unavailable.'}
+                        </div>
+                        <p className="text-amber-900">
+                          {serverDiagnostics?.adminSdkReady
+                            ? language === 'bn'
+                              ? 'সার্ভার চালু আছে — "আবার চেষ্টা" বাটনে চাপ দিয়ে ইউজার ও পাসওয়ার্ড লোড করুন।'
+                              : 'Server is online — click Retry to load users and Super Admin vault credentials.'
+                            : healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE'
+                            ? language === 'bn'
+                              ? 'শুধু dist ফোল্ডার নয়, GitHub বা Netlify CLI দিয়ে পুরো প্রোজেক্ট (netlify/functions) ডিপ্লয় করুন।'
+                              : 'Deploy the full project (including netlify/functions) via GitHub or Netlify CLI rather than static dist upload.'
+                            : language === 'bn'
+                            ? 'সমাধান (Netlify): Site configuration → Environment variables-এ FIREBASE_SERVICE_ACCOUNT_JSON (অথবা FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) যোগ করে Scopes = "All scopes" দিন এবং Deploys → "Clear cache and deploy site" করুন। শুধু নিজের পাসওয়ার্ড প্রথম ট্যাব ("আমার একাউন্ট ও পাসওয়ার্ড") থেকে বদলানো যাবে।'
+                            : 'Fix on Netlify: Add FIREBASE_SERVICE_ACCOUNT_JSON (or split FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) in Environment variables with Scope = "All scopes", then run "Clear cache and deploy site". You can still change your own password from the first tab.'}
+                        </p>
                       </div>
-                      <p className="text-amber-900">
-                        {language === 'bn'
-                          ? 'সমাধান (Netlify): Site configuration → Environment variables-এ FIREBASE_SERVICE_ACCOUNT_JSON (অথবা FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) যোগ করে Scopes = "All scopes" দিন এবং Deploys → "Clear cache and deploy site" করুন। শুধু নিজের পাসওয়ার্ড প্রথম ট্যাব ("আমার একাউন্ট ও পাসওয়ার্ড") থেকে বদলানো যাবে।'
-                          : 'Fix on Netlify: Add FIREBASE_SERVICE_ACCOUNT_JSON (or split FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) in Environment variables with Scope = "All scopes", then run "Clear cache and deploy site". You can still change your own password from the first tab.'}
-                      </p>
                     </div>
+                    {selectedSchoolId && (
+                      <button
+                        type="button"
+                        onClick={() => fetchSchoolUsers(selectedSchoolId)}
+                        className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] shrink-0"
+                      >
+                        {language === 'bn' ? 'আবার চেষ্টা' : 'Retry'}
+                      </button>
+                    )}
                   </div>
+                </div>
+              )}
+
+              {vaultFetchError && !serverAdminUnavailable && (
+                <div className="p-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-[11px] font-semibold flex items-center justify-between gap-2">
+                  <span>{vaultFetchError}</span>
+                  {selectedSchoolId && (
+                    <button
+                      type="button"
+                      onClick={() => fetchSchoolUsers(selectedSchoolId)}
+                      className="px-2 py-1 rounded bg-rose-600 text-white font-bold text-[10px] shrink-0"
+                    >
+                      {language === 'bn' ? 'আবার চেষ্টা' : 'Retry'}
+                    </button>
+                  )}
                 </div>
               )}
 

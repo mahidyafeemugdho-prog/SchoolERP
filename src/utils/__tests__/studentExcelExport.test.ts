@@ -64,9 +64,10 @@ describe('studentExcelExport', () => {
 
   it('builds accurate class summary counts and total row', () => {
     const list = [
-      makeStudent({ id: '1', className: 'Class 9', gender: 'Male', shift: 'Morning', status: 'active' }),
-      makeStudent({ id: '2', className: 'Class 9', gender: 'Female', shift: 'Day', status: 'active' }),
-      makeStudent({ id: '3', className: 'Class 10', gender: 'Male', shift: 'Day', status: 'transferred' }),
+      makeStudent({ id: '1', className: 'Class 9', gender: 'Male', religion: 'Islam', shift: 'Morning', status: 'active' }),
+      makeStudent({ id: '2', className: 'Class 9', gender: 'Female', religion: 'Hinduism', shift: 'Day', status: 'active' }),
+      makeStudent({ id: '3', className: 'Class 10', gender: 'Male', religion: 'Christianity', shift: 'Day', status: 'transferred' }),
+      makeStudent({ id: '4', className: 'Class 10', gender: 'Female', religion: 'Buddhism', shift: 'Day', status: 'active' }),
     ];
 
     const summary = buildClassSummaryRows(list);
@@ -77,13 +78,23 @@ describe('studentExcelExport', () => {
       'Active': 2,
       'Male': 1,
       'Female': 1,
+      'Islam (Muslim)': 1,
+      'Hinduism (Hindu)': 1,
+      'Christianity (Christian)': 0,
+      'Buddhism (Buddhist)': 0,
       'Morning Shift': 1,
       'Day Shift': 1,
     });
     expect(summary[2]).toMatchObject({
       'Class': 'TOTAL',
-      'Total Students': 3,
-      'Active': 2,
+      'Total Students': 4,
+      'Active': 3,
+      'Male': 2,
+      'Female': 2,
+      'Islam (Muslim)': 1,
+      'Hinduism (Hindu)': 1,
+      'Christianity (Christian)': 1,
+      'Buddhism (Buddhist)': 1,
     });
   });
 
