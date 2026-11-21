@@ -11,6 +11,7 @@ import {
   CustomClaimsPayload,
   DEFAULT_SUBSCRIPTION_PLANS,
   DatabaseProviderInterface,
+  MasterAdminVaultRecord,
   PlatformPaymentChannels,
   SaaSPaymentRequest,
   SaaSRole,
@@ -807,6 +808,7 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
       legacySyncBySchoolSnap,
       legacySyncByTenantSnap,
       supportTicketsSnap,
+      vaultSnap,
     ] = await Promise.all([
       db.collection('saas_users').where('schoolId', '==', schoolId).get(),
       db.collection('payment_requests').where('schoolId', '==', schoolId).get(),
@@ -814,6 +816,7 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
       db.collection('school_sync').where('schoolId', '==', schoolId).get().catch(() => null),
       db.collection('school_sync').where('tenantId', '==', schoolId).get().catch(() => null),
       db.collection('support_tickets').where('schoolId', '==', schoolId).get().catch(() => null),
+      db.collection('master_admin_vault').where('schoolId', '==', schoolId).get().catch(() => null),
     ]);
 
     const refsToDelete = new Map<string, FirebaseFirestore.DocumentReference>();
@@ -832,6 +835,7 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
     historySnap.docs.forEach((d) => addRef(d.ref));
     legacySyncBySchoolSnap?.docs.forEach((d) => addRef(d.ref));
     legacySyncByTenantSnap?.docs.forEach((d) => addRef(d.ref));
+    vaultSnap?.docs.forEach((d) => addRef(d.ref));
     addRef(db.collection('school_sync').doc(schoolId));
     if (supportTicketsSnap && !supportTicketsSnap.empty) {
       for (const tDoc of supportTicketsSnap.docs) {
@@ -984,7 +988,43 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
     if (schoolId) {
       batch.delete(db.collection('schools').doc(schoolId).collection('users').doc(uid));
     }
+    batch.delete(db.collection('master_admin_vault').doc(uid));
     await batch.commit();
+  }
+
+  async saveMasterVaultRecord(record: MasterAdminVaultRecord): Promise<void> {
+    const db = this.getDb();
+    await db.collection('master_admin_vault').doc(record.uid).set(stripUndefined(record));
+  }
+
+  async getMasterVaultRecordByUid(uid: string): Promise<MasterAdminVaultRecord | null> {
+    const db = this.getDb();
+    const snap = await db.collection('master_admin_vault').doc(uid).get();
+    return snap.exists ? (snap.data() as MasterAdminVaultRecord) : null;
+  }
+
+  async getMasterVaultRecordsBySchool(schoolId: string): Promise<MasterAdminVaultRecord[]> {
+    const db = this.getDb();
+    const snap = await db.collection('master_admin_vault').where('schoolId', '==', schoolId).get();
+    return snap.docs.map((d) => d.data() as MasterAdminVaultRecord);
+  }
+
+  async deleteMasterVaultRecord(uid: string): Promise<void> {
+    const db = this.getDb();
+    await db.collection('master_admin_vault').doc(uid).delete();
+  }
+
+  async deleteMasterVaultRecordsBySchool(schoolId: string): Promise<void> {
+    const db = this.getDb();
+    const snap = await db.collection('master_admin_vault').where('schoolId', '==', schoolId).get();
+    if (snap.empty) return;
+    for (let i = 0; i < snap.docs.length; i += 400) {
+      const batch = db.batch();
+      for (const d of snap.docs.slice(i, i + 400)) {
+        batch.delete(d.ref);
+      }
+      await batch.commit();
+    }
   }
 
   async getTenantSlices(schoolId: string): Promise<Record<string, any>> {

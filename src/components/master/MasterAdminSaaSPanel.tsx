@@ -5,11 +5,13 @@ import {
   DEFAULT_FALLBACK_CHANNELS,
   DEFAULT_FALLBACK_PLANS,
   SaaSApi,
+  SaaSHealthDiagnostics,
   SaaSMasterAnalytics,
   SaaSPaymentRequestDTO,
   SaaSPlanConfig,
   SaaSPlanId,
   SaaSPlatformPaymentChannels,
+  SaaSSchoolAdminCredentialDTO,
   SaaSSchoolRecord,
   SaaSSchoolStatus,
   SaaSSubscriptionHistoryDTO,
@@ -29,6 +31,7 @@ import {
   CreditCard,
   RefreshCw,
   Eye,
+  EyeOff,
   Edit2,
   CalendarPlus,
   Ban,
@@ -50,6 +53,8 @@ import {
   Percent,
   Tag,
   Check,
+  Copy,
+  Lock,
   Sparkles,
   Power,
 } from 'lucide-react';
@@ -77,6 +82,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('schools');
   const [loading, setLoading] = useState(true);
   const [firestoreFallbackActive, setFirestoreFallbackActive] = useState(false);
+  const [serverDiagnostics, setServerDiagnostics] = useState<SaaSHealthDiagnostics | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Platform data
@@ -129,13 +135,28 @@ export const MasterAdminSaaSPanel: React.FC = () => {
   const [extendDays, setExtendDays] = useState<string>('30');
   const [extendPlanId, setExtendPlanId] = useState<SaaSPlanId>('monthly');
 
-  // School details drawer/modal
+  // School details drawer/modal & Master Admin credential vault
   const [detailsData, setDetailsData] = useState<{
     school: SaaSSchoolRecord;
     paymentHistory: SaaSPaymentRequestDTO[];
     subscriptionHistory: SaaSSubscriptionHistoryDTO[];
     users: SaaSUserDTO[];
+    adminCredentials: SaaSSchoolAdminCredentialDTO[];
   } | null>(null);
+  const [revealedVaultUids, setRevealedVaultUids] = useState<Record<string, boolean>>({});
+  const [copiedVaultKey, setCopiedVaultKey] = useState<string | null>(null);
+  const [vaultResetUid, setVaultResetUid] = useState<string | null>(null);
+  const [vaultResetPass, setVaultResetPass] = useState<string>('');
+  const [vaultResetBusy, setVaultResetBusy] = useState<boolean>(false);
+  const [vaultResetMsg, setVaultResetMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [lastCreatedCreds, setLastCreatedCreds] = useState<{
+    schoolId: string;
+    schoolName: string;
+    adminName: string;
+    adminEmail: string;
+    adminPassword: string;
+  } | null>(null);
+  const [showLastCreatedPass, setShowLastCreatedPass] = useState(true);
 
   // Payment screenshot & rejection modal
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -254,6 +275,27 @@ export const MasterAdminSaaSPanel: React.FC = () => {
     setFirestoreFallbackActive(true);
   };
 
+  const refreshServerDiagnostics = async () => {
+    try {
+      const h = await SaaSApi.getHealth();
+      setServerDiagnostics(
+        h.diagnostics || {
+          adminSdkReady: Boolean(h.adminSdkReady),
+          initStatus: h.adminSdkReady ? 'ok' : 'missing_credentials',
+          hasServiceAccountJson: false,
+          hasSplitCredentials: false,
+          hasClientEmail: false,
+          hasPrivateKey: false,
+          hasGoogleAppCreds: false,
+          hasProjectId: false,
+          isNetlifyRuntime: false,
+        }
+      );
+    } catch {
+      // Ignore health probe errors
+    }
+  };
+
   const loadAll = async () => {
     setLoading(true);
     try {
@@ -271,8 +313,10 @@ export const MasterAdminSaaSPanel: React.FC = () => {
         setPaymentChannels(channelsRes.channels);
       }
       setFirestoreFallbackActive(false);
+      setServerDiagnostics(null);
     } catch (err: any) {
       if (isSaaSBackendUnavailableError(err)) {
+        refreshServerDiagnostics();
         try {
           await loadFromFirestoreFallback();
           return;
@@ -320,9 +364,20 @@ export const MasterAdminSaaSPanel: React.FC = () => {
 
   const formatMasterWriteError = (err: any, fallbackMsg: string): string => {
     if (isSaaSBackendUnavailableError(err)) {
+      refreshServerDiagnostics();
+      if (serverDiagnostics?.initStatus === 'invalid_json') {
+        return language === 'bn'
+          ? 'সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON পাওয়া গেছে, কিন্তু এর JSON ফরম্যাটে ত্রুটি রয়েছে (invalid_json)। Netlify Environment Variables-এ সঠিক JSON অথবা আলাদা করে FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL এবং FIREBASE_PRIVATE_KEY সেট করে Clear cache and deploy site করুন।'
+          : 'FIREBASE_SERVICE_ACCOUNT_JSON was detected on the server but could not be parsed (invalid_json). Set valid JSON or split env vars and trigger a fresh Netlify deploy.';
+      }
+      if (serverDiagnostics?.initStatus === 'missing_fields') {
+        return language === 'bn'
+          ? 'সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON-এ client_email বা private_key পাওয়া যাচ্ছে না। সম্পূর্ণ Service Account JSON পেস্ট করুন।'
+          : 'FIREBASE_SERVICE_ACCOUNT_JSON is missing client_email or private_key.';
+      }
       return language === 'bn'
-        ? 'এই সার্ভার-ভিত্তিক কাজের (যেমন: নতুন স্কুল ও Auth অ্যাকাউন্ট তৈরি, পেমেন্ট অনুমোদন, বা প্ল্যাটফর্ম চ্যানেল সেভ) জন্য মূল Node.js সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON সেট করা থাকতে হবে।'
-        : 'This server-authoritative action requires the full-stack Node.js backend with FIREBASE_SERVICE_ACCOUNT_JSON configured.';
+        ? 'সার্ভারে Firebase Admin কী (FIREBASE_SERVICE_ACCOUNT_JSON) কনফিগার করা নেই বলে নতুন স্কুল বা Auth ইউজার তৈরি করা যাচ্ছে না। Netlify Site configuration → Environment variables-এ এই কী যোগ করে (Scope: All scopes / Functions) Clear cache and deploy site দিন।'
+        : 'Cannot create schools or Auth accounts because Firebase Admin SDK credentials are not configured on the server/Netlify Functions. Add FIREBASE_SERVICE_ACCOUNT_JSON (Scope: All scopes) and trigger "Clear cache and deploy site".';
     }
     return err?.message || fallbackMsg;
   };
@@ -446,6 +501,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
     e.preventDefault();
     setFeedback(null);
     setCreatingSchool(true);
+    const createdPassword = newSchool.adminPassword;
     try {
       const res = await SaaSApi.masterCreateSchool({
         ...newSchool,
@@ -455,6 +511,14 @@ export const MasterAdminSaaSPanel: React.FC = () => {
           : undefined,
       });
       setShowCreateModal(false);
+      setLastCreatedCreds({
+        schoolId: res.school.schoolId,
+        schoolName: res.school.schoolName,
+        adminName: res.school.adminName,
+        adminEmail: res.school.adminEmail,
+        adminPassword: createdPassword,
+      });
+      setShowLastCreatedPass(true);
       setNewSchool({
         schoolName: '',
         schoolCode: '',
@@ -600,16 +664,24 @@ export const MasterAdminSaaSPanel: React.FC = () => {
 
   const handleViewDetails = async (schoolId: string) => {
     setBusyActionId(schoolId);
+    setVaultResetUid(null);
+    setVaultResetPass('');
+    setVaultResetMsg(null);
     try {
-      const res = await SaaSApi.masterGetSchoolDetails(schoolId);
+      const [res, vaultRes] = await Promise.all([
+        SaaSApi.masterGetSchoolDetails(schoolId),
+        SaaSApi.masterGetSchoolAdminCredentials(schoolId).catch(() => ({ credentials: [] })),
+      ]);
       setDetailsData({
         school: res.school,
         paymentHistory: res.paymentHistory,
         subscriptionHistory: res.subscriptionHistory,
         users: res.users,
+        adminCredentials: vaultRes.credentials || [],
       });
     } catch (err: any) {
       if (isSaaSBackendUnavailableError(err)) {
+        refreshServerDiagnostics();
         try {
           const [schoolSnap, paymentsSnap, historySnap, usersSnap] = await Promise.all([
             getDoc(doc(db, 'schools', schoolId)),
@@ -619,6 +691,27 @@ export const MasterAdminSaaSPanel: React.FC = () => {
           ]);
           if (schoolSnap.exists()) {
             const schoolData = schoolSnap.data() as SaaSSchoolRecord;
+            const loadedUsers = usersSnap.docs.map((d) => d.data() as SaaSUserDTO);
+            const fallbackSuperAdmins: SaaSSchoolAdminCredentialDTO[] = loadedUsers
+              .filter((u) => u.schoolRole === 'super_admin')
+              .map((u) => ({
+                uid: u.uid,
+                schoolId: schoolData.schoolId,
+                schoolName: schoolData.schoolName,
+                schoolCode: schoolData.schoolCode,
+                email: u.email,
+                displayName: u.displayName,
+                phone: u.phone || '',
+                schoolRole: 'super_admin',
+                status: u.status,
+                isPrimaryAdmin:
+                  u.uid === schoolData.adminUid ||
+                  u.email.toLowerCase() === (schoolData.adminEmail || '').toLowerCase(),
+                managedPassword: null,
+                hasStoredPassword: false,
+                passwordUpdatedAt: null,
+                updatedBy: null,
+              }));
             setDetailsData({
               school: {
                 ...schoolData,
@@ -630,7 +723,8 @@ export const MasterAdminSaaSPanel: React.FC = () => {
               subscriptionHistory: historySnap.docs
                 .map((d) => d.data() as SaaSSubscriptionHistoryDTO)
                 .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')),
-              users: usersSnap.docs.map((d) => d.data() as SaaSUserDTO),
+              users: loadedUsers,
+              adminCredentials: fallbackSuperAdmins,
             });
             return;
           }
@@ -642,6 +736,50 @@ export const MasterAdminSaaSPanel: React.FC = () => {
     } finally {
       setBusyActionId(null);
     }
+  };
+
+  const handleSaveVaultResetPassword = async (cred: SaaSSchoolAdminCredentialDTO) => {
+    const cleanPass = vaultResetPass.trim();
+    if (cleanPass.length < 6) {
+      setVaultResetMsg({
+        type: 'error',
+        text: language === 'bn' ? 'পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।' : 'Password must be at least 6 characters.',
+      });
+      return;
+    }
+    setVaultResetBusy(true);
+    setVaultResetMsg(null);
+    try {
+      await SaaSApi.updateUserCredentials(cred.uid, { password: cleanPass });
+      const vaultRes = await SaaSApi.masterGetSchoolAdminCredentials(cred.schoolId).catch(() => null);
+      if (vaultRes && detailsData?.school.schoolId === cred.schoolId) {
+        setDetailsData((prev) => (prev ? { ...prev, adminCredentials: vaultRes.credentials } : prev));
+      }
+      setRevealedVaultUids((prev) => ({ ...prev, [cred.uid]: true }));
+      setVaultResetUid(null);
+      setVaultResetPass('');
+      setVaultResetMsg({
+        type: 'success',
+        text:
+          language === 'bn'
+            ? `${cred.email}-এর নতুন পাসওয়ার্ড সেভ ও এনক্রিপ্টেড ভল্টে সংরক্ষণ করা হয়েছে।`
+            : `Updated and encrypted password for ${cred.email}.`,
+      });
+    } catch (err: any) {
+      setVaultResetMsg({
+        type: 'error',
+        text: formatMasterWriteError(err, 'Failed to update Super Admin password.'),
+      });
+    } finally {
+      setVaultResetBusy(false);
+    }
+  };
+
+  const copyTextToClipboard = (key: string, text: string) => {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopiedVaultKey(key);
+      setTimeout(() => setCopiedVaultKey(null), 2000);
+    });
   };
 
   const handleApprovePayment = async (req: SaaSPaymentRequestDTO) => {
@@ -1226,19 +1364,124 @@ export const MasterAdminSaaSPanel: React.FC = () => {
       )}
 
       {firestoreFallbackActive && (
-        <div className="p-3.5 rounded-xl border bg-blue-50 border-blue-200 text-blue-900 text-xs flex items-start justify-between gap-3">
-          <span>
-            {language === 'bn'
-              ? 'সরাসরি Firestore ডাটাবেজ থেকে লাইভ স্কুল ও পেমেন্ট তথ্য লোড করা হয়েছে। নতুন স্কুল তৈরি, পেমেন্ট অনুমোদন বা অ্যাডমিন অ্যাকাউন্ট প্রোভিশনিংয়ের জন্য মূল ব্যাকএন্ড সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON কনফিগার থাকতে হবে।'
-              : 'Live school and payment records are loaded directly from Firestore. Server Admin actions (creating schools, approving payments) require the full-stack Node backend with FIREBASE_SERVICE_ACCOUNT_JSON configured.'}
-          </span>
-          <button
-            type="button"
-            onClick={() => setFirestoreFallbackActive(false)}
-            className="px-2 font-bold shrink-0"
-          >
-            ✕
-          </button>
+        <div className="p-4 rounded-2xl border bg-amber-50 border-amber-300 text-amber-950 text-xs space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div className="font-extrabold">
+                  {serverDiagnostics?.initStatus === 'invalid_json'
+                    ? language === 'bn'
+                      ? 'সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON ফরম্যাটে ত্রুটি (invalid_json)'
+                      : 'Server FIREBASE_SERVICE_ACCOUNT_JSON Parse Error (invalid_json)'
+                    : serverDiagnostics?.initStatus === 'missing_fields'
+                    ? language === 'bn'
+                      ? 'সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON অসম্পূর্ণ (client_email / private_key নেই)'
+                      : 'Server FIREBASE_SERVICE_ACCOUNT_JSON Missing Required Fields'
+                    : language === 'bn'
+                    ? 'সার্ভারে Firebase Admin SDK সংযুক্ত নয় — তাই নতুন স্কুল তৈরি ও ইউজার লগইন/পাসওয়ার্ড পরিবর্তন বন্ধ রয়েছে'
+                    : 'Server Firebase Admin SDK Unavailable — Creating Schools & Provisioning Users Disabled'}
+                </div>
+                <p className="text-[11px] text-amber-900 leading-relaxed">
+                  {language === 'bn'
+                    ? 'স্কুল ও পেমেন্ট তথ্য সরাসরি Firestore থেকে লোড হয়েছে। কিন্তু নতুন স্কুল তৈরি, সুপার অ্যাডমিনের পাসওয়ার্ড রিসেট বা নতুন ইউজার তৈরি করতে সার্ভার এনভায়রনমেন্টে Firebase Admin Credential থাকা বাধ্যতামূলক।'
+                    : 'Live school records are shown via Firestore fallback, but creating new schools, provisioning user logins, or resetting passwords requires Firebase Admin credentials on the backend server.'}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFirestoreFallbackActive(false)}
+              className="px-2 font-bold shrink-0 text-amber-700 hover:text-amber-950"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="p-2.5 rounded-xl bg-white/80 border border-amber-200 text-[11px] text-slate-800 space-y-1">
+            <div className="font-bold text-slate-900">
+              {language === 'bn'
+                ? 'Netlify-এ সমাধান করার সহজ ৩টি ধাপ:'
+                : '3-Step Fix on Netlify:'}
+            </div>
+            <ol className="list-decimal list-inside space-y-0.5">
+              <li>
+                {language === 'bn'
+                  ? 'Netlify Dashboard → Site configuration → Environment variables-এ যান এবং FIREBASE_SERVICE_ACCOUNT_JSON (অথবা FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) যোগ করুন।'
+                  : 'Open Netlify → Site configuration → Environment variables and add FIREBASE_SERVICE_ACCOUNT_JSON (or split FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY).'}
+              </li>
+              <li>
+                {language === 'bn'
+                  ? 'Scopes অপশনে অবশ্যই "All scopes" (অথবা "Functions") টিক দিন।'
+                  : 'Set Scopes to "All scopes" (Functions runtime must have access).'}
+              </li>
+              <li>
+                {language === 'bn'
+                  ? 'Deploys ট্যাব থেকে "Trigger deploy → Clear cache and deploy site" দিন।'
+                  : 'Open Deploys → Trigger deploy → "Clear cache and deploy site".'}
+              </li>
+            </ol>
+          </div>
+        </div>
+      )}
+
+      {lastCreatedCreds && (
+        <div className="p-4 rounded-2xl border border-emerald-300 bg-emerald-50 text-emerald-950 text-xs space-y-2.5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2 font-black text-emerald-900">
+              <KeyRound className="w-4 h-4 text-emerald-600" />
+              <span>
+                {language === 'bn'
+                  ? `নতুন স্কুল সুপার অ্যাডমিন লগইন তথ্য সংরক্ষিত হয়েছে — ${lastCreatedCreds.schoolName} (${lastCreatedCreds.schoolId})`
+                  : `New School Super Admin Credentials Saved — ${lastCreatedCreds.schoolName} (${lastCreatedCreds.schoolId})`}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setLastCreatedCreds(null)}
+              className="px-2 font-bold text-emerald-700 hover:text-emerald-950"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-white p-3 rounded-xl border border-emerald-200">
+            <div>
+              <div className="text-[10px] text-slate-500 font-semibold">Super Admin</div>
+              <div className="font-bold text-slate-900">{lastCreatedCreds.adminName}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-500 font-semibold">Login Email</div>
+              <div className="font-mono font-bold text-slate-900">{lastCreatedCreds.adminEmail}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-500 font-semibold">Initial Password</div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono font-black text-emerald-800">
+                  {showLastCreatedPass ? lastCreatedCreds.adminPassword : '••••••••'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowLastCreatedPass((p) => !p)}
+                  className="p-1 rounded hover:bg-slate-100 text-slate-600"
+                  title={showLastCreatedPass ? 'Hide' : 'Show'}
+                >
+                  {showLastCreatedPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    copyTextToClipboard(
+                      'new_school',
+                      `School ID: ${lastCreatedCreds.schoolId}\nSchool: ${lastCreatedCreds.schoolName}\nLogin Email: ${lastCreatedCreds.adminEmail}\nPassword: ${lastCreatedCreds.adminPassword}`
+                    )
+                  }
+                  className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold inline-flex items-center gap-1"
+                >
+                  {copiedVaultKey === 'new_school' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedVaultKey === 'new_school' ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2298,6 +2541,17 @@ export const MasterAdminSaaSPanel: React.FC = () => {
               </button>
             </div>
 
+            {firestoreFallbackActive && (
+              <div className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-[11px] flex items-start gap-2 leading-relaxed">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  {language === 'bn'
+                    ? 'সতর্কতা: সার্ভারে Firebase Admin কী (FIREBASE_SERVICE_ACCOUNT_JSON) এখনো সংযুক্ত নয়। নতুন স্কুল ও Auth লগইন তৈরি করতে Netlify Environment variables-এ (Scope: All scopes) কী যোগ করে "Clear cache and deploy site" দিন।'
+                    : 'Note: Server Firebase Admin credentials are missing. Configure FIREBASE_SERVICE_ACCOUNT_JSON in Netlify (Scope: All scopes) and redeploy to enable creating schools.'}
+                </span>
+              </div>
+            )}
+
             <form onSubmit={handleCreateSchool} className="mt-4 space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -2705,6 +2959,201 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                   {new Date(detailsData.school.subscription.expiryDate).toLocaleDateString()}
                 </div>
               </div>
+            </div>
+
+            {/* Master Admin Only: School Super Admin Login & Encrypted Password Vault */}
+            <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="font-black text-indigo-950 flex items-center gap-1.5 text-xs">
+                    <Lock className="w-4 h-4 text-indigo-600" />
+                    <span>
+                      {language === 'bn'
+                        ? 'স্কুল সুপার অ্যাডমিন লগইন ও পাসওয়ার্ড (Master Admin Vault)'
+                        : 'School Super Admin Login & Password (Master Admin Only)'}
+                    </span>
+                  </h4>
+                  <p className="text-[10px] text-indigo-800/80 mt-0.5">
+                    {language === 'bn'
+                      ? 'শুধুমাত্র মাস্টার অ্যাডমিন স্কুলের সুপার অ্যাডমিনের লগইন পাসওয়ার্ড দেখতে ও রিসেট করতে পারবেন (Transaction PIN সর্বদা গোপন থাকে)।'
+                      : 'Only Master Admin can view or copy Super Admin login passwords. Transaction PINs remain strictly private.'}
+                  </p>
+                </div>
+              </div>
+
+              {vaultResetMsg && (
+                <div
+                  className={`p-2.5 rounded-xl border text-[11px] font-semibold ${
+                    vaultResetMsg.type === 'success'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-rose-50 border-rose-200 text-rose-800'
+                  }`}
+                >
+                  {vaultResetMsg.text}
+                </div>
+              )}
+
+              {detailsData.adminCredentials.length === 0 ? (
+                <div className="p-3 rounded-xl bg-white border border-indigo-100 text-[11px] text-slate-600">
+                  {language === 'bn'
+                    ? `প্রাথমিক সুপার অ্যাডমিন ইমেইল: ${detailsData.school.adminEmail || 'N/A'}`
+                    : `Primary Super Admin email: ${detailsData.school.adminEmail || 'N/A'}`}
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {detailsData.adminCredentials.map((cred) => {
+                    const isRevealed = Boolean(revealedVaultUids[cred.uid]);
+                    const isEditingPass = vaultResetUid === cred.uid;
+                    const copyKey = `vault_${cred.uid}`;
+                    return (
+                      <div
+                        key={cred.uid}
+                        className="p-3 rounded-xl bg-white border border-indigo-200/80 space-y-2"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-bold text-slate-900 text-xs">{cred.displayName}</span>
+                              {cred.isPrimaryAdmin && (
+                                <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 font-bold text-[10px]">
+                                  Primary Super Admin
+                                </span>
+                              )}
+                              <span
+                                className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${
+                                  cred.status === 'active'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-rose-100 text-rose-800'
+                                }`}
+                              >
+                                {cred.status}
+                              </span>
+                            </div>
+                            <div className="text-[11px] font-mono text-slate-700 break-all">
+                              Email: <strong>{cred.email}</strong>
+                              {cred.phone ? ` • ${cred.phone}` : ''}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                            {cred.hasStoredPassword && cred.managedPassword ? (
+                              <>
+                                <div className="px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 font-mono font-bold text-slate-900 flex items-center gap-1.5">
+                                  <span className="text-[10px] text-slate-500 font-sans">Pass:</span>
+                                  <span>{isRevealed ? cred.managedPassword : '••••••••'}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setRevealedVaultUids((prev) => ({
+                                        ...prev,
+                                        [cred.uid]: !prev[cred.uid],
+                                      }))
+                                    }
+                                    className="p-0.5 text-slate-500 hover:text-slate-900"
+                                    title={isRevealed ? 'Hide password' : 'Show password'}
+                                  >
+                                    {isRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                  </button>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    copyTextToClipboard(
+                                      copyKey,
+                                      `School: ${cred.schoolName} (${cred.schoolId})\nSuper Admin: ${cred.displayName}\nEmail: ${cred.email}\nPassword: ${cred.managedPassword}`
+                                    )
+                                  }
+                                  className="px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-bold text-[11px] inline-flex items-center gap-1"
+                                >
+                                  {copiedVaultKey === copyKey ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                  ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                  )}
+                                  <span>{copiedVaultKey === copyKey ? 'Copied' : 'Copy'}</span>
+                                </button>
+                              </>
+                            ) : (
+                              <span className="px-2 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[10px] font-semibold text-amber-800">
+                                {language === 'bn'
+                                  ? 'পুরোনো একাউন্ট — পাসওয়ার্ড সেট করলে সংরক্ষিত হবে'
+                                  : 'Legacy account — set password to store in vault'}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isEditingPass) {
+                                  setVaultResetUid(null);
+                                  setVaultResetPass('');
+                                } else {
+                                  setVaultResetUid(cred.uid);
+                                  setVaultResetPass('');
+                                  setVaultResetMsg(null);
+                                }
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px]"
+                            >
+                              {isEditingPass
+                                ? language === 'bn'
+                                  ? 'বাতিল'
+                                  : 'Cancel'
+                                : cred.hasStoredPassword
+                                ? language === 'bn'
+                                  ? 'পাসওয়ার্ড বদলান'
+                                  : 'Reset Pass'
+                                : language === 'bn'
+                                ? 'পাসওয়ার্ড সেট করুন'
+                                : 'Set Pass'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {isEditingPass && (
+                          <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-2">
+                            <input
+                              type="text"
+                              minLength={6}
+                              value={vaultResetPass}
+                              onChange={(e) => setVaultResetPass(e.target.value)}
+                              placeholder={
+                                language === 'bn' ? 'নতুন পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর)' : 'New password (min 6 chars)'
+                              }
+                              className="flex-1 min-w-[180px] px-2.5 py-1.5 border border-slate-300 rounded-lg font-mono text-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#';
+                                let out = '';
+                                for (let i = 0; i < 8; i++) out += chars.charAt(Math.floor(Math.random() * chars.length));
+                                setVaultResetPass(out);
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 font-bold text-[11px] text-blue-700"
+                            >
+                              {language === 'bn' ? 'অটো তৈরি' : 'Generate'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={vaultResetBusy}
+                              onClick={() => handleSaveVaultResetPassword(cred)}
+                              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] disabled:opacity-50"
+                            >
+                              {vaultResetBusy
+                                ? language === 'bn'
+                                  ? 'সেভ হচ্ছে...'
+                                  : 'Saving...'
+                                : language === 'bn'
+                                ? 'সেভ করুন'
+                                : 'Save Password'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div>

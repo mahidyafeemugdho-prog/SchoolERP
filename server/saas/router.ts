@@ -330,6 +330,25 @@ export function createSaasRouter(deps: SaasRouterDeps) {
     }
   });
 
+  router.get(
+    '/master/schools/:schoolId/admin-credentials',
+    mw.requireAuth,
+    mw.requireMasterAdmin,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const schoolId = String(req.params.schoolId);
+        const credentials = await tenantService.getSchoolAdminCredentials(schoolId, req.principal!);
+        res.json({
+          success: true,
+          schoolId,
+          credentials,
+        });
+      } catch (err) {
+        handleRouteError(res, err);
+      }
+    }
+  );
+
   router.patch('/master/schools/:schoolId', mw.requireAuth, mw.requireMasterAdmin, async (req: AuthenticatedRequest, res) => {
     try {
       const schoolId = String(req.params.schoolId);

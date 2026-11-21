@@ -4,6 +4,7 @@ import {
   CustomClaimsPayload,
   DEFAULT_SUBSCRIPTION_PLANS,
   DatabaseProviderInterface,
+  MasterAdminVaultRecord,
   PlatformPaymentChannels,
   SaaSPaymentRequest,
   SaaSServiceError,
@@ -194,6 +195,7 @@ export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
   public paymentChannels: PlatformPaymentChannels = getDefaultPlatformPaymentChannels();
   public supportTickets = new Map<string, SupportTicketRecord>();
   public supportMessages = new Map<string, SupportMessageRecord[]>();
+  public masterVault = new Map<string, MasterAdminVaultRecord>();
   private schoolSeq = 1;
 
   async isMasterAdminUidOrEmail(_uid: string, email: string): Promise<boolean> {
@@ -287,6 +289,11 @@ export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
         this.supportMessages.delete(tid);
       }
     }
+    for (const [uid, v] of this.masterVault.entries()) {
+      if (v.schoolId === schoolId) {
+        this.masterVault.delete(uid);
+      }
+    }
   }
 
   async listPaymentRequests(schoolId?: string): Promise<SaaSPaymentRequest[]> {
@@ -351,6 +358,34 @@ export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
 
   async deleteSaaSUserRecord(uid: string): Promise<void> {
     this.saasUsers.delete(uid);
+    this.masterVault.delete(uid);
+  }
+
+  async saveMasterVaultRecord(record: MasterAdminVaultRecord): Promise<void> {
+    this.masterVault.set(record.uid, structuredClone(record));
+  }
+
+  async getMasterVaultRecordByUid(uid: string): Promise<MasterAdminVaultRecord | null> {
+    const found = this.masterVault.get(uid);
+    return found ? structuredClone(found) : null;
+  }
+
+  async getMasterVaultRecordsBySchool(schoolId: string): Promise<MasterAdminVaultRecord[]> {
+    return Array.from(this.masterVault.values())
+      .filter((r) => r.schoolId === schoolId)
+      .map((r) => structuredClone(r));
+  }
+
+  async deleteMasterVaultRecord(uid: string): Promise<void> {
+    this.masterVault.delete(uid);
+  }
+
+  async deleteMasterVaultRecordsBySchool(schoolId: string): Promise<void> {
+    for (const [uid, rec] of this.masterVault.entries()) {
+      if (rec.schoolId === schoolId) {
+        this.masterVault.delete(uid);
+      }
+    }
   }
 
   async getTenantSlices(schoolId: string): Promise<Record<string, any>> {

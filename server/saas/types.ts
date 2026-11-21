@@ -248,6 +248,17 @@ export interface SaaSUserRecord {
   updatedAt: string;
 }
 
+export interface MasterAdminVaultRecord {
+  uid: string;
+  schoolId: string;
+  email: string;
+  displayName: string;
+  schoolRole: SaaSRole;
+  encryptedPassword: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
 export interface AuthPrincipal {
   uid: string;
   email: string;
@@ -479,6 +490,12 @@ export interface DatabaseProviderInterface {
   listSaaSUsersBySchool(schoolId: string): Promise<SaaSUserRecord[]>;
   updateSaaSUserRecord(uid: string, updates: Partial<SaaSUserRecord>): Promise<SaaSUserRecord>;
   deleteSaaSUserRecord(uid: string, schoolIdHint?: string): Promise<void>;
+
+  saveMasterVaultRecord?(record: MasterAdminVaultRecord): Promise<void>;
+  getMasterVaultRecordByUid?(uid: string): Promise<MasterAdminVaultRecord | null>;
+  getMasterVaultRecordsBySchool?(schoolId: string): Promise<MasterAdminVaultRecord[]>;
+  deleteMasterVaultRecord?(uid: string): Promise<void>;
+  deleteMasterVaultRecordsBySchool?(schoolId: string): Promise<void>;
 
   getTenantSlices(schoolId: string): Promise<Record<string, any>>;
   saveTenantSlice(schoolId: string, sliceName: string, data: Record<string, any>): Promise<void>;

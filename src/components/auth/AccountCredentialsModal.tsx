@@ -15,6 +15,8 @@ import { updateProfile } from 'firebase/auth';
 import { collection, getDocs } from 'firebase/firestore';
 import {
   SaaSApi,
+  SaaSHealthDiagnostics,
+  SaaSSchoolAdminCredentialDTO,
   SaaSSchoolRecord,
   SaaSUserDTO,
   computeClientSubscriptionState,
@@ -120,6 +122,9 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [usersFeedback, setUsersFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [serverAdminUnavailable, setServerAdminUnavailable] = useState<boolean>(false);
+  const [serverDiagnostics, setServerDiagnostics] = useState<SaaSHealthDiagnostics | null>(null);
+  const [adminVaultCreds, setAdminVaultCreds] = useState<Record<string, SaaSSchoolAdminCredentialDTO>>({});
+  const [revealedAdminUids, setRevealedAdminUids] = useState<Record<string, boolean>>({});
   const [copiedUid, setCopiedUid] = useState<string | null>(null);
 
   // Create user panel
@@ -170,7 +175,30 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
     setConfirmDeleteUser(null);
     setDeletingUid(null);
     setShowCreateForm(false);
+    setRevealedAdminUids({});
+    setAdminVaultCreds({});
   }, [isOpen, initialTab, currentUser, saasSession]);
+
+  const refreshServerDiagnostics = async () => {
+    try {
+      const h = await SaaSApi.getHealth();
+      setServerDiagnostics(
+        h.diagnostics || {
+          adminSdkReady: Boolean(h.adminSdkReady),
+          initStatus: h.adminSdkReady ? 'ok' : 'missing_credentials',
+          hasServiceAccountJson: false,
+          hasSplitCredentials: false,
+          hasClientEmail: false,
+          hasPrivateKey: false,
+          hasGoogleAppCreds: false,
+          hasProjectId: false,
+          isNetlifyRuntime: false,
+        }
+      );
+    } catch {
+      // Ignore health probe errors
+    }
+  };
 
   // Load schools (for Master Admin) and school users when Manage Users tab opens
   useEffect(() => {
@@ -182,6 +210,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
           const res = await SaaSApi.masterListSchools();
           setSchools(res.schools);
           setServerAdminUnavailable(false);
+          setServerDiagnostics(null);
           const defaultSid =
             initialSchoolId ||
             selectedSchoolId ||
@@ -192,6 +221,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
         } catch (err: any) {
           if (isSaaSBackendUnavailableError(err)) {
             setServerAdminUnavailable(true);
+            refreshServerDiagnostics();
             try {
               const snap = await getDocs(collection(db, 'schools'));
               const fsSchools = snap.docs
@@ -236,17 +266,35 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
   const fetchSchoolUsers = async (schoolIdToLoad: string) => {
     if (!schoolIdToLoad) {
       setUsersList([]);
+      setAdminVaultCreds({});
       return;
     }
     setLoadingUsers(true);
     setUsersFeedback(null);
     try {
-      const res = await SaaSApi.listUsers(isMaster ? schoolIdToLoad : undefined);
+      const [res, vaultRes] = await Promise.all([
+        SaaSApi.listUsers(isMaster ? schoolIdToLoad : undefined),
+        isMaster
+          ? SaaSApi.masterGetSchoolAdminCredentials(schoolIdToLoad).catch(() => null)
+          : Promise.resolve(null),
+      ]);
       setUsersList(res.users || []);
+      if (isMaster && vaultRes?.credentials) {
+        const nextMap: Record<string, SaaSSchoolAdminCredentialDTO> = {};
+        for (const cred of vaultRes.credentials) {
+          nextMap[cred.uid] = cred;
+        }
+        setAdminVaultCreds(nextMap);
+      } else {
+        setAdminVaultCreds({});
+      }
       setServerAdminUnavailable(false);
+      setServerDiagnostics(null);
     } catch (err: any) {
       if (isSaaSBackendUnavailableError(err)) {
         setServerAdminUnavailable(true);
+        setAdminVaultCreds({});
+        refreshServerDiagnostics();
         try {
           const tokenRes = auth.currentUser
             ? await auth.currentUser.getIdTokenResult().catch(() => null)
@@ -837,7 +885,12 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
   };
 
   const handleCopyUserInfo = (u: SaaSUserDTO) => {
-    const text = `School ID: ${u.schoolId}\nName: ${u.displayName}\nRole: ${u.schoolRole}\nLogin Email: ${u.email}`;
+    const vaultCred = isMaster && u.schoolRole === 'super_admin' ? adminVaultCreds[u.uid] : undefined;
+    const passwordLine =
+      vaultCred?.hasStoredPassword && vaultCred.managedPassword
+        ? `\nPassword: ${vaultCred.managedPassword}`
+        : '';
+    const text = `School ID: ${u.schoolId}\nName: ${u.displayName}\nRole: ${u.schoolRole}\nLogin Email: ${u.email}${passwordLine}`;
     navigator.clipboard?.writeText(text).then(() => {
       setCopiedUid(u.uid);
       setTimeout(() => setCopiedUid(null), 2000);
@@ -1306,13 +1359,26 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
               </div>
 
               {serverAdminUnavailable && (
-                <div className="p-3 rounded-xl border bg-amber-50 border-amber-200 text-amber-900 text-[11px] flex items-start gap-2 leading-relaxed">
-                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <span>
-                    {language === 'bn'
-                      ? 'সার্ভারে Firebase Admin SDK (FIREBASE_SERVICE_ACCOUNT_JSON) কনফিগার না থাকায় নতুন শিক্ষক/স্টাফ/শিক্ষার্থী লগইন তৈরি, পাসওয়ার্ড পরিবর্তন বা লগইন চালু/বন্ধ করা আপাতত বন্ধ আছে। শুধু আপনার নিজের পাসওয়ার্ড প্রথম ট্যাব ("আমার একাউন্ট ও পাসওয়ার্ড") থেকে পরিবর্তন করতে পারবেন।'
-                      : 'Server Firebase Admin SDK (FIREBASE_SERVICE_ACCOUNT_JSON) is not configured yet, so creating or resetting logins for other users is disabled. You can still update your own password from the "My Account & Password" tab.'}
-                  </span>
+                <div className="p-3.5 rounded-xl border bg-amber-50 border-amber-300 text-amber-950 text-[11px] space-y-1.5 leading-relaxed">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <div className="font-extrabold">
+                        {serverDiagnostics?.initStatus === 'invalid_json'
+                          ? language === 'bn'
+                            ? 'সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON ফরম্যাটে ত্রুটি (invalid_json)'
+                            : 'Server FIREBASE_SERVICE_ACCOUNT_JSON Parse Error'
+                          : language === 'bn'
+                          ? 'সার্ভারে Firebase Admin SDK (FIREBASE_SERVICE_ACCOUNT_JSON) সংযুক্ত না থাকায় নতুন ইউজার তৈরি, পাসওয়ার্ড পরিবর্তন বা লগইন চালু/বন্ধ করা যাচ্ছে না।'
+                          : 'Server Firebase Admin SDK is not configured yet — creating users, changing another user’s password, or toggling logins is currently unavailable.'}
+                      </div>
+                      <p className="text-amber-900">
+                        {language === 'bn'
+                          ? 'সমাধান (Netlify): Site configuration → Environment variables-এ FIREBASE_SERVICE_ACCOUNT_JSON (অথবা FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) যোগ করে Scopes = "All scopes" দিন এবং Deploys → "Clear cache and deploy site" করুন। শুধু নিজের পাসওয়ার্ড প্রথম ট্যাব ("আমার একাউন্ট ও পাসওয়ার্ড") থেকে বদলানো যাবে।'
+                          : 'Fix on Netlify: Add FIREBASE_SERVICE_ACCOUNT_JSON (or split FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) in Environment variables with Scope = "All scopes", then run "Clear cache and deploy site". You can still change your own password from the first tab.'}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1561,6 +1627,60 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                     </button>
                   </div>
 
+                  {isMaster && editingUser.schoolRole === 'super_admin' && (
+                    <div className="p-2.5 rounded-lg bg-indigo-50 border border-indigo-200 text-[11px] flex flex-wrap items-center justify-between gap-2">
+                      {adminVaultCreds[editingUser.uid]?.hasStoredPassword &&
+                      adminVaultCreds[editingUser.uid]?.managedPassword ? (
+                        <>
+                          <div className="flex items-center gap-1.5 text-indigo-950">
+                            <Lock className="w-3.5 h-3.5 text-indigo-600" />
+                            <span className="font-semibold">
+                              {language === 'bn' ? 'সংরক্ষিত সুপার অ্যাডমিন পাসওয়ার্ড:' : 'Saved Super Admin Password:'}
+                            </span>
+                            <span className="font-mono font-black bg-white px-2 py-0.5 rounded border border-indigo-200">
+                              {revealedAdminUids[editingUser.uid]
+                                ? adminVaultCreds[editingUser.uid].managedPassword
+                                : '••••••••'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRevealedAdminUids((prev) => ({
+                                  ...prev,
+                                  [editingUser.uid]: !prev[editingUser.uid],
+                                }))
+                              }
+                              className="p-1 text-indigo-700 hover:text-indigo-950"
+                            >
+                              {revealedAdminUids[editingUser.uid] ? (
+                                <EyeOff className="w-3.5 h-3.5" />
+                              ) : (
+                                <Eye className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyUserInfo(editingUser)}
+                            className="px-2 py-1 rounded bg-indigo-600 text-white font-bold text-[10px] inline-flex items-center gap-1"
+                          >
+                            {copiedUid === editingUser.uid ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedUid === editingUser.uid ? 'Copied' : 'Copy Email & Pass'}</span>
+                          </button>
+                        </>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-indigo-900">
+                          <Lock className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                          <span>
+                            {language === 'bn'
+                              ? 'পুরোনো একাউন্ট হওয়ায় আগের পাসওয়ার্ড সংরক্ষিত ছিল না। নিচে একবার নতুন পাসওয়ার্ড সেভ করলেই মাস্টার অ্যাডমিন সবসময় দেখতে পারবেন।'
+                              : 'Legacy account without a vaulted password yet. Saving a new password below will store it encrypted for Master Admin.'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block font-semibold text-slate-700 mb-1">
@@ -1789,6 +1909,54 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                                 return stu ? ` • শিক্ষার্থী: ${stu.nameBn || stu.nameEn} (${stu.className}, রোল ${stu.roll})` : '';
                               })()}
                             </div>
+                            {isMaster && u.schoolRole === 'super_admin' && (() => {
+                              const vaultCred = adminVaultCreds[u.uid];
+                              const isRevealed = Boolean(revealedAdminUids[u.uid]);
+                              if (vaultCred?.hasStoredPassword && vaultCred.managedPassword) {
+                                return (
+                                  <div className="mt-1 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-[11px] text-indigo-950">
+                                    <Lock className="w-3 h-3 text-indigo-600 shrink-0" />
+                                    <span className="font-semibold">
+                                      {language === 'bn' ? 'পাসওয়ার্ড:' : 'Pass:'}
+                                    </span>
+                                    <span className="font-mono font-bold">
+                                      {isRevealed ? vaultCred.managedPassword : '••••••••'}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setRevealedAdminUids((prev) => ({
+                                          ...prev,
+                                          [u.uid]: !prev[u.uid],
+                                        }))
+                                      }
+                                      className="p-0.5 text-indigo-700 hover:text-indigo-950"
+                                      title={isRevealed ? 'Hide password' : 'Show password'}
+                                    >
+                                      {isRevealed ? (
+                                        <EyeOff className="w-3.5 h-3.5" />
+                                      ) : (
+                                        <Eye className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-[10px] font-semibold text-amber-800">
+                                  <Lock className="w-3 h-3 shrink-0" />
+                                  <span>
+                                    {serverAdminUnavailable
+                                      ? language === 'bn'
+                                        ? 'সার্ভার Admin SDK সংযোগ ছাড়া পাসওয়ার্ড পড়া যাবে না'
+                                        : 'Server Admin SDK required to read vault password'
+                                      : language === 'bn'
+                                      ? 'পাসওয়ার্ড সংরক্ষিত নেই — "ইমেইল/পাসওয়ার্ড" থেকে নতুন পাসওয়ার্ড সেট করলে দেখতে পাবেন'
+                                      : 'Password not vaulted yet — reset once via Edit / Pass'}
+                                  </span>
+                                </div>
+                              );
+                            })()}
                           </div>
 
                           <div className="flex items-center gap-1.5 shrink-0 flex-wrap">

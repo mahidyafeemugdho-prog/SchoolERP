@@ -189,6 +189,45 @@ export interface SaaSMasterAnalytics {
   planDistribution: Record<string, number>;
 }
 
+export interface SaaSHealthDiagnostics {
+  adminSdkReady: boolean;
+  initStatus: 'ok' | 'missing_credentials' | 'invalid_json' | 'missing_fields' | 'init_error';
+  hasServiceAccountJson: boolean;
+  hasSplitCredentials: boolean;
+  hasClientEmail: boolean;
+  hasPrivateKey: boolean;
+  hasGoogleAppCreds: boolean;
+  hasProjectId: boolean;
+  isNetlifyRuntime: boolean;
+}
+
+export interface SaaSHealthResponse {
+  success: boolean;
+  service?: string;
+  dbProvider: string;
+  authProvider: string;
+  adminSdkReady: boolean;
+  diagnostics?: SaaSHealthDiagnostics;
+  serverTime: string;
+}
+
+export interface SaaSSchoolAdminCredentialDTO {
+  uid: string;
+  schoolId: string;
+  schoolName: string;
+  schoolCode: string;
+  email: string;
+  displayName: string;
+  phone: string;
+  schoolRole: 'super_admin';
+  status: 'active' | 'disabled';
+  isPrimaryAdmin: boolean;
+  managedPassword: string | null;
+  hasStoredPassword: boolean;
+  passwordUpdatedAt: string | null;
+  updatedBy: string | null;
+}
+
 export type SupportCategory = 'technical' | 'billing' | 'training' | 'data' | 'other';
 export type SupportTicketStatus = 'open' | 'replied' | 'resolved';
 export type SupportSenderRole = 'school' | 'master_admin';
@@ -472,14 +511,7 @@ async function saasFetch<T>(path: string, options: RequestInit = {}, requireAuth
 }
 
 export const SaaSApi = {
-  getHealth: () =>
-    saasFetch<{
-      success: boolean;
-      dbProvider: string;
-      authProvider: string;
-      adminSdkReady: boolean;
-      serverTime: string;
-    }>('/health', {}, false),
+  getHealth: () => saasFetch<SaaSHealthResponse>('/health', {}, false),
 
   getPlans: () =>
     saasFetch<{
@@ -641,6 +673,13 @@ export const SaaSApi = {
       subscriptionHistory: SaaSSubscriptionHistoryDTO[];
       users: SaaSUserDTO[];
     }>(`/master/schools/${encodeURIComponent(schoolId)}`),
+
+  masterGetSchoolAdminCredentials: (schoolId: string) =>
+    saasFetch<{
+      success: boolean;
+      schoolId: string;
+      credentials: SaaSSchoolAdminCredentialDTO[];
+    }>(`/master/schools/${encodeURIComponent(schoolId)}/admin-credentials`),
 
   masterUpdateSchool: (
     schoolId: string,

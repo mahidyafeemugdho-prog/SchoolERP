@@ -4,6 +4,7 @@ import {
   CreateSchoolInput,
   CreateTenantUserInput,
   DatabaseProviderInterface,
+  MasterAdminVaultRecord,
   SaaSServiceError,
   SaaSUserRecord,
   SchoolTenantRecord,
@@ -13,6 +14,7 @@ import {
   getEffectivePlanPriceBdt,
 } from './types';
 import { addDaysUtc, evaluateSubscriptionState } from './subscriptionService';
+import { decryptVaultPassword, encryptVaultPassword } from './credentialVault';
 
 export interface TenantServiceDeps {
   db: DatabaseProviderInterface;
@@ -35,6 +37,51 @@ const ALLOWED_SCHOOL_ROLES = new Set([
 
 export function createTenantService(deps: TenantServiceDeps) {
   const getNow = deps.nowProvider ?? (() => new Date());
+
+  const upsertSuperAdminVault = async (params: {
+    uid: string;
+    schoolId: string;
+    email: string;
+    displayName: string;
+    plainPassword: string;
+    updatedBy: string;
+    nowIso: string;
+  }) => {
+    if (!deps.db.saveMasterVaultRecord || !params.plainPassword) return;
+    const record: MasterAdminVaultRecord = {
+      uid: params.uid,
+      schoolId: params.schoolId,
+      email: params.email.trim().toLowerCase(),
+      displayName: params.displayName.trim(),
+      schoolRole: 'super_admin',
+      encryptedPassword: encryptVaultPassword(params.plainPassword),
+      updatedAt: params.nowIso,
+      updatedBy: params.updatedBy,
+    };
+    await deps.db.saveMasterVaultRecord(record);
+  };
+
+  const syncSuperAdminVaultMetadata = async (params: {
+    uid: string;
+    schoolId: string;
+    email: string;
+    displayName: string;
+    updatedBy: string;
+    nowIso: string;
+  }) => {
+    if (!deps.db.getMasterVaultRecordByUid || !deps.db.saveMasterVaultRecord) return;
+    const existing = await deps.db.getMasterVaultRecordByUid(params.uid);
+    if (!existing) return;
+    await deps.db.saveMasterVaultRecord({
+      ...existing,
+      schoolId: params.schoolId,
+      email: params.email.trim().toLowerCase(),
+      displayName: params.displayName.trim(),
+      schoolRole: 'super_admin',
+      updatedAt: params.nowIso,
+      updatedBy: params.updatedBy,
+    });
+  };
 
   return {
     async createSchool(
@@ -187,6 +234,15 @@ export function createTenantService(deps: TenantServiceDeps) {
         updatedAt: nowIso,
       };
       await deps.db.createSaaSUserRecord(adminUserRecord);
+      await upsertSuperAdminVault({
+        uid: createdAuthUser.uid,
+        schoolId,
+        email: adminEmail,
+        displayName: adminName,
+        plainPassword: adminPassword,
+        updatedBy: actor.email || actor.uid,
+        nowIso,
+      });
 
       // 7. Initialize isolated tenant profile slice
       await deps.db.saveTenantSlice(schoolId, 'profile', {
@@ -436,6 +492,7 @@ export function createTenantService(deps: TenantServiceDeps) {
         }
       }
 
+      await deps.db.deleteMasterVaultRecordsBySchool?.(schoolId);
       await deps.db.deleteSchool(schoolId);
       return { deletedSchoolId: schoolId, deletedUsersCount };
     },
@@ -584,7 +641,19 @@ export function createTenantService(deps: TenantServiceDeps) {
         updatedAt: nowIso,
       };
 
-      return deps.db.createSaaSUserRecord(record);
+      const savedUser = await deps.db.createSaaSUserRecord(record);
+      if (role === 'super_admin') {
+        await upsertSuperAdminVault({
+          uid: uidToUse,
+          schoolId: targetSchoolId,
+          email,
+          displayName,
+          plainPassword: password,
+          updatedBy: actor.email || actor.uid,
+          nowIso,
+        });
+      }
+      return savedUser;
     },
 
     async setTenantUserStatus(
@@ -746,6 +815,29 @@ export function createTenantService(deps: TenantServiceDeps) {
         }
       }
 
+      if (actor.schoolRole === 'super_admin' && actor.schoolId) {
+        if (nextPassword && nextPassword.length >= 6) {
+          await upsertSuperAdminVault({
+            uid: actor.uid,
+            schoolId: actor.schoolId,
+            email: finalEmail,
+            displayName: finalName,
+            plainPassword: nextPassword,
+            updatedBy: actor.email || actor.uid,
+            nowIso,
+          });
+        } else if (emailChanged || nextDisplayName !== undefined) {
+          await syncSuperAdminVaultMetadata({
+            uid: actor.uid,
+            schoolId: actor.schoolId,
+            email: finalEmail,
+            displayName: finalName,
+            updatedBy: actor.email || actor.uid,
+            nowIso,
+          });
+        }
+      }
+
       return {
         uid: actor.uid,
         email: finalEmail,
@@ -870,6 +962,31 @@ export function createTenantService(deps: TenantServiceDeps) {
         });
       }
 
+      if (updatedUser.schoolRole === 'super_admin') {
+        if (nextPassword && nextPassword.length >= 6) {
+          await upsertSuperAdminVault({
+            uid: targetUid,
+            schoolId: updatedUser.schoolId,
+            email: updatedUser.email,
+            displayName: updatedUser.displayName,
+            plainPassword: nextPassword,
+            updatedBy: actor.email || actor.uid,
+            nowIso,
+          });
+        } else if (emailChanged || nextDisplayName !== undefined || nextRole === 'super_admin') {
+          await syncSuperAdminVaultMetadata({
+            uid: targetUid,
+            schoolId: updatedUser.schoolId,
+            email: updatedUser.email,
+            displayName: updatedUser.displayName,
+            updatedBy: actor.email || actor.uid,
+            nowIso,
+          });
+        }
+      } else if (user.schoolRole === 'super_admin' && nextRole && nextRole !== 'super_admin') {
+        await deps.db.deleteMasterVaultRecord?.(targetUid);
+      }
+
       return updatedUser;
     },
 
@@ -913,6 +1030,7 @@ export function createTenantService(deps: TenantServiceDeps) {
         await deps.auth.updateUserStatus(targetUid, true);
       }
 
+      await deps.db.deleteMasterVaultRecord?.(targetUid);
       await deps.db.deleteSaaSUserRecord(targetUid, user.schoolId);
 
       const school = await deps.db.getSchoolById(user.schoolId);
@@ -928,6 +1046,108 @@ export function createTenantService(deps: TenantServiceDeps) {
         schoolId: user.schoolId,
         email: user.email,
       };
+    },
+
+    async getSchoolAdminCredentials(
+      schoolId: string,
+      actor: AuthPrincipal
+    ): Promise<
+      Array<{
+        uid: string;
+        schoolId: string;
+        schoolName: string;
+        schoolCode: string;
+        email: string;
+        displayName: string;
+        phone: string;
+        schoolRole: 'super_admin';
+        status: 'active' | 'disabled';
+        isPrimaryAdmin: boolean;
+        managedPassword: string | null;
+        hasStoredPassword: boolean;
+        passwordUpdatedAt: string | null;
+        updatedBy: string | null;
+      }>
+    > {
+      if (!actor.isMasterAdmin) {
+        throw new SaaSServiceError(
+          'Only Master Admin can view school Super Admin credentials.',
+          403,
+          'MASTER_ADMIN_REQUIRED'
+        );
+      }
+
+      const school = await deps.db.getSchoolById(schoolId);
+      if (!school) {
+        throw new SaaSServiceError(`School "${schoolId}" not found.`, 404, 'SCHOOL_NOT_FOUND');
+      }
+
+      const [users, vaultRecords] = await Promise.all([
+        deps.db.listSaaSUsersBySchool(schoolId),
+        deps.db.getMasterVaultRecordsBySchool
+          ? deps.db.getMasterVaultRecordsBySchool(schoolId)
+          : Promise.resolve([] as MasterAdminVaultRecord[]),
+      ]);
+
+      const vaultByUid = new Map<string, MasterAdminVaultRecord>();
+      for (const vr of vaultRecords) {
+        if (vr?.uid) vaultByUid.set(vr.uid, vr);
+      }
+
+      const superAdmins = users.filter((u) => u.schoolRole === 'super_admin');
+      if (
+        school.adminUid &&
+        !superAdmins.some((u) => u.uid === school.adminUid)
+      ) {
+        const fallbackFromUsers = users.find((u) => u.uid === school.adminUid);
+        superAdmins.unshift(
+          fallbackFromUsers || {
+            uid: school.adminUid,
+            email: school.adminEmail,
+            displayName: school.adminName,
+            schoolId: school.schoolId,
+            schoolRole: 'super_admin',
+            phone: school.contactNumber,
+            status: school.status === 'suspended' ? 'disabled' : 'active',
+            createdAt: school.createdAt,
+            createdBy: school.createdBy,
+            updatedAt: school.updatedAt,
+          }
+        );
+      }
+
+      return superAdmins
+        .map((u) => {
+          const vault = vaultByUid.get(u.uid);
+          const decrypted = vault?.encryptedPassword
+            ? decryptVaultPassword(vault.encryptedPassword)
+            : null;
+          const isPrimaryAdmin =
+            (Boolean(school.adminUid) && u.uid === school.adminUid) ||
+            (Boolean(school.adminEmail) &&
+              u.email.toLowerCase() === school.adminEmail.toLowerCase());
+
+          return {
+            uid: u.uid,
+            schoolId: school.schoolId,
+            schoolName: school.schoolName,
+            schoolCode: school.schoolCode,
+            email: u.email,
+            displayName: u.displayName,
+            phone: u.phone || '',
+            schoolRole: 'super_admin' as const,
+            status: u.status,
+            isPrimaryAdmin,
+            managedPassword: decrypted,
+            hasStoredPassword: decrypted !== null,
+            passwordUpdatedAt: vault?.updatedAt || null,
+            updatedBy: vault?.updatedBy || null,
+          };
+        })
+        .sort((a, b) => {
+          if (a.isPrimaryAdmin !== b.isPrimaryAdmin) return a.isPrimaryAdmin ? -1 : 1;
+          return (a.displayName || '').localeCompare(b.displayName || '');
+        });
     },
   };
 }
