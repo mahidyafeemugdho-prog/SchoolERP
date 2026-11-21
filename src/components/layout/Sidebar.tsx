@@ -22,7 +22,6 @@ import {
   Settings,
   ShieldAlert,
   Globe,
-  QrCode,
   CreditCard,
   Headphones,
   LogOut,
@@ -147,12 +146,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
       labelKey: 'attendance',
       icon: CalendarCheck2,
       roles: ['super_admin', 'admin', 'teacher', 'student', 'guardian'],
-    },
-    {
-      id: 'qr_attendance',
-      labelKey: 'qrAttendance',
-      icon: QrCode,
-      roles: ['super_admin', 'admin', 'student', 'guardian', 'gatekeeper'],
     },
     {
       id: 'academic',

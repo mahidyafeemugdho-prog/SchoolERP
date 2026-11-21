@@ -46,6 +46,7 @@ import {
   analyzeCenterFacePresence,
   matchFaceDescriptor,
 } from '../../utils/faceRecognitionHelper';
+import { QrVoiceController } from '../../utils/qrVoiceAnnouncement';
 
 interface SmartQRScannerTabProps {
   onAttendanceUpdated: () => void;
@@ -99,7 +100,10 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
   const isModalBlockingScanRef = useRef<boolean>(false);
   const faceDetectorRef = useRef<any>(null);
   const cameraOpIdRef = useRef<number>(0);
-  const audioCtxRef = useRef<AudioContext | null>(null);
+  const voiceControllerRef = useRef<QrVoiceController | null>(null);
+  if (!voiceControllerRef.current) {
+    voiceControllerRef.current = new QrVoiceController();
+  }
 
   // Reusable offscreen canvases for zero-allocation 5fps face vector extraction
   const frameCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -174,6 +178,15 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
   const [manualTokenInput, setManualTokenInput] = useState<string>('');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
+  const soundEnabledRef = useRef<boolean>(soundEnabled);
+  const voiceEnabledRef = useRef<boolean>(voiceEnabled);
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
+  useEffect(() => {
+    voiceEnabledRef.current = voiceEnabled;
+  }, [voiceEnabled]);
+  const [voiceAutoplayBlocked, setVoiceAutoplayBlocked] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [feedSize, setFeedSize] = useState<'standard' | 'half'>('standard');
   const [wakeLockActive, setWakeLockActive] = useState<boolean>(false);
@@ -213,22 +226,40 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
     isScanLockedRef.current = false;
   };
 
-  // Lifecycle mount/unmount cleanup for timers, speech & audio
+  // Lifecycle mount/unmount + audio/speech gesture unlock & cleanup
   useEffect(() => {
     isMountedRef.current = true;
+    const voiceCtrl = voiceControllerRef.current;
+    if (voiceCtrl) {
+      voiceCtrl.setCallbacks({
+        onVoiceStart: (text) => {
+          if (isMountedRef.current) setCurrentVoiceText(text);
+        },
+        onVoiceEnd: () => {
+          if (isMountedRef.current) setCurrentVoiceText('');
+        },
+        onAutoplayBlocked: (blocked) => {
+          if (isMountedRef.current) setVoiceAutoplayBlocked(blocked);
+        },
+      });
+      voiceCtrl.init();
+    }
+
+    const handleUserGestureUnlock = () => {
+      voiceControllerRef.current?.unlockAudioAndSpeech();
+    };
+    window.addEventListener('pointerdown', handleUserGestureUnlock, { passive: true });
+    window.addEventListener('touchstart', handleUserGestureUnlock, { passive: true });
+    window.addEventListener('keydown', handleUserGestureUnlock, { passive: true });
+
     return () => {
       isMountedRef.current = false;
+      window.removeEventListener('pointerdown', handleUserGestureUnlock);
+      window.removeEventListener('touchstart', handleUserGestureUnlock);
+      window.removeEventListener('keydown', handleUserGestureUnlock);
       if (dismissTimeoutRef.current) clearTimeout(dismissTimeoutRef.current);
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        try {
-          window.speechSynthesis.cancel();
-        } catch {}
-      }
-      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-        audioCtxRef.current.close().catch(() => {});
-        audioCtxRef.current = null;
-      }
+      voiceControllerRef.current?.dispose();
     };
   }, []);
 
@@ -264,22 +295,6 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
   }, [isFullscreen, showVerificationModal]);
-
-  // Pre-load / cache Bengali speech synthesis voices on component mount
-  useEffect(() => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.getVoices();
-      const handleVoicesChanged = () => {
-        window.speechSynthesis.getVoices();
-      };
-      window.speechSynthesis.onvoiceschanged = handleVoicesChanged;
-      return () => {
-        if (window.speechSynthesis.onvoiceschanged === handleVoicesChanged) {
-          window.speechSynthesis.onvoiceschanged = null;
-        }
-      };
-    }
-  }, []);
 
   const enterFullscreen = async () => {
     setIsFullscreen(true);
@@ -505,144 +520,17 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const wakeLockRef = useRef<any>(null);
-  const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  // Fast Voice Synthesis (SpeechSynthesis API: speaks "OK [Name]" cleanly without GC cutoff)
+  // Instant Zero-Latency Voice Announcement via QrVoiceController
   const speakBengaliVoice = (text: string) => {
-    if (!voiceEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    try {
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-      }
-      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
-        window.speechSynthesis.cancel();
-      }
-
-      setCurrentVoiceText(text);
-
-      const utterance = new SpeechSynthesisUtterance(text);
-      activeUtteranceRef.current = utterance;
-      const isOkSpeech = text.startsWith('OK ');
-      const hasBengaliChars = /[\u0980-\u09FF]/.test(text);
-      utterance.lang = isOkSpeech && !hasBengaliChars ? 'en-US' : 'bn-BD';
-      utterance.rate = 1.02;
-      utterance.pitch = 1.0;
-
-      const voices = window.speechSynthesis.getVoices();
-      if (isOkSpeech && !hasBengaliChars) {
-        const engVoice =
-          voices.find((v) => v.lang.toLowerCase().startsWith('en') && v.localService) ||
-          voices.find((v) => v.lang.toLowerCase().startsWith('en'));
-        if (engVoice) {
-          utterance.voice = engVoice;
-        }
-      } else {
-        // Look for Bengali voices: prefer local (offline) voice to eliminate cellular network TTS latency
-        const localBanglaVoice = voices.find(
-          (v) =>
-            (v.lang.toLowerCase().startsWith('bn') ||
-             v.name.toLowerCase().includes('bangla') ||
-             v.name.toLowerCase().includes('bengali')) &&
-            (v.localService === true)
-        );
-        const anyBanglaVoice = voices.find(
-          (v) =>
-            v.lang.toLowerCase().startsWith('bn') ||
-            v.name.toLowerCase().includes('bangla') ||
-            v.name.toLowerCase().includes('bengali')
-        );
-        const voiceToUse = localBanglaVoice || anyBanglaVoice;
-        if (voiceToUse) {
-          utterance.voice = voiceToUse;
-        }
-      }
-
-      utterance.onend = () => {
-        if (activeUtteranceRef.current === utterance) {
-          activeUtteranceRef.current = null;
-        }
-        setTimeout(() => setCurrentVoiceText(''), 800);
-      };
-      utterance.onerror = () => {
-        if (activeUtteranceRef.current === utterance) {
-          activeUtteranceRef.current = null;
-        }
-        setCurrentVoiceText('');
-      };
-
-      // Slight microtick (15ms) ensures Android Chromium audio thread processes cancel before new speak
-      setTimeout(() => {
-        try {
-          window.speechSynthesis.speak(utterance);
-        } catch {}
-      }, 15);
-    } catch {}
+    if (!voiceEnabledRef.current) return;
+    voiceControllerRef.current?.speak(text);
   };
 
-  // Play Beep & Harmonic Chime on Scan (reuses single AudioContext to prevent browser context limit error)
+  // Crisp Harmonic Chime (180ms so it never ducks or delays voice start)
   const playBeep = (type: 'success' | 'warning' | 'error') => {
-    if (!soundEnabled || typeof window === 'undefined') return;
-    try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) return;
-      if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
-        audioCtxRef.current = new AudioCtx();
-      }
-      const audioCtx = audioCtxRef.current;
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume().catch(() => {});
-      }
-      const now = audioCtx.currentTime;
-
-      if (type === 'success') {
-        // High quality pleasant two-tone chime (ding-dong: 523Hz C5 -> 784Hz G5)
-        const osc1 = audioCtx.createOscillator();
-        const osc2 = audioCtx.createOscillator();
-        const gain1 = audioCtx.createGain();
-        const gain2 = audioCtx.createGain();
-
-        osc1.type = 'sine';
-        osc1.frequency.setValueAtTime(523.25, now);
-        gain1.gain.setValueAtTime(0.25, now);
-        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-        osc1.connect(gain1);
-        gain1.connect(audioCtx.destination);
-        osc1.start(now);
-        osc1.stop(now + 0.22);
-
-        osc2.type = 'sine';
-        osc2.frequency.setValueAtTime(783.99, now + 0.1);
-        gain2.gain.setValueAtTime(0.28, now + 0.1);
-        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
-        osc2.connect(gain2);
-        gain2.connect(audioCtx.destination);
-        osc2.start(now + 0.1);
-        osc2.stop(now + 0.45);
-      } else if (type === 'warning') {
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(440, now);
-        osc.frequency.setValueAtTime(330, now + 0.15);
-        gain.gain.setValueAtTime(0.25, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start(now);
-        osc.stop(now + 0.35);
-      } else {
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(220, now);
-        gain.gain.setValueAtTime(0.25, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start(now);
-        osc.stop(now + 0.3);
-      }
-    } catch {}
+    if (!soundEnabledRef.current) return;
+    voiceControllerRef.current?.playBeep(type);
   };
 
   // Toggle Screen Wake Lock for Gate Kiosk
@@ -1767,10 +1655,10 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
         playBeep('success');
 
         const personName =
-          result.student?.nameEn ||
-          result.student?.nameBn ||
-          result.staff?.nameEn ||
-          result.staff?.nameBn ||
+          result.student?.nameEn?.trim() ||
+          result.student?.nameBn?.trim() ||
+          result.staff?.nameEn?.trim() ||
+          result.staff?.nameBn?.trim() ||
           'Student';
         speakBengaliVoice(`OK ${personName}`);
 
@@ -1781,15 +1669,15 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
         playBeep('warning');
 
         if (result.message.includes('উভয় হাজিরা')) {
-          speakBengaliVoice('আপনার আজকের আগমন ও প্রস্থান উভয় হাজিরাই ইতিমধ্যে রেকর্ড করা হয়েছে।');
+          speakBengaliVoice('আগমন ও প্রস্থান হাজিরা সম্পন্ন হয়েছে।');
         } else {
-          speakBengaliVoice('আপনার হাজিরা ইতিমধ্যে রেকর্ড করা হয়েছে।');
+          speakBengaliVoice('হাজিরা ইতিমধ্যে রেকর্ড হয়েছে।');
         }
         setRecentScans(StorageService.getAttendanceAuditLogs().slice(0, 15));
       } else {
         setCameraFlash('error');
         playBeep('error');
-        speakBengaliVoice(verificationMethod === 'face_scan' ? 'মুখমণ্ডল সনাক্ত করা সম্ভব হয়নি। পুনরায় চেষ্টা করুন।' : 'অকার্যকর কিউআর কার্ড। অনুগ্রহ করে সঠিক আইডি কার্ড স্ক্যান করুন।');
+        speakBengaliVoice(verificationMethod === 'face_scan' ? 'মুখমণ্ডল মেলেনি, আবার চেষ্টা করুন।' : 'সঠিক কিউআর কার্ড ধরুন।');
       }
 
       // Auto-dismiss confirmation overlay cleanly in 1300ms (flash clears in 700ms) while scanner stays READY for next student!
@@ -1984,14 +1872,34 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
               </button>
             )}
 
+            {/* Voice Autoplay Unlock Pill (appears only if browser blocked speech before user tap) */}
+            {voiceAutoplayBlocked && voiceEnabled && (
+              <button
+                type="button"
+                onClick={() => {
+                  voiceControllerRef.current?.unlockAudioAndSpeech();
+                  voiceControllerRef.current?.speak('ভয়েস চালু হয়েছে।');
+                  setVoiceAutoplayBlocked(false);
+                }}
+                className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-extrabold shadow-md animate-pulse whitespace-nowrap shrink-0 cursor-pointer"
+                title="ব্রাউজার অডিও ব্লক করলে এখানে ট্যাপ করে ভয়েস সচল করুন"
+              >
+                ভয়েস চালু করুন
+              </button>
+            )}
+
             {/* Voice Announcement Toggle (Hidden for Gatekeeper) */}
             {!effectiveIsGatekeeper && (
               <button
                 type="button"
                 onClick={() => {
+                  voiceControllerRef.current?.unlockAudioAndSpeech();
                   const next = !voiceEnabled;
+                  voiceEnabledRef.current = next;
                   setVoiceEnabled(next);
-                  if (next) speakBengaliVoice('ভয়েস ঘোষণা চালু আছে।');
+                  if (next) {
+                    voiceControllerRef.current?.speak('ভয়েস ঘোষণা চালু আছে।');
+                  }
                 }}
                 className={`p-2 rounded-xl backdrop-blur-md border text-xs font-bold transition-all shadow-md ${
                   voiceEnabled
@@ -2007,7 +1915,14 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
             {/* Audio Beep Chime Toggle */}
             <button
               type="button"
-              onClick={() => setSoundEnabled((prev) => !prev)}
+              onClick={() => {
+                voiceControllerRef.current?.unlockAudioAndSpeech();
+                setSoundEnabled((prev) => {
+                  const next = !prev;
+                  soundEnabledRef.current = next;
+                  return next;
+                });
+              }}
               className={`p-2 rounded-xl backdrop-blur-md border text-xs font-bold transition-all shadow-md ${
                 soundEnabled
                   ? 'bg-blue-600/60 border-blue-400 text-blue-200'
