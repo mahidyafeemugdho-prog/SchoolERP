@@ -102,6 +102,7 @@ export const DATA_SLICES = {
     'school_erp_staff_salaries',
     'school_erp_custom_class_fee_columns',
     'school_erp_hidden_class_fee_columns',
+    'school_erp_transaction_security',
     'school_erp_homework',
     'school_erp_books',
     'school_erp_book_issues',

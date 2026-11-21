@@ -45,12 +45,14 @@ import {
   SaleItem,
   IncomeVoucher,
   IncomeVoucherLineItem,
+  TransactionSecurityConfig,
 } from '../types';
 import {
   buildSuperAdminPublishMeta,
   buildSuperAdminRejectMeta,
 } from '../utils/approvalWorkflow';
 import { canEditOrDeleteInvoice, canEditOrDeleteFinanceRecord } from '../utils/permissions';
+import { DEFAULT_TRANSACTION_SECURITY_CONFIG } from '../utils/transactionAuth';
 import {
   initialSchoolProfile,
   initialClasses,
@@ -141,6 +143,7 @@ const STORAGE_KEYS = {
   BLOG_POSTS: 'school_erp_blog_posts',
   MFS_SETTINGS: 'school_erp_mfs_settings',
   ONLINE_PAYMENT_REQUESTS: 'school_erp_online_payment_requests',
+  TRANSACTION_SECURITY: 'school_erp_transaction_security',
 };
 
 // Ensure local storage has clean initial baseline without wiping user data
@@ -4397,6 +4400,20 @@ export const StorageService = {
     setStored(STORAGE_KEYS.SUPER_ADMIN_CREDS, creds);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('super_admin_creds_updated', { detail: creds }));
+    }
+  },
+
+  // Financial Transaction Password Security Policy
+  getTransactionSecurityConfig(): TransactionSecurityConfig {
+    return getStored<TransactionSecurityConfig>(
+      STORAGE_KEYS.TRANSACTION_SECURITY,
+      DEFAULT_TRANSACTION_SECURITY_CONFIG
+    );
+  },
+  saveTransactionSecurityConfig(config: TransactionSecurityConfig): void {
+    setStored(STORAGE_KEYS.TRANSACTION_SECURITY, config);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('transaction_security_updated', { detail: config }));
     }
   },
 

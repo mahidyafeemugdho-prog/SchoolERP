@@ -12,6 +12,7 @@ import { StaffSalaryPayrollTab } from '../staff/StaffSalaryPayrollTab';
 import { IncomeVouchersSection } from './IncomeVouchersSection';
 import { PeriodFilterBar } from './PeriodFilterBar';
 import { CollectorCollectionTab } from './CollectorCollectionTab';
+import { useTransactionPasswordGuard } from './TransactionPasswordModal';
 import {
   ExpenseVoucherPrintModal,
   CollectionReportPrintModal,
@@ -86,6 +87,7 @@ import {
   Edit2,
   Download,
   Lock,
+  KeyRound,
 } from 'lucide-react';
 
 const MONTH_NAMES = [
@@ -439,8 +441,18 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   };
 
   const handleExecuteApproval = (req: OnlinePaymentRequest) => {
+    if (req.status === 'approved') return;
+    authorizeTransaction(
+      {
+        titleBn: 'অনলাইন পেমেন্ট অনুমোদন ও রসিদ তৈরি',
+        titleEn: 'Approve Online Payment & Issue Receipt',
+        summaryBn: `${req.studentName} (${req.className}) • ${req.paymentMethod} TrxID: ${req.transactionId}`,
+        summaryEn: `${req.studentName} (${req.className}) • ${req.paymentMethod} TrxID: ${req.transactionId}`,
+        amountLabel: formatTaka(req.amount),
+        tone: 'emerald',
+      },
+      (authStamp) => {
     try {
-      if (req.status === 'approved') return;
 
       const nowMs = Date.now();
       const officialReceiptNo = `MR-${String(nowMs).slice(-6)}`;
@@ -529,6 +541,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                 collectedByEmail: currentUser.email,
                 collectedByRole: activeRole,
                 notes: `${inv.feeType} - অনলাইন পেমেন্ট অনুমোদন। প্রেরক: ${req.senderPhone}, TrxID: ${req.transactionId}`,
+                ...authStamp,
               };
               StorageService.addPayment(oldPayment);
               remainingAmount -= payPart;
@@ -567,6 +580,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
             collectedByEmail: currentUser.email,
             collectedByRole: activeRole,
             notes: `${req.feeTitle} - অনলাইন পেমেন্ট অনুমোদন। প্রেরক: ${req.senderPhone}, TrxID: ${req.transactionId}`,
+            ...authStamp,
           };
           StorageService.addPayment(linkedPayment);
           remainingAmount -= payPart;
@@ -605,6 +619,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           dueAmount: remainingAmount,
           dueDate: todayStr,
           status: 'Unpaid',
+          ...authStamp,
         };
         StorageService.addInvoice(newInvoice);
 
@@ -626,6 +641,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           collectedByEmail: currentUser.email,
           collectedByRole: activeRole,
           notes: `${req.feeTitle} - অনলাইন পেমেন্ট অনুমোদন। প্রেরক: ${req.senderPhone}, TrxID: ${req.transactionId}`,
+          ...authStamp,
         };
         StorageService.addPayment(newPayment);
       }
@@ -659,6 +675,8 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
         type: 'error',
       });
     }
+      }
+    );
   };
 
   const handleOpenRejectModal = (req: OnlinePaymentRequest) => {
@@ -669,28 +687,41 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const handleConfirmReject = (e: React.FormEvent) => {
     e.preventDefault();
     if (!rejectingRequest) return;
+    const targetReq = rejectingRequest;
     const reason =
       rejectionReasonInput.trim() ||
       (language === 'bn' ? 'ট্রানজেকশন তথ্য যাচাই করা সম্ভব হয়নি' : 'Transaction could not be verified');
 
-    StorageService.updateOnlinePaymentRequest(rejectingRequest.id, {
-      status: 'rejected',
-      rejectedAt: new Date().toISOString(),
-      rejectedBy: currentUser.name,
-      rejectedReason: reason,
-    });
+    authorizeTransaction(
+      {
+        titleBn: 'অনলাইন পেমেন্ট রিকোয়েস্ট বাতিল',
+        titleEn: 'Reject Online Payment Request',
+        summaryBn: `${targetReq.studentName} • ${targetReq.paymentMethod} TrxID: ${targetReq.transactionId}`,
+        summaryEn: `${targetReq.studentName} • ${targetReq.paymentMethod} TrxID: ${targetReq.transactionId}`,
+        amountLabel: formatTaka(targetReq.amount),
+        tone: 'rose',
+      },
+      () => {
+        StorageService.updateOnlinePaymentRequest(targetReq.id, {
+          status: 'rejected',
+          rejectedAt: new Date().toISOString(),
+          rejectedBy: currentUser.name,
+          rejectedReason: reason,
+        });
 
-    setOnlineRequests(StorageService.getOnlinePaymentRequests());
-    setRejectingRequest(null);
-    setRejectionReasonInput('');
+        setOnlineRequests(StorageService.getOnlinePaymentRequests());
+        setRejectingRequest(null);
+        setRejectionReasonInput('');
 
-    setApprovalFeedbackNotice({
-      message: language === 'bn'
-        ? 'পেমেন্ট রিকোয়েস্টটি বাতিল করা হয়েছে এবং কারণ সংরক্ষণ করা হয়েছে।'
-        : 'Payment request rejected with reason.',
-      type: 'success',
-    });
-    setTimeout(() => setApprovalFeedbackNotice(null), 5000);
+        setApprovalFeedbackNotice({
+          message: language === 'bn'
+            ? 'পেমেন্ট রিকোয়েস্টটি বাতিল করা হয়েছে এবং কারণ সংরক্ষণ করা হয়েছে।'
+            : 'Payment request rejected with reason.',
+          type: 'success',
+        });
+        setTimeout(() => setApprovalFeedbackNotice(null), 5000);
+      }
+    );
   };
 
   const handleSaveMfsSettings = (e: React.FormEvent) => {
@@ -716,6 +747,16 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
 
   const canManage = activeRole === 'super_admin' || activeRole === 'admin' || activeRole === 'accountant' || activeRole === 'master_admin';
   const canEditDeleteInvoices = canEditOrDeleteInvoice(activeRole);
+
+  const {
+    authorizeTransaction,
+    authModalElement,
+    openSecuritySettings,
+    lockNow,
+    isTimedUnlocked,
+    securityConfig,
+    UnlockIcon,
+  } = useTransactionPasswordGuard(language);
 
   // Comprehensive Outstanding Dues across all students (Unpaid invoices + Overdue monthly tuition + Scheduled fees + Transport + Custom fees)
   const comprehensiveDueEntries = useMemo(() => {
@@ -1342,93 +1383,118 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
       return;
     }
 
-    const curSess = school.currentSession || academicYear || '2026';
-    const invoiceNo = `INV-${curSess}-${Math.floor(10000 + Math.random() * 90000)}`;
-    const receiptNo = `REC-${curSess}-${Math.floor(10000 + Math.random() * 90000)}`;
-    const today = new Date().toISOString().split('T')[0];
+    const studentSnapshot = selectedStudent;
+    const itemsSnapshot = [...invoiceItems];
+    const subTotalSnapshot = subTotal;
+    const discountSnapshot = discountAmount;
+    const netPayableSnapshot = netPayable;
+    const paidSnapshot = effectivePaidAmount;
+    const methodSnapshot = paymentMethod;
+    const trxSnapshot = transactionId;
+    const notesSnapshot = paymentNotes;
+    const selectedMonthsSnapshot = [...selectedMonths];
 
-    const feeDescription = invoiceItems.map((i) => i.headName).join(' + ');
-
-    const itemMonths = invoiceItems
-      .map((i) => i.month)
-      .filter((m): m is string => Boolean(m && m.trim()));
-    const combinedMonthLabel =
-      itemMonths.length > 0
-        ? Array.from(new Set(itemMonths)).join(', ')
-        : selectedMonths.length > 0
-        ? selectedMonths.join(', ') + ` ${academicYear}`
-        : `${academicYear} Session`;
-
-    const newInvoice: FeeInvoice = {
-      id: `inv_${Date.now()}`,
-      invoiceNo,
-      studentId: selectedStudent.id,
-      studentNameEn: selectedStudent.nameEn,
-      studentNameBn: selectedStudent.nameBn,
-      className: selectedStudent.className,
-      section: selectedStudent.section,
-      roll: selectedStudent.roll,
-      session: academicYear,
-      feeType: feeDescription.length > 80 ? `${feeDescription.slice(0, 77)}...` : feeDescription,
-      month: combinedMonthLabel,
-      items: invoiceItems,
-      amount: subTotal,
-      discount: discountAmount,
-      netAmount: netPayable,
-      paidAmount: 0,
-      dueAmount: netPayable,
-      dueDate: today,
-      status: 'Unpaid',
-    };
-
-    const newPayment: FeePayment = {
-      id: `pay_${Date.now()}`,
-      receiptNo,
-      invoiceId: newInvoice.id,
-      studentId: selectedStudent.id,
-      studentName: selectedStudent.nameEn,
-      className: `${selectedStudent.className} (${selectedStudent.section})`,
-      roll: selectedStudent.roll,
-      amount: effectivePaidAmount,
-      items: invoiceItems,
-      paidDate: today,
-      paymentMethod,
-      transactionId: transactionId || (paymentMethod !== 'Cash' ? `TXN-${Date.now().toString().slice(-6)}` : undefined),
-      collectedBy: currentUser.name,
-      collectedById: currentUser.linkedStaffId || currentUser.id,
-      collectedByEmail: currentUser.email,
-      collectedByRole: activeRole,
-      notes: paymentNotes || `${invoiceItems.length} items collected (Discount: ৳ ${discountAmount})`,
-    };
-
-    StorageService.addInvoice(newInvoice);
-    if (effectivePaidAmount > 0) {
-      StorageService.addPayment(newPayment);
-    }
-
-    setInvoices(StorageService.getInvoices());
-    setPayments(StorageService.getPayments());
-
-    setSelectedReceipt(newPayment);
-    setSelectedReceiptInvoice(newInvoice);
-    setShowReceiptModal(true);
-
-    // Reset items for next collection
-    setInvoiceItems([
+    authorizeTransaction(
       {
-        id: `item_${Date.now()}_1`,
-        headName: 'Monthly Tuition Fee (মাসিক বেতন)',
-        month: 'November 2026',
-        amount: 1800,
+        titleBn: paidSnapshot > 0 ? 'ফি আদায় ও ইনভয়েস অনুমোদন' : 'বকেয়া ইনভয়েস তৈরি অনুমোদন',
+        titleEn: paidSnapshot > 0 ? 'Authorize Fee Collection & Invoice' : 'Authorize Due Invoice Creation',
+        summaryBn: `${studentSnapshot.nameBn || studentSnapshot.nameEn} (${studentSnapshot.className}, রোল ${studentSnapshot.roll}) • ${itemsSnapshot.length}টি আইটেম (${methodSnapshot})`,
+        summaryEn: `${studentSnapshot.nameEn} (${studentSnapshot.className}, Roll ${studentSnapshot.roll}) • ${itemsSnapshot.length} items (${methodSnapshot})`,
+        amountLabel: formatTaka(paidSnapshot > 0 ? paidSnapshot : netPayableSnapshot),
+        tone: 'emerald',
       },
-    ]);
-    setSelectedMonths(['November']);
-    setDiscountAmount(0);
-    setDiscountReason('');
-    setLateFineAmount(0);
-    setTransactionId('');
-    setPaymentNotes('');
-    setIsManualPaidAmount(false);
+      (authStamp) => {
+        const curSess = school.currentSession || academicYear || '2026';
+        const invoiceNo = `INV-${curSess}-${Math.floor(10000 + Math.random() * 90000)}`;
+        const receiptNo = `REC-${curSess}-${Math.floor(10000 + Math.random() * 90000)}`;
+        const today = new Date().toISOString().split('T')[0];
+
+        const feeDescription = itemsSnapshot.map((i) => i.headName).join(' + ');
+
+        const itemMonths = itemsSnapshot
+          .map((i) => i.month)
+          .filter((m): m is string => Boolean(m && m.trim()));
+        const combinedMonthLabel =
+          itemMonths.length > 0
+            ? Array.from(new Set(itemMonths)).join(', ')
+            : selectedMonthsSnapshot.length > 0
+            ? selectedMonthsSnapshot.join(', ') + ` ${academicYear}`
+            : `${academicYear} Session`;
+
+        const newInvoice: FeeInvoice = {
+          id: `inv_${Date.now()}`,
+          invoiceNo,
+          studentId: studentSnapshot.id,
+          studentNameEn: studentSnapshot.nameEn,
+          studentNameBn: studentSnapshot.nameBn,
+          className: studentSnapshot.className,
+          section: studentSnapshot.section,
+          roll: studentSnapshot.roll,
+          session: academicYear,
+          feeType: feeDescription.length > 80 ? `${feeDescription.slice(0, 77)}...` : feeDescription,
+          month: combinedMonthLabel,
+          items: itemsSnapshot,
+          amount: subTotalSnapshot,
+          discount: discountSnapshot,
+          netAmount: netPayableSnapshot,
+          paidAmount: 0,
+          dueAmount: netPayableSnapshot,
+          dueDate: today,
+          status: 'Unpaid',
+          ...authStamp,
+        };
+
+        const newPayment: FeePayment = {
+          id: `pay_${Date.now()}`,
+          receiptNo,
+          invoiceId: newInvoice.id,
+          studentId: studentSnapshot.id,
+          studentName: studentSnapshot.nameEn,
+          className: `${studentSnapshot.className} (${studentSnapshot.section})`,
+          roll: studentSnapshot.roll,
+          amount: paidSnapshot,
+          items: itemsSnapshot,
+          paidDate: today,
+          paymentMethod: methodSnapshot,
+          transactionId: trxSnapshot || (methodSnapshot !== 'Cash' ? `TXN-${Date.now().toString().slice(-6)}` : undefined),
+          collectedBy: currentUser.name,
+          collectedById: currentUser.linkedStaffId || currentUser.id,
+          collectedByEmail: currentUser.email,
+          collectedByRole: activeRole,
+          notes: notesSnapshot || `${itemsSnapshot.length} items collected (Discount: ৳ ${discountSnapshot})`,
+          ...authStamp,
+        };
+
+        StorageService.addInvoice(newInvoice);
+        if (paidSnapshot > 0) {
+          StorageService.addPayment(newPayment);
+        }
+
+        setInvoices(StorageService.getInvoices());
+        setPayments(StorageService.getPayments());
+
+        setSelectedReceipt(newPayment);
+        setSelectedReceiptInvoice(newInvoice);
+        setShowReceiptModal(true);
+
+        // Reset items for next collection
+        setInvoiceItems([
+          {
+            id: `item_${Date.now()}_1`,
+            headName: 'Monthly Tuition Fee (মাসিক বেতন)',
+            month: 'November 2026',
+            amount: 1800,
+          },
+        ]);
+        setSelectedMonths(['November']);
+        setDiscountAmount(0);
+        setDiscountReason('');
+        setLateFineAmount(0);
+        setTransactionId('');
+        setPaymentNotes('');
+        setIsManualPaidAmount(false);
+      }
+    );
   };
 
   const handleOpenSingleCollect = (inv: FeeInvoice) => {
@@ -1443,44 +1509,62 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const handleConfirmSinglePayment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!targetInvoice || singleCollectAmount <= 0) return;
+    const invSnapshot = targetInvoice;
+    const amountSnapshot = singleCollectAmount;
+    const methodSnapshot = paymentMethod;
+    const trxSnapshot = transactionId;
+    const notesSnapshot = paymentNotes;
 
-    const curSess = school.currentSession || academicYear || '2026';
-    const receiptNo = `REC-${curSess}-${Math.floor(10000 + Math.random() * 90000)}`;
-    const newPayment: FeePayment = {
-      id: `pay_${Date.now()}`,
-      receiptNo,
-      invoiceId: targetInvoice.id,
-      studentId: targetInvoice.studentId,
-      studentName: targetInvoice.studentNameEn,
-      className: `${targetInvoice.className} (${targetInvoice.section})`,
-      roll: targetInvoice.roll,
-      amount: singleCollectAmount,
-      items: targetInvoice.items || [
-        {
-          id: `item_${Date.now()}`,
-          headName: targetInvoice.feeType,
-          month: targetInvoice.month,
-          amount: singleCollectAmount,
-        },
-      ],
-      paidDate: new Date().toISOString().split('T')[0],
-      paymentMethod,
-      transactionId: transactionId || (paymentMethod !== 'Cash' ? `TXN-${Date.now().toString().slice(-6)}` : undefined),
-      collectedBy: currentUser.name,
-      collectedById: currentUser.linkedStaffId || currentUser.id,
-      collectedByEmail: currentUser.email,
-      collectedByRole: activeRole,
-      notes: paymentNotes || 'Fee Collection Desk',
-    };
+    authorizeTransaction(
+      {
+        titleBn: 'বকেয়া ইনভয়েস ফি আদায় অনুমোদন',
+        titleEn: 'Authorize Invoice Payment Collection',
+        summaryBn: `${invSnapshot.studentNameBn || invSnapshot.studentNameEn} • ${invSnapshot.invoiceNo} (${methodSnapshot})`,
+        summaryEn: `${invSnapshot.studentNameEn} • ${invSnapshot.invoiceNo} (${methodSnapshot})`,
+        amountLabel: formatTaka(amountSnapshot),
+        tone: 'emerald',
+      },
+      (authStamp) => {
+        const curSess = school.currentSession || academicYear || '2026';
+        const receiptNo = `REC-${curSess}-${Math.floor(10000 + Math.random() * 90000)}`;
+        const newPayment: FeePayment = {
+          id: `pay_${Date.now()}`,
+          receiptNo,
+          invoiceId: invSnapshot.id,
+          studentId: invSnapshot.studentId,
+          studentName: invSnapshot.studentNameEn,
+          className: `${invSnapshot.className} (${invSnapshot.section})`,
+          roll: invSnapshot.roll,
+          amount: amountSnapshot,
+          items: invSnapshot.items || [
+            {
+              id: `item_${Date.now()}`,
+              headName: invSnapshot.feeType,
+              month: invSnapshot.month,
+              amount: amountSnapshot,
+            },
+          ],
+          paidDate: new Date().toISOString().split('T')[0],
+          paymentMethod: methodSnapshot,
+          transactionId: trxSnapshot || (methodSnapshot !== 'Cash' ? `TXN-${Date.now().toString().slice(-6)}` : undefined),
+          collectedBy: currentUser.name,
+          collectedById: currentUser.linkedStaffId || currentUser.id,
+          collectedByEmail: currentUser.email,
+          collectedByRole: activeRole,
+          notes: notesSnapshot || 'Fee Collection Desk',
+          ...authStamp,
+        };
 
-    StorageService.addPayment(newPayment);
-    setInvoices(StorageService.getInvoices());
-    setPayments(StorageService.getPayments());
-    setShowCollectModal(false);
+        StorageService.addPayment(newPayment);
+        setInvoices(StorageService.getInvoices());
+        setPayments(StorageService.getPayments());
+        setShowCollectModal(false);
 
-    setSelectedReceipt(newPayment);
-    setSelectedReceiptInvoice(targetInvoice);
-    setShowReceiptModal(true);
+        setSelectedReceipt(newPayment);
+        setSelectedReceiptInvoice(invSnapshot);
+        setShowReceiptModal(true);
+      }
+    );
   };
 
   const expenseModalGrandTotal = useMemo(() => calculateExpenseItemsTotal(expenseItems), [expenseItems]);
@@ -1602,53 +1686,85 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
     const totalAmount = calculateExpenseItemsTotal(validItems);
     const resolvedTitle = summarizeExpenseTitle(validItems, expenseTitle);
     const resolvedDate = expenseDate || toLocalIsoDate();
+    const paidToSnapshot = expensePaidTo.trim();
+    const categorySnapshot = expenseCategory;
+    const methodSnapshot = expenseMethod;
+    const refSnapshot = expenseRefNo.trim() || undefined;
+    const notesSnapshot = expenseNotes.trim() || undefined;
 
     if (editingExpense) {
       if (!canEditDeleteInvoices) {
         return;
       }
-      const updatedExpense: Expense = {
-        ...editingExpense,
-        category: expenseCategory,
-        title: resolvedTitle,
-        amount: totalAmount,
-        items: validItems,
-        date: resolvedDate,
-        paidTo: expensePaidTo.trim(),
-        paymentMethod: expenseMethod,
-        referenceNo: expenseRefNo.trim() || undefined,
-        notes: expenseNotes.trim() || undefined,
-      };
-      StorageService.updateExpense(updatedExpense, activeRole);
-      setExpenses(StorageService.getExpenses());
-      setShowExpenseModal(false);
-      resetExpenseForm();
+      const targetExp = editingExpense;
+      authorizeTransaction(
+        {
+          titleBn: `ব্যয় ভাউচার সংশোধন (${targetExp.voucherNo})`,
+          titleEn: `Update Expense Voucher (${targetExp.voucherNo})`,
+          summaryBn: `${resolvedTitle} • প্রাপক: ${paidToSnapshot}`,
+          summaryEn: `${resolvedTitle} • Paid To: ${paidToSnapshot}`,
+          amountLabel: formatTaka(totalAmount),
+          tone: 'amber',
+        },
+        (authStamp) => {
+          const updatedExpense: Expense = {
+            ...targetExp,
+            category: categorySnapshot,
+            title: resolvedTitle,
+            amount: totalAmount,
+            items: validItems,
+            date: resolvedDate,
+            paidTo: paidToSnapshot,
+            paymentMethod: methodSnapshot,
+            referenceNo: refSnapshot,
+            notes: notesSnapshot,
+            ...authStamp,
+          };
+          StorageService.updateExpense(updatedExpense, activeRole);
+          setExpenses(StorageService.getExpenses());
+          setShowExpenseModal(false);
+          resetExpenseForm();
+        }
+      );
       return;
     }
 
-    const newExpense: Expense = {
-      id: `exp_${Date.now()}`,
-      voucherNo: StorageService.generateNextExpenseVoucherNo(resolvedDate),
-      category: expenseCategory,
-      title: resolvedTitle,
-      amount: totalAmount,
-      items: validItems,
-      date: resolvedDate,
-      paidTo: expensePaidTo.trim(),
-      paymentMethod: expenseMethod,
-      referenceNo: expenseRefNo.trim() || undefined,
-      approvedBy: currentUser.name,
-      approvedById: currentUser.linkedStaffId || currentUser.id,
-      approvedByEmail: currentUser.email,
-      approvedByRole: activeRole,
-      notes: expenseNotes.trim() || undefined,
-    };
+    authorizeTransaction(
+      {
+        titleBn: 'নতুন ব্যয় ভাউচার অনুমোদন',
+        titleEn: 'Authorize New Expense Voucher',
+        summaryBn: `${resolvedTitle} • প্রাপক: ${paidToSnapshot} (${methodSnapshot})`,
+        summaryEn: `${resolvedTitle} • Paid To: ${paidToSnapshot} (${methodSnapshot})`,
+        amountLabel: formatTaka(totalAmount),
+        tone: 'rose',
+      },
+      (authStamp) => {
+        const newExpense: Expense = {
+          id: `exp_${Date.now()}`,
+          voucherNo: StorageService.generateNextExpenseVoucherNo(resolvedDate),
+          category: categorySnapshot,
+          title: resolvedTitle,
+          amount: totalAmount,
+          items: validItems,
+          date: resolvedDate,
+          paidTo: paidToSnapshot,
+          paymentMethod: methodSnapshot,
+          referenceNo: refSnapshot,
+          approvedBy: currentUser.name,
+          approvedById: currentUser.linkedStaffId || currentUser.id,
+          approvedByEmail: currentUser.email,
+          approvedByRole: activeRole,
+          notes: notesSnapshot,
+          ...authStamp,
+        };
 
-    StorageService.addExpense(newExpense);
-    setExpenses(StorageService.getExpenses());
-    setShowExpenseModal(false);
-    resetExpenseForm();
-    setPrintingExpense(newExpense);
+        StorageService.addExpense(newExpense);
+        setExpenses(StorageService.getExpenses());
+        setShowExpenseModal(false);
+        resetExpenseForm();
+        setPrintingExpense(newExpense);
+      }
+    );
   };
 
   const handleOpenEditExpense = (exp: Expense) => {
@@ -1674,16 +1790,20 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
     if (!canEditDeleteInvoices) {
       return;
     }
-    if (
-      window.confirm(
-        language === 'bn'
-          ? `আপনি কি নিশ্চিত ভাউচার "${exp.voucherNo}" (${exp.title} - ৳${exp.amount}) মুছে ফেলতে চান?`
-          : `Are you sure you want to delete voucher "${exp.voucherNo}"?`
-      )
-    ) {
-      StorageService.deleteExpense(exp.id, activeRole);
-      setExpenses(StorageService.getExpenses());
-    }
+    authorizeTransaction(
+      {
+        titleBn: `ব্যয় ভাউচার মুছে ফেলা (${exp.voucherNo})`,
+        titleEn: `Delete Expense Voucher (${exp.voucherNo})`,
+        summaryBn: `${exp.title} • প্রাপক: ${exp.paidTo || '—'}`,
+        summaryEn: `${exp.title} • Paid To: ${exp.paidTo || '—'}`,
+        amountLabel: formatTaka(exp.amount),
+        tone: 'rose',
+      },
+      () => {
+        StorageService.deleteExpense(exp.id, activeRole);
+        setExpenses(StorageService.getExpenses());
+      }
+    );
   };
 
   const handleOpenEditReceipt = (payment: FeePayment) => {
@@ -1702,36 +1822,60 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const handleSaveEditReceipt = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingReceipt || !canEditDeleteInvoices) return;
-    const updated: FeePayment = {
-      ...editingReceipt,
-      amount: Number(editReceiptAmount),
-      paidDate: editReceiptDate,
-      paymentMethod: editReceiptMethod as any,
-      transactionId: editReceiptTrxId.trim() || undefined,
-      notes: editReceiptNotes.trim() || undefined,
-    };
-    StorageService.updatePayment(updated, activeRole);
-    setPayments(StorageService.getPayments());
-    setInvoices(StorageService.getInvoices());
-    setShowEditReceiptModal(false);
-    setEditingReceipt(null);
+    const targetReceipt = editingReceipt;
+    const nextAmt = Number(editReceiptAmount);
+    const nextDate = editReceiptDate;
+    const nextMethod = editReceiptMethod;
+    const nextTrx = editReceiptTrxId.trim() || undefined;
+    const nextNotes = editReceiptNotes.trim() || undefined;
+
+    authorizeTransaction(
+      {
+        titleBn: `মানি রসিদ সংশোধন (${targetReceipt.receiptNo})`,
+        titleEn: `Update Money Receipt (${targetReceipt.receiptNo})`,
+        summaryBn: `${targetReceipt.studentName} • ${nextMethod}`,
+        summaryEn: `${targetReceipt.studentName} • ${nextMethod}`,
+        amountLabel: formatTaka(nextAmt),
+        tone: 'amber',
+      },
+      (authStamp) => {
+        const updated: FeePayment = {
+          ...targetReceipt,
+          amount: nextAmt,
+          paidDate: nextDate,
+          paymentMethod: nextMethod as any,
+          transactionId: nextTrx,
+          notes: nextNotes,
+          ...authStamp,
+        };
+        StorageService.updatePayment(updated, activeRole);
+        setPayments(StorageService.getPayments());
+        setInvoices(StorageService.getInvoices());
+        setShowEditReceiptModal(false);
+        setEditingReceipt(null);
+      }
+    );
   };
 
   const handleDeletePayment = (payment: FeePayment) => {
     if (!canEditDeleteInvoices) {
       return;
     }
-    if (
-      window.confirm(
-        language === 'bn'
-          ? `আপনি কি নিশ্চিত রসিদ "${payment.receiptNo}" (${payment.studentName} - ৳${payment.amount}) মুছে ফেলতে চান? এটি মুছে ফেললে সংশ্লিষ্ট ইনভয়েসের বকেয়া সমন্বয় হবে।`
-          : `Are you sure you want to delete receipt "${payment.receiptNo}"? This will restore the due amount.`
-      )
-    ) {
-      StorageService.deletePayment(payment.id, activeRole);
-      setPayments(StorageService.getPayments());
-      setInvoices(StorageService.getInvoices());
-    }
+    authorizeTransaction(
+      {
+        titleBn: `মানি রসিদ মুছে ফেলা (${payment.receiptNo})`,
+        titleEn: `Delete Money Receipt (${payment.receiptNo})`,
+        summaryBn: `${payment.studentName} • এটি মুছলে সংশ্লিষ্ট ইনভয়েসের বকেয়া সমন্বয় হবে`,
+        summaryEn: `${payment.studentName} • Restores linked invoice due amount`,
+        amountLabel: formatTaka(payment.amount),
+        tone: 'rose',
+      },
+      () => {
+        StorageService.deletePayment(payment.id, activeRole);
+        setPayments(StorageService.getPayments());
+        setInvoices(StorageService.getInvoices());
+      }
+    );
   };
 
   const handleOpenEditInvoice = (inv: FeeInvoice) => {
@@ -1749,80 +1893,109 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const handleSaveEditInvoice = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingInvoice || !canEditDeleteInvoices) return;
+    const targetInv = editingInvoice;
     const newNet = Number(editInvoiceNetAmount);
-    const newPaid = editingInvoice.paidAmount;
-    const newDue = Math.max(0, newNet - newPaid);
-    const newStatus = newDue === 0 ? 'Paid' : newPaid > 0 ? 'Partial' : 'Unpaid';
+    const newFeeType = editInvoiceFeeType;
+    const newDueDate = editInvoiceDueDate;
+    const newDiscount = Number(editInvoiceDiscount);
 
-    const updated: FeeInvoice = {
-      ...editingInvoice,
-      feeType: editInvoiceFeeType,
-      netAmount: newNet,
-      dueAmount: newDue,
-      status: newStatus,
-      dueDate: editInvoiceDueDate,
-      discount: Number(editInvoiceDiscount),
-    };
-    StorageService.updateInvoice(updated, activeRole);
-    setInvoices(StorageService.getInvoices());
-    setShowEditInvoiceModal(false);
-    setEditingInvoice(null);
+    authorizeTransaction(
+      {
+        titleBn: `ইনভয়েস সংশোধন (${targetInv.invoiceNo})`,
+        titleEn: `Update Invoice (${targetInv.invoiceNo})`,
+        summaryBn: `${targetInv.studentNameBn || targetInv.studentNameEn} • ${newFeeType}`,
+        summaryEn: `${targetInv.studentNameEn} • ${newFeeType}`,
+        amountLabel: formatTaka(newNet),
+        tone: 'amber',
+      },
+      (authStamp) => {
+        const newPaid = targetInv.paidAmount;
+        const newDue = Math.max(0, newNet - newPaid);
+        const newStatus = newDue === 0 ? 'Paid' : newPaid > 0 ? 'Partial' : 'Unpaid';
+
+        const updated: FeeInvoice = {
+          ...targetInv,
+          feeType: newFeeType,
+          netAmount: newNet,
+          dueAmount: newDue,
+          status: newStatus,
+          dueDate: newDueDate,
+          discount: newDiscount,
+          ...authStamp,
+        };
+        StorageService.updateInvoice(updated, activeRole);
+        setInvoices(StorageService.getInvoices());
+        setShowEditInvoiceModal(false);
+        setEditingInvoice(null);
+      }
+    );
   };
 
   const handleDeleteInvoice = (inv: FeeInvoice) => {
     if (!canEditDeleteInvoices) {
       return;
     }
-    if (
-      window.confirm(
-        language === 'bn'
-          ? `আপনি কি নিশ্চিত ইনভয়েস "${inv.invoiceNo}" (${inv.studentNameEn} - ৳${inv.netAmount}) মুছে ফেলতে চান?`
-          : `Are you sure you want to delete invoice "${inv.invoiceNo}"?`
-      )
-    ) {
-      StorageService.deleteInvoice(inv.id, activeRole);
-      setInvoices(StorageService.getInvoices());
-    }
+    authorizeTransaction(
+      {
+        titleBn: `ইনভয়েস মুছে ফেলা (${inv.invoiceNo})`,
+        titleEn: `Delete Invoice (${inv.invoiceNo})`,
+        summaryBn: `${inv.studentNameBn || inv.studentNameEn} • ${inv.feeType}`,
+        summaryEn: `${inv.studentNameEn} • ${inv.feeType}`,
+        amountLabel: formatTaka(inv.netAmount),
+        tone: 'rose',
+      },
+      () => {
+        StorageService.deleteInvoice(inv.id, activeRole);
+        setInvoices(StorageService.getInvoices());
+      }
+    );
   };
 
   const handleClearAllOnlineRequests = () => {
-    if (
-      window.confirm(
-        language === 'bn'
-          ? 'আপনি কি নিশ্চিত সকল অনলাইন পেমেন্ট রিকোয়েস্ট তালিকা মুছে সম্পূর্ণ খালি করতে চান?'
-          : 'Are you sure you want to clear all online payment requests?'
-      )
-    ) {
-      StorageService.clearOnlinePaymentRequests();
-      setOnlineRequests([]);
-      setApprovalFeedbackNotice({
-        type: 'success',
-        message:
-          language === 'bn'
-            ? 'অনলাইন পেমেন্ট রিকোয়েস্ট তালিকা সম্পূর্ণ খালি করা হয়েছে।'
-            : 'Online payment requests list has been cleared.',
-      });
-    }
+    authorizeTransaction(
+      {
+        titleBn: 'সকল অনলাইন পেমেন্ট রিকোয়েস্ট খালি করা',
+        titleEn: 'Clear All Online Payment Requests',
+        summaryBn: 'তালিকার সকল অনলাইন পেমেন্ট রিকোয়েস্ট মুছে ফেলা হবে',
+        summaryEn: 'Removes all entries from online payment request list',
+        tone: 'rose',
+      },
+      () => {
+        StorageService.clearOnlinePaymentRequests();
+        setOnlineRequests([]);
+        setApprovalFeedbackNotice({
+          type: 'success',
+          message:
+            language === 'bn'
+              ? 'অনলাইন পেমেন্ট রিকোয়েস্ট তালিকা সম্পূর্ণ খালি করা হয়েছে।'
+              : 'Online payment requests list has been cleared.',
+        });
+      }
+    );
   };
 
   const handleDeleteOnlineRequest = (req: OnlinePaymentRequest) => {
-    if (
-      window.confirm(
-        language === 'bn'
-          ? `আপনি কি নিশ্চিত রিকোয়েস্ট "${req.receiptNo}" (${req.studentName} - TrxID: ${req.transactionId}) মুছে ফেলতে চান?`
-          : `Are you sure you want to delete request "${req.receiptNo}"?`
-      )
-    ) {
-      StorageService.deleteOnlinePaymentRequest(req.id);
-      setOnlineRequests(StorageService.getOnlinePaymentRequests());
-      setApprovalFeedbackNotice({
-        type: 'success',
-        message:
-          language === 'bn'
-            ? `রিকোয়েস্ট "${req.receiptNo}" সফলভাবে মুছে ফেলা হয়েছে।`
-            : `Request "${req.receiptNo}" deleted.`,
-      });
-    }
+    authorizeTransaction(
+      {
+        titleBn: `অনলাইন রিকোয়েস্ট মুছে ফেলা (${req.receiptNo})`,
+        titleEn: `Delete Online Request (${req.receiptNo})`,
+        summaryBn: `${req.studentName} • TrxID: ${req.transactionId}`,
+        summaryEn: `${req.studentName} • TrxID: ${req.transactionId}`,
+        amountLabel: formatTaka(req.amount),
+        tone: 'rose',
+      },
+      () => {
+        StorageService.deleteOnlinePaymentRequest(req.id);
+        setOnlineRequests(StorageService.getOnlinePaymentRequests());
+        setApprovalFeedbackNotice({
+          type: 'success',
+          message:
+            language === 'bn'
+              ? `রিকোয়েস্ট "${req.receiptNo}" সফলভাবে মুছে ফেলা হয়েছে।`
+              : `Request "${req.receiptNo}" deleted.`,
+        });
+      }
+    );
   };
 
   const [selectedSessionFilter, setSelectedSessionFilter] = useState<'all' | '2026' | '2027' | '2028'>('all');
@@ -2297,6 +2470,36 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {canManage && (
+            <button
+              type="button"
+              onClick={openSecuritySettings}
+              className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                securityConfig.requireTransactionPassword
+                  ? 'bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+              }`}
+              title={
+                language === 'bn'
+                  ? 'আমার ট্রানজেকশন পিন পরিবর্তন ও নিরাপত্তা নীতি'
+                  : 'My Transaction PIN & Security Settings'
+              }
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>{language === 'bn' ? 'ট্রানজেকশন পিন' : 'Transaction PIN'}</span>
+            </button>
+          )}
+          {canManage && isTimedUnlocked && (
+            <button
+              type="button"
+              onClick={lockNow}
+              className="flex items-center space-x-1 px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold cursor-pointer"
+              title={language === 'bn' ? 'এখনই লেনদেন সেশন লক করুন' : 'Lock transaction session now'}
+            >
+              <UnlockIcon className="w-3.5 h-3.5" />
+              <span>{language === 'bn' ? 'আনলক • লক করুন' : 'Unlocked • Lock'}</span>
+            </button>
+          )}
           {canManage && (
             <button
               onClick={() => {
@@ -4738,16 +4941,20 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                           <button
                             type="button"
                             onClick={() => {
-                              if (
-                                window.confirm(
-                                  language === 'bn'
-                                    ? `আয় ভাউচার "${v.voucherNo}" (${formatTaka(v.amount)}) মুছে ফেলবেন?`
-                                    : `Delete income voucher "${v.voucherNo}"?`
-                                )
-                              ) {
-                                StorageService.deleteIncomeVoucher(v.id, activeRole);
-                                refreshFinanceData();
-                              }
+                              authorizeTransaction(
+                                {
+                                  titleBn: `আয় ভাউচার মুছে ফেলা (${v.voucherNo})`,
+                                  titleEn: `Delete Income Voucher (${v.voucherNo})`,
+                                  summaryBn: `${v.title} • প্রাপক/ক্রেতা: ${v.receivedFrom}`,
+                                  summaryEn: `${v.title} • Received From: ${v.receivedFrom}`,
+                                  amountLabel: formatTaka(v.amount),
+                                  tone: 'rose',
+                                },
+                                () => {
+                                  StorageService.deleteIncomeVoucher(v.id, activeRole);
+                                  refreshFinanceData();
+                                }
+                              );
                             }}
                             className="p-1 text-slate-400 hover:text-rose-600 rounded"
                             title={language === 'bn' ? 'আয় ভাউচার মুছে ফেলুন' : 'Delete income voucher'}
@@ -5052,6 +5259,11 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                       <div className="text-[10px] text-slate-600">
                         Date: {formatDate(selectedReceipt.paidDate)}
                       </div>
+                      {selectedReceipt.authVerifiedAt && (
+                        <div className="mt-0.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-[9px] font-bold text-emerald-700">
+                          ✓ PIN Verified
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -6403,6 +6615,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           onClose={() => setShowCashbookPrintModal(false)}
         />
       )}
+
+      {/* TRANSACTION PASSWORD AUTHORIZATION & SECURITY POLICY MODALS */}
+      {authModalElement}
     </div>
   );
 };

@@ -230,6 +230,7 @@ export interface Staff {
   permissions?: StaffRBACPermissions;
   bloodGroup?: string;
   emergencyContact?: string;
+  transactionPinHash?: string;
 }
 
 export type AttendanceStatus = 'Present' | 'Absent' | 'Late' | 'Excused';
@@ -470,6 +471,8 @@ export interface FeeInvoice {
   status: 'Paid' | 'Unpaid' | 'Partial';
   paymentDate?: string;
   paymentMethod?: string;
+  authVerifiedAt?: string;
+  authMethod?: TransactionAuthMethod;
 }
 
 export interface FeePayment {
@@ -490,6 +493,8 @@ export interface FeePayment {
   collectedById?: string;
   collectedByEmail?: string;
   collectedByRole?: string;
+  authVerifiedAt?: string;
+  authMethod?: TransactionAuthMethod;
   notes?: string;
   remarks?: string;
 }
@@ -519,6 +524,8 @@ export interface Expense {
   approvedById?: string;
   approvedByEmail?: string;
   approvedByRole?: string;
+  authVerifiedAt?: string;
+  authMethod?: TransactionAuthMethod;
   notes?: string;
 }
 
@@ -568,6 +575,8 @@ export interface IncomeVoucher {
   receivedById?: string;
   receivedByEmail?: string;
   receivedByRole?: string;
+  authVerifiedAt?: string;
+  authMethod?: TransactionAuthMethod;
   notes?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -977,8 +986,21 @@ export interface StaffSalaryPayment {
   paymentMethod: SalaryPaymentMethod;
   referenceNo?: string;
   paidBy: string;
+  authVerifiedAt?: string;
+  authMethod?: TransactionAuthMethod;
   remarks?: string;
   expenseId?: string;
   createdAt: string;
   updatedAt?: string;
+}
+
+export type TransactionAuthMethod = 'login_password' | 'transaction_pin' | 'google_reauth';
+
+export interface TransactionSecurityConfig {
+  requireTransactionPassword: boolean;
+  promptFrequency: 'always' | 'timed_15m';
+  allowDedicatedPin: boolean;
+  userPinHashes?: Record<string, string>;
+  updatedAt?: string;
+  updatedBy?: string;
 }

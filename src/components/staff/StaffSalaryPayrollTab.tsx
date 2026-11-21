@@ -10,6 +10,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useSchool } from '../../context/SchoolContext';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
 import { DigitInput } from '../common/DigitInput';
+import { useTransactionPasswordGuard } from '../fees/TransactionPasswordModal';
 import {
   PAYROLL_MONTHS,
   getCurrentYearMonth,
@@ -114,6 +115,7 @@ export const StaffSalaryPayrollTab: React.FC<StaffSalaryPayrollTabProps> = ({
 
   // Toast banner
   const [bannerMessage, setBannerMessage] = useState<string>('');
+  const { authorizeTransaction, authModalElement } = useTransactionPasswordGuard(language);
 
   const reloadData = () => {
     setStaffList(StorageService.getStaff());
@@ -320,56 +322,93 @@ export const StaffSalaryPayrollTab: React.FC<StaffSalaryPayrollTabProps> = ({
       return;
     }
 
+    const summarySnapshot = payModalSummary;
     const totalPaidAfter = modalAlreadyPaid + payAmountNow;
     const dueAfter = Math.max(0, modalNetPayable - totalPaidAfter);
     const nextStatus: StaffSalaryPayment['status'] =
       dueAfter === 0 ? 'Paid' : totalPaidAfter > 0 ? 'Partial' : 'Unpaid';
+    const voucherNoInput = payVoucherNo.trim();
+    const basicSnap = payBasic;
+    const houseSnap = payHouseRent;
+    const medSnap = payMedical;
+    const otherAllowSnap = payOtherAllow;
+    const bonusSnap = payBonus;
+    const grossSnap = modalGross;
+    const pfSnap = payPfDeduction;
+    const otherDedSnap = payOtherDeduction;
+    const dedNoteSnap = payDeductionNote.trim() || undefined;
+    const netSnap = modalNetPayable;
+    const amtSnap = payAmountNow;
+    const dateSnap = payDate;
+    const methodSnap = payMethod;
+    const refSnap = payRefNo.trim() || undefined;
+    const remarksSnap = payRemarks.trim() || undefined;
+    const syncExpSnap = syncToExpense;
 
-    const record: StaffSalaryPayment = {
-      id: `sal_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      voucherNo: payVoucherNo.trim() || StorageService.generateNextSalaryVoucherNo(payModalSummary.month),
-      staffId: payModalSummary.staff.id,
-      employeeId: payModalSummary.staff.employeeId,
-      staffNameEn: payModalSummary.staff.nameEn,
-      staffNameBn: payModalSummary.staff.nameBn || payModalSummary.staff.nameEn,
-      designation: payModalSummary.staff.designation,
-      department: payModalSummary.staff.department,
-      month: payModalSummary.month,
-      basicSalary: payBasic,
-      houseRentAllowance: payHouseRent,
-      medicalAllowance: payMedical,
-      otherAllowance: payOtherAllow,
-      bonus: payBonus,
-      grossSalary: modalGross,
-      providentFundDeduction: payPfDeduction,
-      otherDeduction: payOtherDeduction,
-      deductionNote: payDeductionNote.trim() || undefined,
-      netPayable: modalNetPayable,
-      paidAmount: payAmountNow,
-      dueAmount: dueAfter,
-      status: nextStatus,
-      paymentDate: payDate,
-      paymentMethod: payMethod,
-      referenceNo: payRefNo.trim() || undefined,
-      paidBy: currentUser?.name || 'Admin',
-      remarks: payRemarks.trim() || undefined,
-      createdAt: new Date().toISOString(),
-    };
+    authorizeTransaction(
+      {
+        titleBn: 'স্টাফ বেতন পরিশোধ অনুমোদন',
+        titleEn: 'Authorize Staff Salary Payment',
+        summaryBn: `${summarySnapshot.staff.nameBn || summarySnapshot.staff.nameEn} • ${formatMonthLabel(
+          summarySnapshot.month,
+          'bn'
+        )} (${methodSnap})`,
+        summaryEn: `${summarySnapshot.staff.nameEn} • ${formatMonthLabel(
+          summarySnapshot.month,
+          'en'
+        )} (${methodSnap})`,
+        amountLabel: formatTaka(amtSnap),
+        tone: 'rose',
+      },
+      (authStamp) => {
+        const record: StaffSalaryPayment = {
+          id: `sal_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          voucherNo: voucherNoInput || StorageService.generateNextSalaryVoucherNo(summarySnapshot.month),
+          staffId: summarySnapshot.staff.id,
+          employeeId: summarySnapshot.staff.employeeId,
+          staffNameEn: summarySnapshot.staff.nameEn,
+          staffNameBn: summarySnapshot.staff.nameBn || summarySnapshot.staff.nameEn,
+          designation: summarySnapshot.staff.designation,
+          department: summarySnapshot.staff.department,
+          month: summarySnapshot.month,
+          basicSalary: basicSnap,
+          houseRentAllowance: houseSnap,
+          medicalAllowance: medSnap,
+          otherAllowance: otherAllowSnap,
+          bonus: bonusSnap,
+          grossSalary: grossSnap,
+          providentFundDeduction: pfSnap,
+          otherDeduction: otherDedSnap,
+          deductionNote: dedNoteSnap,
+          netPayable: netSnap,
+          paidAmount: amtSnap,
+          dueAmount: dueAfter,
+          status: nextStatus,
+          paymentDate: dateSnap,
+          paymentMethod: methodSnap,
+          referenceNo: refSnap,
+          paidBy: currentUser?.name || 'Admin',
+          remarks: remarksSnap,
+          createdAt: new Date().toISOString(),
+          ...authStamp,
+        };
 
-    StorageService.addStaffSalaryPayment(record, { syncToExpense });
-    reloadData();
-    onExpenseUpdated?.();
-    setPayModalSummary(null);
-    showNotice(
-      language === 'bn'
-        ? `${payModalSummary.staff.nameBn || payModalSummary.staff.nameEn}-এর ${formatMonthLabel(
-            payModalSummary.month,
-            'bn'
-          )} মাসের বেতন ${formatTaka(payAmountNow)} সফলভাবে পরিশোধ হয়েছে।`
-        : `Salary ${formatTaka(payAmountNow)} paid to ${payModalSummary.staff.nameEn} for ${formatMonthLabel(
-            payModalSummary.month,
-            'en'
-          )}.`
+        StorageService.addStaffSalaryPayment(record, { syncToExpense: syncExpSnap });
+        reloadData();
+        onExpenseUpdated?.();
+        setPayModalSummary(null);
+        showNotice(
+          language === 'bn'
+            ? `${summarySnapshot.staff.nameBn || summarySnapshot.staff.nameEn}-এর ${formatMonthLabel(
+                summarySnapshot.month,
+                'bn'
+              )} মাসের বেতন ${formatTaka(amtSnap)} সফলভাবে পরিশোধ হয়েছে।`
+            : `Salary ${formatTaka(amtSnap)} paid to ${summarySnapshot.staff.nameEn} for ${formatMonthLabel(
+                summarySnapshot.month,
+                'en'
+              )}.`
+        );
+      }
     );
   };
 
@@ -401,79 +440,115 @@ export const StaffSalaryPayrollTab: React.FC<StaffSalaryPayrollTabProps> = ({
     e.preventDefault();
     const targets = unpaidForMonth.filter((u) => bulkSelectedStaffIds.has(u.staff.id));
     if (targets.length === 0) return;
+    const totalDueAmount = targets.reduce((sum, s) => sum + (s.dueAmount || 0), 0);
+    const bulkDateSnap = bulkPayDate;
+    const bulkMethodSnap = bulkPayMethod;
+    const bulkSyncSnap = bulkSyncExpense;
+    const bulkNotesSnap = bulkNotes.trim();
 
-    let totalDisbursed = 0;
-    targets.forEach((summary) => {
-      const dueNow = summary.dueAmount;
-      if (dueNow <= 0) return;
-      const voucherNo = StorageService.generateNextSalaryVoucherNo(summary.month);
-      const record: StaffSalaryPayment = {
-        id: `sal_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        voucherNo,
-        staffId: summary.staff.id,
-        employeeId: summary.staff.employeeId,
-        staffNameEn: summary.staff.nameEn,
-        staffNameBn: summary.staff.nameBn || summary.staff.nameEn,
-        designation: summary.staff.designation,
-        department: summary.staff.department,
-        month: summary.month,
-        basicSalary: summary.basicSalary,
-        houseRentAllowance: summary.houseRentAllowance,
-        medicalAllowance: summary.medicalAllowance,
-        otherAllowance: summary.otherAllowance,
-        bonus: summary.bonus,
-        grossSalary: summary.grossSalary,
-        providentFundDeduction: summary.providentFundDeduction,
-        otherDeduction: summary.otherDeduction,
-        deductionNote: summary.deductionNote,
-        netPayable: summary.netPayable,
-        paidAmount: dueNow,
-        dueAmount: 0,
-        status: 'Paid',
-        paymentDate: bulkPayDate,
-        paymentMethod: bulkPayMethod,
-        paidBy: currentUser?.name || 'Admin',
-        remarks: bulkNotes.trim() || `Bulk monthly payroll settlement (${summary.month})`,
-        createdAt: new Date().toISOString(),
-      };
-      StorageService.addStaffSalaryPayment(record, { syncToExpense: bulkSyncExpense });
-      totalDisbursed += dueNow;
-    });
+    authorizeTransaction(
+      {
+        titleBn: 'বাল্ক স্টাফ বেতন পরিশোধ অনুমোদন',
+        titleEn: 'Authorize Bulk Staff Payroll Disbursement',
+        summaryBn: `${toBnNumber(targets.length)} জন শিক্ষক/স্টাফ • ${formatMonthLabel(
+          selectedMonth,
+          'bn'
+        )} (${bulkMethodSnap})`,
+        summaryEn: `${targets.length} staff • ${formatMonthLabel(selectedMonth, 'en')} (${bulkMethodSnap})`,
+        amountLabel: formatTaka(totalDueAmount),
+        tone: 'rose',
+      },
+      (authStamp) => {
+        let totalDisbursed = 0;
+        targets.forEach((summary) => {
+          const dueNow = summary.dueAmount;
+          if (dueNow <= 0) return;
+          const voucherNo = StorageService.generateNextSalaryVoucherNo(summary.month);
+          const record: StaffSalaryPayment = {
+            id: `sal_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            voucherNo,
+            staffId: summary.staff.id,
+            employeeId: summary.staff.employeeId,
+            staffNameEn: summary.staff.nameEn,
+            staffNameBn: summary.staff.nameBn || summary.staff.nameEn,
+            designation: summary.staff.designation,
+            department: summary.staff.department,
+            month: summary.month,
+            basicSalary: summary.basicSalary,
+            houseRentAllowance: summary.houseRentAllowance,
+            medicalAllowance: summary.medicalAllowance,
+            otherAllowance: summary.otherAllowance,
+            bonus: summary.bonus,
+            grossSalary: summary.grossSalary,
+            providentFundDeduction: summary.providentFundDeduction,
+            otherDeduction: summary.otherDeduction,
+            deductionNote: summary.deductionNote,
+            netPayable: summary.netPayable,
+            paidAmount: dueNow,
+            dueAmount: 0,
+            status: 'Paid',
+            paymentDate: bulkDateSnap,
+            paymentMethod: bulkMethodSnap,
+            paidBy: currentUser?.name || 'Admin',
+            remarks: bulkNotesSnap || `Bulk monthly payroll settlement (${summary.month})`,
+            createdAt: new Date().toISOString(),
+            ...authStamp,
+          };
+          StorageService.addStaffSalaryPayment(record, { syncToExpense: bulkSyncSnap });
+          totalDisbursed += dueNow;
+        });
 
-    reloadData();
-    onExpenseUpdated?.();
-    setShowBulkModal(false);
-    showNotice(
-      language === 'bn'
-        ? `${toBnNumber(targets.length)} জন স্টাফের ${formatMonthLabel(
-            selectedMonth,
-            'bn'
-          )} মাসের মোট ${formatTaka(totalDisbursed)} বেতন পরিশোধ করা হয়েছে।`
-        : `Paid ${formatTaka(totalDisbursed)} across ${targets.length} staff for ${formatMonthLabel(
-            selectedMonth,
-            'en'
-          )}.`
+        reloadData();
+        onExpenseUpdated?.();
+        setShowBulkModal(false);
+        showNotice(
+          language === 'bn'
+            ? `${toBnNumber(targets.length)} জন স্টাফের ${formatMonthLabel(
+                selectedMonth,
+                'bn'
+              )} মাসের মোট ${formatTaka(totalDisbursed)} বেতন পরিশোধ করা হয়েছে।`
+            : `Paid ${formatTaka(totalDisbursed)} across ${targets.length} staff for ${formatMonthLabel(
+                selectedMonth,
+                'en'
+              )}.`
+        );
+      }
     );
   };
 
   const handleConfirmDeletePayment = () => {
     if (!paymentToDelete) return;
-    StorageService.deleteStaffSalaryPayment(paymentToDelete.id);
-    reloadData();
-    onExpenseUpdated?.();
+    const targetPay = paymentToDelete;
+    authorizeTransaction(
+      {
+        titleBn: `বেতন ভাউচার বাতিল (${targetPay.voucherNo})`,
+        titleEn: `Revert Salary Payment (${targetPay.voucherNo})`,
+        summaryBn: `${targetPay.staffNameBn || targetPay.staffNameEn} • ${formatMonthLabel(
+          targetPay.month,
+          'bn'
+        )}`,
+        summaryEn: `${targetPay.staffNameEn} • ${formatMonthLabel(targetPay.month, 'en')}`,
+        amountLabel: formatTaka(targetPay.paidAmount),
+        tone: 'rose',
+      },
+      () => {
+        StorageService.deleteStaffSalaryPayment(targetPay.id);
+        reloadData();
+        onExpenseUpdated?.();
 
-    // Also refresh payModalSummary if open
-    if (payModalSummary && payModalSummary.staff.id === paymentToDelete.staffId) {
-      const freshPayments = StorageService.getStaffSalaries();
-      setPayModalSummary(
-        computeStaffMonthSummary(payModalSummary.staff, payModalSummary.month, freshPayments, currentYm)
-      );
-    }
-    setPaymentToDelete(null);
-    showNotice(
-      language === 'bn'
-        ? 'বেতন পেমেন্ট রেকর্ড এবং সংশ্লিষ্ট খরচের এন্ট্রি বাতিল করা হয়েছে।'
-        : 'Salary payment record and linked expense entry reverted.'
+        if (payModalSummary && payModalSummary.staff.id === targetPay.staffId) {
+          const freshPayments = StorageService.getStaffSalaries();
+          setPayModalSummary(
+            computeStaffMonthSummary(payModalSummary.staff, payModalSummary.month, freshPayments, currentYm)
+          );
+        }
+        setPaymentToDelete(null);
+        showNotice(
+          language === 'bn'
+            ? 'বেতন পেমেন্ট রেকর্ড এবং সংশ্লিষ্ট খরচের এন্ট্রি বাতিল করা হয়েছে।'
+            : 'Salary payment record and linked expense entry reverted.'
+        );
+      }
     );
   };
 
@@ -2262,6 +2337,8 @@ export const StaffSalaryPayrollTab: React.FC<StaffSalaryPayrollTabProps> = ({
           </div>
         </div>
       )}
+
+      {authModalElement}
     </div>
   );
 };

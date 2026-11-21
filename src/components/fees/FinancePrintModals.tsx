@@ -216,6 +216,11 @@ export const ExpenseVoucherPrintModal: React.FC<ExpenseVoucherPrintModalProps> =
                 {expense.voucherNo}
               </div>
               <div className="text-[10px] text-slate-600">Date: {formatDate(expense.date)}</div>
+              {expense.authVerifiedAt && (
+                <div className="mt-0.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-[9px] font-bold text-emerald-700">
+                  ✓ PIN Verified
+                </div>
+              )}
             </div>
           </div>
 

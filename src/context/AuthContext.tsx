@@ -28,6 +28,11 @@ import {
   SaaSSchoolRecord,
 } from '../services/saasApi';
 import { hydrateSchoolProfileFromSaaSSchool } from '../utils/schoolNameResolver';
+import {
+  cacheSessionPasswordVerifier,
+  clearSessionPasswordVerifier,
+  lockTransactionSession,
+} from '../utils/transactionAuth';
 
 export interface LoginResult {
   success: boolean;
@@ -784,6 +789,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
+      await cacheSessionPasswordVerifier(cred.user.uid, email, pass);
       setFirebaseUser(cred.user);
       setIsAuthInitializing(false);
       return { success: true };
@@ -935,6 +941,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     safeRemoveLocalStorage('school_erp_role');
     safeRemoveLocalStorage('school_erp_user');
     CloudSyncService.clearTenantSession();
+    clearSessionPasswordVerifier();
+    lockTransactionSession();
     await logoutUser().catch(console.error);
   };
 

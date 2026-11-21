@@ -15,6 +15,7 @@ import { DigitInput } from '../common/DigitInput';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 import { PeriodFilterBar } from './PeriodFilterBar';
 import { ExpenseSummaryPrintModal, IncomeSummaryPrintModal } from './FinancePrintModals';
+import { useTransactionPasswordGuard } from './TransactionPasswordModal';
 import {
   DateFilterPeriod,
   getPeriodDisplayLabel,
@@ -373,6 +374,7 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
 }) => {
   const [subMode, setSubMode] = useState<'income' | 'expense' | 'catalog'>(initialSubMode);
   const [saleItems, setSaleItems] = useState<SaleItem[]>(() => StorageService.getSaleItems());
+  const { authorizeTransaction, authModalElement } = useTransactionPasswordGuard(language);
 
   useEffect(() => {
     const refreshCatalog = () => setSaleItems(StorageService.getSaleItems());
@@ -872,90 +874,140 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
     const finalTitle = voucherTitleInput.trim() || autoTitle;
     const finalBuyer =
       receivedFromInput.trim() || (language === 'bn' ? 'নগদ ক্রেতা (Walk-in)' : 'Walk-in Buyer');
+    const itemsSnapshot = [...cartItems];
+    const subtotalSnapshot = cartSubtotal;
+    const discountSnapshot = Number(discountAmount) || 0;
+    const netSnapshot = netReceivable;
+    const dateSnapshot = voucherDateInput || todayIso;
+    const phoneSnapshot = buyerPhoneInput.trim() || undefined;
+    const studentIdSnapshot = buyerMode === 'student' && selectedStudentId ? selectedStudentId : undefined;
+    const methodSnapshot = paymentMethodInput;
+    const trxSnapshot = transactionIdInput.trim() || undefined;
+    const notesSnapshot = voucherNotesInput.trim() || undefined;
 
     if (editingVoucher) {
       if (!canEditDeleteInvoices) return;
-      const updatedVoucher: IncomeVoucher = {
-        ...editingVoucher,
-        category: resolvedCategory,
-        title: finalTitle,
-        items: cartItems,
-        subtotal: cartSubtotal,
-        discount: Number(discountAmount) || 0,
-        amount: netReceivable,
-        date: voucherDateInput || todayIso,
-        receivedFrom: finalBuyer,
-        buyerPhone: buyerPhoneInput.trim() || undefined,
-        studentId: buyerMode === 'student' && selectedStudentId ? selectedStudentId : undefined,
-        paymentMethod: paymentMethodInput,
-        transactionId: transactionIdInput.trim() || undefined,
-        notes: voucherNotesInput.trim() || undefined,
-        updatedAt: new Date().toISOString(),
-      };
-      StorageService.updateIncomeVoucher(updatedVoucher, activeRole);
-      onRefreshAll();
-      setSaleItems(StorageService.getSaleItems());
-      setShowVoucherModal(false);
-      resetPosForm();
-      showBanner(
-        language === 'bn'
-          ? `✓ আয় ভাউচার ${updatedVoucher.voucherNo} সফলভাবে সংশোধন করা হয়েছে।`
-          : `✓ Income voucher ${updatedVoucher.voucherNo} updated.`,
-        'success'
+      const targetVoucher = editingVoucher;
+      authorizeTransaction(
+        {
+          titleBn: `আয় ভাউচার সংশোধন (${targetVoucher.voucherNo})`,
+          titleEn: `Update Income Voucher (${targetVoucher.voucherNo})`,
+          summaryBn: `${finalTitle} • প্রদানকারী: ${finalBuyer}`,
+          summaryEn: `${finalTitle} • Received From: ${finalBuyer}`,
+          amountLabel: formatTaka(netSnapshot),
+          tone: 'amber',
+        },
+        (authStamp) => {
+          const updatedVoucher: IncomeVoucher = {
+            ...targetVoucher,
+            category: resolvedCategory,
+            title: finalTitle,
+            items: itemsSnapshot,
+            subtotal: subtotalSnapshot,
+            discount: discountSnapshot,
+            amount: netSnapshot,
+            date: dateSnapshot,
+            receivedFrom: finalBuyer,
+            buyerPhone: phoneSnapshot,
+            studentId: studentIdSnapshot,
+            paymentMethod: methodSnapshot,
+            transactionId: trxSnapshot,
+            notes: notesSnapshot,
+            updatedAt: new Date().toISOString(),
+            ...authStamp,
+          };
+          StorageService.updateIncomeVoucher(updatedVoucher, activeRole);
+          onRefreshAll();
+          setSaleItems(StorageService.getSaleItems());
+          setShowVoucherModal(false);
+          resetPosForm();
+          showBanner(
+            language === 'bn'
+              ? `✓ আয় ভাউচার ${updatedVoucher.voucherNo} সফলভাবে সংশোধন করা হয়েছে।`
+              : `✓ Income voucher ${updatedVoucher.voucherNo} updated.`,
+            'success'
+          );
+        }
       );
       return;
     }
 
-    const voucherNo = StorageService.generateNextIncomeVoucherNo(voucherDateInput || todayIso);
-    const newVoucher: IncomeVoucher = {
-      id: `inc_${Date.now()}`,
-      voucherNo,
-      category: resolvedCategory,
-      title: finalTitle,
-      items: cartItems,
-      subtotal: cartSubtotal,
-      discount: Number(discountAmount) || 0,
-      amount: netReceivable,
-      date: voucherDateInput || todayIso,
-      receivedFrom: finalBuyer,
-      buyerPhone: buyerPhoneInput.trim() || undefined,
-      studentId: buyerMode === 'student' && selectedStudentId ? selectedStudentId : undefined,
-      paymentMethod: paymentMethodInput,
-      transactionId: transactionIdInput.trim() || undefined,
-      receivedBy: currentUserName,
-      receivedById: currentUserId,
-      receivedByEmail: currentUserEmail,
-      receivedByRole: activeRole || undefined,
-      notes: voucherNotesInput.trim() || undefined,
-      createdAt: new Date().toISOString(),
-    };
+    authorizeTransaction(
+      {
+        titleBn: 'নতুন আয় ভাউচার / ইনভয়েস অনুমোদন',
+        titleEn: 'Authorize New Income Voucher / Memo',
+        summaryBn: `${finalTitle} • প্রদানকারী: ${finalBuyer} (${methodSnapshot})`,
+        summaryEn: `${finalTitle} • From: ${finalBuyer} (${methodSnapshot})`,
+        amountLabel: formatTaka(netSnapshot),
+        tone: 'blue',
+      },
+      (authStamp) => {
+        const voucherNo = StorageService.generateNextIncomeVoucherNo(dateSnapshot);
+        const newVoucher: IncomeVoucher = {
+          id: `inc_${Date.now()}`,
+          voucherNo,
+          category: resolvedCategory,
+          title: finalTitle,
+          items: itemsSnapshot,
+          subtotal: subtotalSnapshot,
+          discount: discountSnapshot,
+          amount: netSnapshot,
+          date: dateSnapshot,
+          receivedFrom: finalBuyer,
+          buyerPhone: phoneSnapshot,
+          studentId: studentIdSnapshot,
+          paymentMethod: methodSnapshot,
+          transactionId: trxSnapshot,
+          receivedBy: currentUserName,
+          receivedById: currentUserId,
+          receivedByEmail: currentUserEmail,
+          receivedByRole: activeRole || undefined,
+          notes: notesSnapshot,
+          createdAt: new Date().toISOString(),
+          ...authStamp,
+        };
 
-    StorageService.addIncomeVoucher(newVoucher);
-    onRefreshAll();
-    setSaleItems(StorageService.getSaleItems());
-    setShowVoucherModal(false);
-    resetPosForm();
-    setPrintingVoucher(newVoucher);
-    showBanner(
-      language === 'bn'
-        ? `✓ আয় ভাউচার ${voucherNo} (${formatTaka(netReceivable)}) সফলভাবে তৈরি হয়েছে!`
-        : `✓ Income voucher ${voucherNo} (${formatTaka(netReceivable)}) created!`,
-      'success'
+        StorageService.addIncomeVoucher(newVoucher);
+        onRefreshAll();
+        setSaleItems(StorageService.getSaleItems());
+        setShowVoucherModal(false);
+        resetPosForm();
+        setPrintingVoucher(newVoucher);
+        showBanner(
+          language === 'bn'
+            ? `✓ আয় ভাউচার ${voucherNo} (${formatTaka(netSnapshot)}) সফলভাবে তৈরি হয়েছে!`
+            : `✓ Income voucher ${voucherNo} (${formatTaka(netSnapshot)}) created!`,
+          'success'
+        );
+      }
     );
   };
 
   const handleConfirmDeleteVoucher = () => {
     if (!confirmDeleteVoucher || !canEditDeleteInvoices) return;
-    StorageService.deleteIncomeVoucher(confirmDeleteVoucher.id, activeRole);
-    onRefreshAll();
-    setSaleItems(StorageService.getSaleItems());
-    showBanner(
-      language === 'bn'
-        ? `আয় ভাউচার ${confirmDeleteVoucher.voucherNo} মুছে ফেলা হয়েছে ও স্টক সমন্বয় করা হয়েছে।`
-        : `Income voucher ${confirmDeleteVoucher.voucherNo} deleted.`,
-      'info'
+    const targetVoucher = confirmDeleteVoucher;
+    authorizeTransaction(
+      {
+        titleBn: `আয় ভাউচার মুছে ফেলা (${targetVoucher.voucherNo})`,
+        titleEn: `Delete Income Voucher (${targetVoucher.voucherNo})`,
+        summaryBn: `${targetVoucher.title} • প্রদানকারী: ${targetVoucher.receivedFrom}`,
+        summaryEn: `${targetVoucher.title} • From: ${targetVoucher.receivedFrom}`,
+        amountLabel: formatTaka(targetVoucher.amount),
+        tone: 'rose',
+      },
+      () => {
+        StorageService.deleteIncomeVoucher(targetVoucher.id, activeRole);
+        onRefreshAll();
+        setSaleItems(StorageService.getSaleItems());
+        showBanner(
+          language === 'bn'
+            ? `আয় ভাউচার ${targetVoucher.voucherNo} মুছে ফেলা হয়েছে ও স্টক সমন্বয় করা হয়েছে।`
+            : `Income voucher ${targetVoucher.voucherNo} deleted.`,
+          'info'
+        );
+        setConfirmDeleteVoucher(null);
+      }
     );
-    setConfirmDeleteVoucher(null);
   };
 
   // Catalog CRUD handlers
@@ -2602,6 +2654,11 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
                     Voucher: {printingVoucher.voucherNo}
                   </div>
                   <div className="text-[10px] text-slate-600">Date: {formatDate(printingVoucher.date)}</div>
+                  {printingVoucher.authVerifiedAt && (
+                    <div className="mt-0.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-[9px] font-bold text-emerald-700">
+                      ✓ PIN Verified
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2818,6 +2875,8 @@ export const IncomeVouchersSection: React.FC<IncomeVouchersSectionProps> = ({
           onClose={() => setShowExpenseSummaryPrint(false)}
         />
       )}
+
+      {authModalElement}
     </div>
   );
 };
