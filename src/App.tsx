@@ -580,7 +580,7 @@ function AppContent() {
             activeTab={activeTab}
             onNavigate={handleNavigate}
           />
-          <main className="flex-1 overflow-y-auto p-3.5 sm:p-5 lg:p-6 print:overflow-visible print:p-0">
+          <main className="flex-1 overflow-y-auto p-3.5 pb-20 sm:p-5 sm:pb-16 lg:p-6 lg:pb-16 print:overflow-visible print:p-0">
             <div className="max-w-7xl mx-auto space-y-6 print:max-w-none">
               {renderActiveView()}
             </div>

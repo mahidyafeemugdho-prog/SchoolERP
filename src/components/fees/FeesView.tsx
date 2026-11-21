@@ -325,24 +325,11 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const [deskSelectedClass, setDeskSelectedClass] = useState<string>('all');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(() => students[0] || null);
 
-  // Line items for the new invoice
-  const [invoiceItems, setInvoiceItems] = useState<FeeItem[]>([
-    {
-      id: `item_${Date.now()}_1`,
-      headName: 'Monthly Tuition Fee (মাসিক বেতন)',
-      month: 'October 2026',
-      amount: 1200,
-    },
-    {
-      id: `item_${Date.now()}_2`,
-      headName: 'Examination Fee (পরীক্ষা ফি)',
-      month: '2nd Term 2026',
-      amount: 700,
-    },
-  ]);
+  // Line items for the new invoice (starts empty until cashier explicitly selects fee items)
+  const [invoiceItems, setInvoiceItems] = useState<FeeItem[]>([]);
 
   // Selected multi-months for quick tuition fee addition
-  const [selectedMonths, setSelectedMonths] = useState<string[]>(['October']);
+  const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [academicYear, setAcademicYear] = useState<string>(() => schoolProfile.currentSession || '2026');
   const [monthlyTuitionRate, setMonthlyTuitionRate] = useState<number>(() => {
     const s = students[0];
@@ -1108,25 +1095,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
         return;
       }
 
-      // Auto update current tuition items with this student's class fee
-      setInvoiceItems((prev) => {
-        const hasTuition = prev.some((it) => it.headName.includes('Monthly Tuition Fee') || it.headName.includes('মাসিক বেতন'));
-        if (hasTuition) {
-          return prev.map((item) =>
-            item.headName.includes('Monthly Tuition Fee') || item.headName.includes('মাসিক বেতন')
-              ? { ...item, amount: classFee.tuitionFee }
-              : item
-          );
-        }
-        return [
-          {
-            id: `item_${Date.now()}_1`,
-            headName: `Monthly Tuition Fee (মাসিক বেতন - ${selectedStudent.className})`,
-            month: 'October 2026',
-            amount: classFee.tuitionFee,
-          },
-        ];
-      });
+      // Reset invoice items when switching to another student so no items are pre-selected
+      setInvoiceItems([]);
+      setSelectedMonths([]);
+      setDiscountAmount(0);
+      setDiscountReason('');
+      setLateFineAmount(0);
       setIsManualPaidAmount(false);
     }
   }, [selectedStudent?.id, selectedStudent?.className]);
@@ -1477,16 +1451,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
         setSelectedReceiptInvoice(newInvoice);
         setShowReceiptModal(true);
 
-        // Reset items for next collection
-        setInvoiceItems([
-          {
-            id: `item_${Date.now()}_1`,
-            headName: 'Monthly Tuition Fee (মাসিক বেতন)',
-            month: 'November 2026',
-            amount: 1800,
-          },
-        ]);
-        setSelectedMonths(['November']);
+        // Reset items for next collection (leave empty until next selection)
+        setInvoiceItems([]);
+        setSelectedMonths([]);
         setDiscountAmount(0);
         setDiscountReason('');
         setLateFineAmount(0);
@@ -3339,7 +3306,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                   </div>
 
                   {/* Payment Method & TrxID */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block font-semibold mb-1 text-slate-700">
                         {language === 'bn' ? 'পেমেন্ট মেথড *' : 'Payment Method *'}
@@ -3368,9 +3335,39 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono"
                       />
                     </div>
+                  </div>
+
+                  {/* Primary Action Buttons (Elevated above remarks/footer so floating badges never overlap) */}
+                  <div className="pt-2 pb-1 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInvoiceItems([]);
+                        setSelectedMonths([]);
+                        setDiscountAmount(0);
+                        setDiscountReason('');
+                        setLateFineAmount(0);
+                        setIsManualPaidAmount(false);
+                      }}
+                      className="px-4 py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 font-semibold text-center"
+                    >
+                      {language === 'bn' ? 'মুছে ফেলুন' : 'Clear'}
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={!selectedStudent || invoiceItems.length === 0}
+                      className="flex-1 sm:flex-none flex items-center justify-center space-x-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl font-bold shadow-md shadow-emerald-700/20 transition-all text-sm"
+                    >
+                      <Receipt className="w-4 h-4" />
+                      <span>{language === 'bn' ? 'ফি গ্রহণ ও রসিদ প্রিন্ট করুন' : 'Confirm & Print Official Receipt'}</span>
+                    </button>
+                  </div>
+
+                  {/* Optional Remarks & Cashier Attribution */}
+                  <div className="pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
                     <div>
                       <label className="block font-semibold mb-1 text-slate-700">
-                        {language === 'bn' ? 'বিশেষ মন্তব্য' : 'Receipt Remarks'}
+                        {language === 'bn' ? 'বিশেষ মন্তব্য (ঐচ্ছিক)' : 'Receipt Remarks (Optional)'}
                       </label>
                       <input
                         type="text"
@@ -3380,36 +3377,11 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg"
                       />
                     </div>
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="pt-3 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-100">
-                    <div className="text-[11px] text-slate-500 flex items-center space-x-1.5">
-                      <UserCheck className="w-4 h-4 text-emerald-600" />
+                    <div className="text-[11px] text-slate-500 flex items-center space-x-1.5 sm:justify-end pb-1.5">
+                      <UserCheck className="w-4 h-4 text-emerald-600 shrink-0" />
                       <span>
                         {language === 'bn' ? 'আদায়কারী:' : 'Cashier:'} <strong>{currentUser.name}</strong> ({currentUser.email})
                       </span>
-                    </div>
-
-                    <div className="flex items-center space-x-2 w-full sm:w-auto">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setInvoiceItems([]);
-                          setSelectedMonths([]);
-                        }}
-                        className="px-3.5 py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 font-semibold"
-                      >
-                        {language === 'bn' ? 'মুছে ফেলুন' : 'Clear'}
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={!selectedStudent || invoiceItems.length === 0}
-                        className="flex-1 sm:flex-none flex items-center justify-center space-x-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl font-bold shadow-md shadow-emerald-700/20 transition-all text-sm"
-                      >
-                        <Receipt className="w-4 h-4" />
-                        <span>{language === 'bn' ? 'ফি গ্রহণ ও রসিদ প্রিন্ট করুন' : 'Confirm & Print Official Receipt'}</span>
-                      </button>
                     </div>
                   </div>
                 </div>
@@ -4065,7 +4037,9 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
           preselectedStudentId={selectedStudent?.studentId}
           onGoToCounter={(student, dues) => {
             if (dues && dues.length > 0) {
-              skipNextAutoItemsRef.current = true;
+              if (selectedStudent?.id !== student.id || selectedStudent?.className !== student.className) {
+                skipNextAutoItemsRef.current = true;
+              }
               setInvoiceItems(dues);
             }
             setSelectedStudent(student);
@@ -4620,7 +4594,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                                   type="button"
                                   onClick={() => {
                                     const allStudentDues = group.entries.map((e) => e.dueItem);
-                                    skipNextAutoItemsRef.current = true;
+                                    if (
+                                      selectedStudent?.id !== group.student!.id ||
+                                      selectedStudent?.className !== group.student!.className
+                                    ) {
+                                      skipNextAutoItemsRef.current = true;
+                                    }
                                     setInvoiceItems(
                                       allStudentDues.length > 0
                                         ? allStudentDues
@@ -4723,7 +4702,12 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                                           <button
                                             type="button"
                                             onClick={() => {
-                                              skipNextAutoItemsRef.current = true;
+                                              if (
+                                                selectedStudent?.id !== entry.student!.id ||
+                                                selectedStudent?.className !== entry.student!.className
+                                              ) {
+                                                skipNextAutoItemsRef.current = true;
+                                              }
                                               setInvoiceItems([entry.dueItem]);
                                               setSelectedStudent(entry.student!);
                                               setActiveTab('counter');
