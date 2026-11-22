@@ -2701,9 +2701,17 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                           isSelected ? 'bg-blue-50/80 border-l-4 border-blue-600' : 'hover:bg-slate-50'
                         }`}
                       >
-                        <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 font-bold flex items-center justify-center shrink-0 text-xs">
-                          {st.nameEn.charAt(0)}
-                        </div>
+                        {st.photoUrl ? (
+                          <img
+                            src={st.photoUrl}
+                            alt={st.nameEn}
+                            className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 font-bold flex items-center justify-center shrink-0 text-xs">
+                            {st.nameEn.charAt(0)}
+                          </div>
+                        )}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
                             <span className="font-bold text-slate-900 truncate">{st.nameEn}</span>
@@ -2727,7 +2735,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                   )}
                 </div>
 
-                {/* Selected Student Card */}
+                {/* Selected Student Card: Photo First (Left), Name / ID / Class / Roll After (Right) */}
                 {selectedStudent && (
                   <div className="p-3.5 bg-gradient-to-br from-slate-900 to-blue-950 text-white rounded-xl shadow-xs space-y-2.5">
                     <div className="flex items-center justify-between border-b border-slate-700/60 pb-2">
@@ -2739,30 +2747,60 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                       </span>
                     </div>
 
-                    <div className="flex items-start space-x-3">
-                      <div className="w-10 h-10 rounded-xl bg-blue-600 font-bold text-sm flex items-center justify-center shadow-xs shrink-0">
-                        {selectedStudent.nameEn.slice(0, 2).toUpperCase()}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h5 className="font-bold text-sm truncate">{selectedStudent.nameEn}</h5>
-                        <p className="text-xs text-blue-200 truncate">{selectedStudent.nameBn}</p>
-                        <div className="flex items-center space-x-2 text-[11px] text-slate-300 mt-1 flex-wrap gap-y-1">
-                          <span className="font-semibold">{selectedStudent.className} ({selectedStudent.section})</span>
-                          <span>•</span>
-                          <span>Roll: {selectedStudent.roll}</span>
-                          <span>•</span>
-                          <span className="capitalize">{selectedStudent.shift}</span>
+                    <div className="flex items-center gap-3.5">
+                      {/* Left: Student Image First */}
+                      {selectedStudent.photoUrl ? (
+                        <img
+                          src={selectedStudent.photoUrl}
+                          alt={selectedStudent.nameEn}
+                          className="w-20 h-24 rounded-xl object-cover border-2 border-blue-400/70 shadow-sm bg-slate-800 shrink-0"
+                        />
+                      ) : (
+                        <div className="w-20 h-24 rounded-xl bg-blue-600/90 border-2 border-blue-400/50 font-extrabold text-xl flex items-center justify-center shadow-sm shrink-0">
+                          {selectedStudent.nameEn.slice(0, 2).toUpperCase()}
                         </div>
+                      )}
+
+                      {/* Right: Name, ID, Class & Roll */}
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div>
+                          <h5 className="font-bold text-sm sm:text-base leading-tight text-white truncate">
+                            {selectedStudent.nameEn}
+                          </h5>
+                          {selectedStudent.nameBn && (
+                            <p className="text-xs text-blue-200 truncate mt-0.5">{selectedStudent.nameBn}</p>
+                          )}
+                        </div>
+
+                        <div className="text-[11px] font-mono text-sky-300 font-semibold truncate">
+                          ID: {selectedStudent.admissionNo || selectedStudent.studentId}
+                        </div>
+
+                        <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-slate-200">
+                          <span className="font-semibold">
+                            {selectedStudent.className} ({selectedStudent.section})
+                          </span>
+                          <span className="text-slate-400">•</span>
+                          <span className="font-semibold">
+                            {language === 'bn' ? `রোল: ${selectedStudent.roll}` : `Roll: ${selectedStudent.roll}`}
+                          </span>
+                          <span className="text-slate-400">•</span>
+                          <span className="capitalize text-slate-300">{selectedStudent.shift}</span>
+                        </div>
+
                         {/* Class 9 & 10 Group Badge */}
                         {(selectedStudent.className === 'Class 9' || selectedStudent.className === 'Class 10') && (
-                          <div className="mt-1.5 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-400 text-slate-950 shadow-2xs">
-                            <Award className="w-3 h-3 mr-1 text-slate-950" />
-                            <span>{formatGroupName(selectedStudent.group, language)}</span>
+                          <div className="pt-0.5">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-400 text-slate-950 shadow-2xs">
+                              <Award className="w-3 h-3 mr-1 text-slate-950" />
+                              <span>{formatGroupName(selectedStudent.group, language)}</span>
+                            </span>
                           </div>
                         )}
+
                         {/* Transport User Badge */}
                         {selectedStudentTransport && (
-                          <div className="mt-1.5 block">
+                          <div className="pt-0.5">
                             <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                               <Bus className="w-3 h-3 text-emerald-400" />
                               <span>
