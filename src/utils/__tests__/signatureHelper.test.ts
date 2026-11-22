@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { isValidSignatureSrc, buildPrincipalSignatureHtml } from '../signatureHelper';
+import {
+  isValidSignatureSrc,
+  buildPrincipalSignatureHtml,
+  resolveClassTeacherSignature,
+  buildClassTeacherSignatureHtml,
+} from '../signatureHelper';
 import { removeLightBackgroundFromRgba } from '../storageHelper';
+import { Staff } from '../../types';
 
 describe('signatureHelper & background transparency', () => {
   it('validates safe signature image URLs and rejects unsafe schemes', () => {
@@ -30,6 +36,97 @@ describe('signatureHelper & background transparency', () => {
 
     const empty = buildPrincipalSignatureHtml({});
     expect(empty).toBe('');
+  });
+
+  it('resolves class teacher signature across section, class, staff assignedClasses, and default fallback', () => {
+    const staffList = [
+      {
+        id: 't1',
+        employeeId: 'T-01',
+        nameEn: 'Farhana Yasmin',
+        nameBn: 'ফারহানা ইয়াসমিন',
+        gender: 'Female',
+        designation: 'Assistant Teacher',
+        department: 'Science',
+        role: 'teacher',
+        email: 'f@school.com',
+        phone: '01700000001',
+        qualification: 'MSc',
+        joiningDate: '2022-01-01',
+        basicSalary: 20000,
+        houseRentAllowance: 0,
+        medicalAllowance: 0,
+        otherAllowance: 0,
+        providentFundDeduction: 0,
+        assignedClasses: ['Class 9'],
+        signatureUrl: 'data:image/png;base64,STAFF9SIG',
+        status: 'active',
+      } as Staff,
+    ];
+
+    const school = {
+      classTeacherName: 'Default Teacher',
+      classTeacherSignatureUrl: 'data:image/png;base64,DEFAULTSIG',
+      classTeacherSignatures: {
+        'Class 10': { name: 'Karim Uddin', signatureUrl: 'data:image/png;base64,C10SIG' },
+        'Class 10_B': { name: 'Salma Akter', signatureUrl: 'data:image/png;base64,C10BSIG' },
+        'Class 8': { name: 'Rafiq Ahmed' },
+      },
+    };
+
+    expect(resolveClassTeacherSignature(school, 'Class 10', 'B', staffList)).toEqual({
+      name: 'Salma Akter',
+      signatureUrl: 'data:image/png;base64,C10BSIG',
+    });
+
+    expect(resolveClassTeacherSignature(school, 'Class 10', 'A', staffList)).toEqual({
+      name: 'Karim Uddin',
+      signatureUrl: 'data:image/png;base64,C10SIG',
+    });
+
+    // Class 8 sets explicit teacher name without image -> should not inherit default image
+    expect(resolveClassTeacherSignature(school, 'Class 8', 'A', staffList)).toEqual({
+      name: 'Rafiq Ahmed',
+      signatureUrl: '',
+    });
+
+    // Class 9 falls back to active assigned staff
+    expect(resolveClassTeacherSignature(school, 'Class 9', 'A', staffList)).toEqual({
+      name: 'Farhana Yasmin',
+      signatureUrl: 'data:image/png;base64,STAFF9SIG',
+    });
+
+    // Class 7 falls back to default school-wide class teacher signature
+    expect(resolveClassTeacherSignature(school, 'Class 7', 'A', staffList)).toEqual({
+      name: 'Default Teacher',
+      signatureUrl: 'data:image/png;base64,DEFAULTSIG',
+    });
+  });
+
+  it('builds safe HTML for Class Teacher signature and escapes unsafe characters', () => {
+    const htmlWithImg = buildClassTeacherSignatureHtml(
+      {
+        classTeacherSignatures: {
+          'Class 10': { name: 'A. <Khan>', signatureUrl: 'data:image/png;base64,CTSIG' },
+        },
+      },
+      'Class 10',
+      'A'
+    );
+    expect(htmlWithImg).toContain('<img src="data:image/png;base64,CTSIG"');
+    expect(htmlWithImg).toContain('A. &lt;Khan&gt;');
+
+    const htmlRejectBadUrl = buildClassTeacherSignatureHtml(
+      {
+        classTeacherSignatures: {
+          'Class 10': { name: 'Teacher <X>', signatureUrl: 'javascript:alert(1)' },
+        },
+      },
+      'Class 10',
+      'A'
+    );
+    expect(htmlRejectBadUrl).not.toContain('<img');
+    expect(htmlRejectBadUrl).toContain('Teacher &lt;X&gt;');
   });
 
   it('makes white paper background transparent while keeping dark ink strokes opaque', () => {

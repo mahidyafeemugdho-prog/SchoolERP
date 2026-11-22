@@ -15,7 +15,14 @@ import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
 import { compareStudentsByRoll } from '../../utils/studentSort';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
-import { buildPrincipalSignatureHtml } from '../../utils/signatureHelper';
+import { ClassTeacherSignatureDisplay } from '../common/ClassTeacherSignatureDisplay';
+import { buildPrincipalSignatureHtml, buildClassTeacherSignatureHtml } from '../../utils/signatureHelper';
+import {
+  computeSingleExamStudentMeritRank,
+  formatBnOrdinal,
+  formatEnOrdinal,
+} from '../../utils/examMeritHelper';
+import { compressSignatureImage } from '../../utils/storageHelper';
 import { getMarksheetRowBreakdown } from '../../utils/marksheetBreakdown';
 import { DigitInput } from '../common/DigitInput';
 import {
@@ -63,6 +70,7 @@ import {
   Send,
   ShieldCheck,
   RotateCcw,
+  PenTool,
 } from 'lucide-react';
 import {
   AdmitCardTemplate,
@@ -168,6 +176,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
 
   const students = StorageService.getStudents();
   const subjects = StorageService.getSubjects();
+  const staffList = StorageService.getStaff();
   const [allMarks, setAllMarks] = useState<MarksEntry[]>(() => StorageService.getMarks());
   const [examRoutines, setExamRoutines] = useState<ExamScheduleItem[]>(() => StorageService.getExamRoutines());
   const [, setSyncTick] = useState<number>(0);
@@ -228,6 +237,8 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   // Marksheet Modal State
   const [showTranscriptModal, setShowTranscriptModal] = useState<boolean>(false);
   const [transcriptStudent, setTranscriptStudent] = useState<Student | null>(null);
+  const [showTranscriptSigEditor, setShowTranscriptSigEditor] = useState<boolean>(false);
+  const [transcriptClassTeacherNameDraft, setTranscriptClassTeacherNameDraft] = useState<string>('');
 
   // Exam Modal (Add / Edit)
   const [showAddExamModal, setShowAddExamModal] = useState<boolean>(false);
@@ -268,8 +279,18 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
       activeRole === 'master_admin' ||
       activeRole === 'teacher') &&
     currentUser?.permissions?.manageExams !== false;
-  const { schoolProfile } = useSchool();
+  const { schoolProfile, updateSchoolProfile } = useSchool();
   const school = schoolProfile;
+
+  useEffect(() => {
+    if (transcriptStudent) {
+      const existing =
+        school.classTeacherSignatures?.[transcriptStudent.className]?.name ||
+        school.classTeacherName ||
+        '';
+      setTranscriptClassTeacherNameDraft(existing);
+    }
+  }, [transcriptStudent, school.classTeacherSignatures, school.classTeacherName]);
 
   const handleSaveMarksExplicit = () => {
     if (!currentSubject) return;
@@ -1717,11 +1738,25 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
             </div>
 
             {/* Print Footer */}
-            <div className="hidden print:flex justify-between items-end p-6 pt-16 text-xs border-t border-slate-800 mt-6">
-              <div className="text-center w-40">
+            <div className="hidden print:flex justify-between items-end p-6 pt-12 text-xs border-t border-slate-800 mt-6">
+              <div className="text-center w-44">
+                <ClassTeacherSignatureDisplay
+                  school={school}
+                  className={selectedClass}
+                  staffList={staffList}
+                  fallbackText=""
+                  heightClass="h-9"
+                  textClassName="font-serif italic font-bold text-xs text-slate-900"
+                />
                 <div className="border-t border-slate-800 pt-1 font-bold">Class Teacher</div>
               </div>
               <div className="text-center w-48">
+                <PrincipalSignatureDisplay
+                  school={school}
+                  fallbackText=""
+                  heightClass="h-9"
+                  textClassName="font-serif italic font-bold text-xs text-slate-900"
+                />
                 <div className="border-t border-slate-800 pt-1 font-bold">Principal / Head Teacher</div>
               </div>
             </div>
@@ -3734,7 +3769,14 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
             {/* Print Signature Footer for Merit List */}
             <div className="hidden print:grid grid-cols-3 items-start gap-6 pt-8 mt-6 text-xs font-bold text-slate-800">
               <div className="text-center">
-                <div className="h-10 mb-0.5" />
+                <ClassTeacherSignatureDisplay
+                  school={school}
+                  className={selectedClass}
+                  section={meritSection !== 'all' ? meritSection : undefined}
+                  staffList={staffList}
+                  fallbackText=""
+                  heightClass="h-10"
+                />
                 <div className="border-t-2 border-slate-800 pt-1 mx-auto w-40">
                   {language === 'bn' ? 'শ্রেণি শিক্ষকের স্বাক্ষর' : 'Class Teacher'}
                 </div>
@@ -4011,7 +4053,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                 const signaturesHtml = meritPrintIncludeSignatures
                   ? `<div class="footer">
                       <div class="sig-col">
-                        <div class="sig-slot"></div>
+                        <div class="sig-slot">${buildClassTeacherSignatureHtml(school, selectedClass, meritSection !== 'all' ? meritSection : undefined, staffList)}</div>
                         <div class="sig">শ্রেণি শিক্ষকের স্বাক্ষর<br/><span style="font-size:9px;font-weight:400;color:#64748b;">Class Teacher</span></div>
                       </div>
                       <div class="sig-col">
@@ -4578,7 +4620,15 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                       {meritPrintIncludeSignatures && (
                         <div className="grid grid-cols-3 items-start gap-6 pt-6 mt-6 text-xs text-slate-800">
                           <div className="text-center">
-                            <div className="h-10 mb-0.5" />
+                            <ClassTeacherSignatureDisplay
+                              school={school}
+                              className={selectedClass}
+                              section={meritSection !== 'all' ? meritSection : undefined}
+                              staffList={staffList}
+                              fallbackText=""
+                              heightClass="h-10"
+                              textClassName="font-serif italic font-black text-sm text-slate-900"
+                            />
                             <div className="border-t-2 border-slate-800 pt-1 mx-auto w-40 font-bold">
                               শ্রেণি শিক্ষকের স্বাক্ষর
                             </div>
@@ -4631,6 +4681,20 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                 )}
               </div>
               <div className="flex items-center space-x-2">
+                {canManage && (
+                  <button
+                    type="button"
+                    onClick={() => setShowTranscriptSigEditor((v) => !v)}
+                    className={`flex items-center space-x-1 px-2.5 py-1 text-xs font-semibold rounded-lg border transition-colors ${
+                      showTranscriptSigEditor
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <PenTool className="w-3.5 h-3.5" />
+                    <span>{language === 'bn' ? 'শ্রেণি শিক্ষক স্বাক্ষর' : 'Class Teacher Sign'}</span>
+                  </button>
+                )}
                 <button
                   onClick={() => window.print()}
                   className="flex items-center space-x-1 px-3 py-1 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 shadow-xs"
@@ -4639,13 +4703,129 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                   <span>{language === 'bn' ? 'প্রিন্ট' : 'Print'}</span>
                 </button>
                 <button
-                  onClick={() => setShowTranscriptModal(false)}
+                  onClick={() => {
+                    setShowTranscriptSigEditor(false);
+                    setShowTranscriptModal(false);
+                  }}
                   className="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
+
+            {/* Inline Quick Class Teacher Signature Setup (Screen Only) */}
+            {canManage && showTranscriptSigEditor && (
+              <div className="mb-3 p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl print:hidden text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-emerald-950">
+                    {language === 'bn'
+                      ? `${transcriptStudent.className} — শ্রেণি শিক্ষকের স্বাক্ষর সেট করুন`
+                      : `${transcriptStudent.className} — Set Class Teacher Signature`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowTranscriptSigEditor(false)}
+                    className="text-slate-500 hover:text-slate-800 text-[11px] font-semibold"
+                  >
+                    {language === 'bn' ? 'বন্ধ করুন' : 'Close'}
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={transcriptClassTeacherNameDraft}
+                    onChange={(e) => setTranscriptClassTeacherNameDraft(e.target.value)}
+                    placeholder={language === 'bn' ? 'শ্রেণি শিক্ষকের নাম লিখুন' : 'Class teacher name'}
+                    className="flex-1 min-w-[180px] px-2.5 py-1.5 bg-white border border-emerald-200 rounded-lg text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const prevMap = school.classTeacherSignatures || {};
+                      updateSchoolProfile({
+                        ...school,
+                        classTeacherSignatures: {
+                          ...prevMap,
+                          [transcriptStudent.className]: {
+                            ...(prevMap[transcriptStudent.className] || {}),
+                            name: transcriptClassTeacherNameDraft.trim(),
+                          },
+                        },
+                      });
+                    }}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs"
+                  >
+                    {language === 'bn' ? 'নাম সেভ' : 'Save Name'}
+                  </button>
+                  <label className="flex items-center space-x-1 px-3 py-1.5 bg-white hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-lg text-xs font-semibold cursor-pointer">
+                    <PenTool className="w-3.5 h-3.5" />
+                    <span>{language === 'bn' ? 'স্বাক্ষর ছবি আপলোড' : 'Upload Signature'}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!file) return;
+                        let dataUrl = '';
+                        try {
+                          dataUrl = await compressSignatureImage(file, {
+                            maxWidth: 420,
+                            maxHeight: 140,
+                            autoTransparentBg: true,
+                          });
+                        } catch {
+                          dataUrl = await new Promise<string>((resolve) => {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve(String(reader.result || ''));
+                            reader.readAsDataURL(file);
+                          });
+                        }
+                        if (!dataUrl) return;
+                        const prevMap = school.classTeacherSignatures || {};
+                        updateSchoolProfile({
+                          ...school,
+                          classTeacherSignatures: {
+                            ...prevMap,
+                            [transcriptStudent.className]: {
+                              ...(prevMap[transcriptStudent.className] || {}),
+                              name:
+                                transcriptClassTeacherNameDraft.trim() ||
+                                prevMap[transcriptStudent.className]?.name ||
+                                '',
+                              signatureUrl: dataUrl,
+                            },
+                          },
+                        });
+                      }}
+                    />
+                  </label>
+                  {school.classTeacherSignatures?.[transcriptStudent.className]?.signatureUrl && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const prevMap = school.classTeacherSignatures || {};
+                        updateSchoolProfile({
+                          ...school,
+                          classTeacherSignatures: {
+                            ...prevMap,
+                            [transcriptStudent.className]: {
+                              ...(prevMap[transcriptStudent.className] || {}),
+                              signatureUrl: '',
+                            },
+                          },
+                        });
+                      }}
+                      className="px-2.5 py-1.5 bg-white hover:bg-rose-50 border border-rose-200 text-rose-600 rounded-lg text-xs font-semibold"
+                    >
+                      {language === 'bn' ? 'স্বাক্ষর মুছুন' : 'Remove'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Official Marksheet Document (NCTB Bangladesh Standard Format) */}
             <div className="p-4 md:p-5 border-2 border-slate-800 rounded-xl bg-white text-[11px] text-slate-900 font-sans print:border-2 print:p-3">
@@ -4826,6 +5006,20 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                 const hasEnteredMarks = enteredSubjectEntries.length > 0;
                 const isPassed = hasEnteredMarks && !hasFail && totalResult.status === 'PASSED' && totalResult.overallGrade !== 'F';
 
+                const transcriptClassStudents = students.filter(
+                  (s) => s.className === transcriptStudent.className && s.status === 'active'
+                );
+                const transcriptClassSubjects = subjects.filter(
+                  (s) => s.className === transcriptStudent.className
+                );
+                const singleExamMerit = computeSingleExamStudentMeritRank({
+                  targetStudent: transcriptStudent,
+                  classStudents: transcriptClassStudents,
+                  classSubjects: transcriptClassSubjects,
+                  getSubjectsForStudent,
+                  getStudentMarkForSubject,
+                });
+
                 return (
                   <>
                     <div className="my-2 overflow-x-auto">
@@ -4854,7 +5048,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                             <td colSpan={5} className="py-1.5 px-2 border-r border-slate-400 text-right">
                               সর্বমোট নম্বর ({totalFullMarks}) ও সার্বিক ফলাফল:
                             </td>
-                            <td className="py-1.5 px-1.5 border-r border-slate-400 text-center text-xs font-black text-slate-900">
+                            <td className="py-1.5 px-1.5 border-r border-slate-400 text-center text-xs font-black text-slate-900 tabular-nums">
                               {hasEnteredMarks ? (
                                 <>
                                   {grandTotal} <span className="text-[9px] text-slate-500 block">({percentage}%)</span>
@@ -4871,7 +5065,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                               {hasEnteredMarks ? totalResult.overallGrade : '—'}
                             </td>
                             <td
-                              className={`py-1.5 px-1.5 text-center text-xs font-black ${
+                              className={`py-1.5 px-1.5 text-center text-xs font-black tabular-nums ${
                                 !hasEnteredMarks ? 'text-slate-500' : isPassed ? 'text-blue-700' : 'text-rose-600'
                               }`}
                             >
@@ -4882,31 +5076,79 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                       </table>
                     </div>
 
-                    {/* Overall Summary Bar */}
-                    <div className="my-2 p-2 bg-slate-50 rounded-lg border border-slate-300 flex items-center justify-between text-[11px]">
-                      <div>
-                        <span className="text-slate-600">ফলাফল মূল্যায়ন: </span>
-                        {!hasEnteredMarks ? (
-                          <strong className="text-amber-600 font-bold">নম্বর এন্ট্রি হয়নি (Pending)</strong>
-                        ) : isPassed ? (
-                          <strong className="text-emerald-700 font-bold">উত্তীর্ণ (PASSED)</strong>
-                        ) : (
-                          <strong className="text-rose-600 font-bold">অনুত্তীর্ণ (FAILED)</strong>
-                        )}
+                    {/* Overall Summary & Single-Exam Student Merit Position */}
+                    <div className="my-2 p-2 bg-slate-50 rounded-lg border border-slate-300 space-y-1.5 text-[11px]">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <span className="text-slate-600">ফলাফল মূল্যায়ন: </span>
+                          {!hasEnteredMarks ? (
+                            <strong className="text-amber-600 font-bold">নম্বর এন্ট্রি হয়নি (Pending)</strong>
+                          ) : isPassed ? (
+                            <strong className="text-emerald-700 font-bold">উত্তীর্ণ (PASSED)</strong>
+                          ) : (
+                            <strong className="text-rose-600 font-bold">অনুত্তীর্ণ (FAILED)</strong>
+                          )}
+                        </div>
+                        <div>
+                          <span className="text-slate-600">উপস্থিতি: </span>
+                          <strong className="tabular-nums">{(transcriptStudent as any).attendanceSummary?.percentage || '94'}%</strong>
+                        </div>
+                        <div>
+                          <span className="text-slate-600">আচরণ ও শৃঙ্খলা: </span>
+                          {!hasEnteredMarks ? (
+                            <strong className="text-slate-600">মূল্যায়ন চলমান</strong>
+                          ) : isPassed ? (
+                            <strong className="text-blue-700">চমৎকার (Excellent)</strong>
+                          ) : (
+                            <strong className="text-rose-600">মনোযোগ ও পুনঃপরীক্ষা প্রয়োজন</strong>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <span className="text-slate-600">উপস্থিতি: </span>
-                        <strong>{(transcriptStudent as any).attendanceSummary?.percentage || '94'}%</strong>
-                      </div>
-                      <div>
-                        <span className="text-slate-600">আচরণ ও শৃঙ্খলা: </span>
-                        {!hasEnteredMarks ? (
-                          <strong className="text-slate-600">মূল্যায়ন চলমান</strong>
-                        ) : isPassed ? (
-                          <strong className="text-blue-700">চমৎকার (Excellent)</strong>
-                        ) : (
-                          <strong className="text-rose-600">মনোযোগ ও পুনঃপরীক্ষা প্রয়োজন</strong>
-                        )}
+
+                      {/* Single-Exam Personal Merit Position Strip */}
+                      <div className="pt-1.5 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                        <div className="flex items-center gap-1.5">
+                          <Trophy className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span className="text-slate-600 font-semibold">
+                            একক পরীক্ষার মেধা স্থান ({currentExam?.nameBn || currentExam?.nameEn}):
+                          </span>
+                          {singleExamMerit.status === 'passed' && singleExamMerit.classRank !== null ? (
+                            <strong className="text-slate-900 font-black tabular-nums">
+                              {language === 'bn'
+                                ? `${formatBnOrdinal(singleExamMerit.classRank)} স্থান (শ্রেণিতে)`
+                                : `${formatEnOrdinal(singleExamMerit.classRank)} in Class`}
+                            </strong>
+                          ) : singleExamMerit.status === 'failed' ? (
+                            <strong className="text-rose-600 font-bold">
+                              {language === 'bn'
+                                ? `অপ্রযোজ্য / অনুত্তীর্ণ (${toBnNumber(singleExamMerit.failedCount)} বিষয়ে অকৃতকার্য)`
+                                : `Unranked (${singleExamMerit.failedCount} failed)`}
+                            </strong>
+                          ) : (
+                            <strong className="text-amber-700 font-semibold">
+                              {language === 'bn' ? 'অপেক্ষমাণ (ফলাফল এন্ট্রি চলছে)' : 'Pending marks entry'}
+                            </strong>
+                          )}
+                        </div>
+
+                        <div className="text-[10.5px] text-slate-600 tabular-nums flex flex-wrap items-center gap-2">
+                          {singleExamMerit.status === 'passed' && singleExamMerit.sectionRank !== null && (
+                            <span>
+                              {language === 'bn' ? 'শাখায় অবস্থান' : 'Section Rank'}:{' '}
+                              <strong className="text-slate-900">
+                                {language === 'bn'
+                                  ? `${formatBnOrdinal(singleExamMerit.sectionRank)} (Sec ${transcriptStudent.section})`
+                                  : `${formatEnOrdinal(singleExamMerit.sectionRank)} (Sec ${transcriptStudent.section})`}
+                              </strong>
+                            </span>
+                          )}
+                          <span aria-hidden="true" className="text-slate-400">·</span>
+                          <span>
+                            {language === 'bn'
+                              ? `উত্তীর্ণ: ${toBnNumber(singleExamMerit.classPassedCount)} জন / মোট পরীক্ষার্থী: ${toBnNumber(singleExamMerit.classTotalStudents)} জন`
+                              : `Passed: ${singleExamMerit.classPassedCount} / Examinees: ${singleExamMerit.classTotalStudents}`}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </>
@@ -4916,7 +5158,16 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
               {/* Remarks and Signatures */}
               <div className="mt-6 pt-4 border-t border-slate-300 grid grid-cols-3 items-start gap-2 text-center text-[10px] text-slate-700">
                 <div>
-                  <div className="h-9 mb-0.5" />
+                  <ClassTeacherSignatureDisplay
+                    school={school}
+                    className={transcriptStudent.className}
+                    section={transcriptStudent.section}
+                    staffList={staffList}
+                    fallbackText=""
+                    heightClass="h-9"
+                    imgClassName="max-h-full max-w-[140px] object-contain mx-auto"
+                    textClassName="font-serif italic font-bold text-xs text-slate-900"
+                  />
                   <div className="border-t border-slate-500 pt-1 font-semibold mx-2 sm:mx-4">
                     শ্রেণি শিক্ষকের স্বাক্ষর
                   </div>
@@ -5744,7 +5995,14 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
               {/* Signatures */}
               <div className="grid grid-cols-3 items-start gap-4 pt-6 mt-6 text-xs text-slate-800">
                 <div className="text-center">
-                  <div className="h-11 mb-0.5" />
+                  <ClassTeacherSignatureDisplay
+                    school={school}
+                    className={selectedClass}
+                    staffList={staffList}
+                    fallbackText=""
+                    heightClass="h-11"
+                    textClassName="font-serif italic font-black text-sm text-slate-900"
+                  />
                   <div className="border-t-2 border-slate-800 pt-1 mx-auto w-40 sm:w-44 font-bold">
                     শ্রেণি শিক্ষকের স্বাক্ষর
                   </div>

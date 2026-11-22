@@ -42,6 +42,7 @@ import { ClassTimingsTab } from './ClassTimingsTab';
 import { SaturdayOffToggle } from '../common/SaturdayOffToggle';
 import { resolveTeacherStaffProfile } from '../../utils/teacherResolver';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
+import { ClassTeacherSignatureDisplay } from '../common/ClassTeacherSignatureDisplay';
 import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 
 export type AttendanceSubTab =
@@ -1231,7 +1232,15 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({ initialSubTab, j
 
             {/* Print Signatures */}
             <div className="hidden print:flex justify-between items-end p-6 pt-16 text-xs border-t border-slate-800 mt-6">
-              <div className="text-center w-40">
+              <div className="text-center w-44">
+                <ClassTeacherSignatureDisplay
+                  school={school}
+                  className={selectedClass}
+                  section={selectedSection}
+                  staffList={staff}
+                  fallbackText=""
+                  heightClass="h-9"
+                />
                 <div className="border-t border-slate-800 pt-1 font-bold">Class Teacher Signature</div>
               </div>
               <div className="text-center w-48">
@@ -1551,7 +1560,15 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({ initialSubTab, j
 
                 {/* Official Signatures */}
                 <div className="mt-8 pt-6 border-t border-slate-400 flex items-end justify-between text-xs">
-                  <div className="text-center w-40">
+                  <div className="text-center w-44">
+                    <ClassTeacherSignatureDisplay
+                      school={school}
+                      className={selectedStudent.className}
+                      section={selectedStudent.section}
+                      staffList={staff}
+                      fallbackText=""
+                      heightClass="h-10"
+                    />
                     <div className="border-t border-slate-800 pt-1 font-bold text-slate-800 text-[11px]">
                       Class Teacher's Signature
                       <span className="block text-[9px] text-slate-500 font-normal">(শ্রেণি শিক্ষকের স্বাক্ষর)</span>

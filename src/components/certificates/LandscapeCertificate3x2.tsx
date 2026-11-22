@@ -3,6 +3,8 @@ import { SchoolProfile, Student } from '../../types';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
+import { ClassTeacherSignatureDisplay } from '../common/ClassTeacherSignatureDisplay';
+import { StorageService } from '../../services/storage';
 
 export type LandscapeCertDocType = 'testimonial' | 'transfer' | 'character' | 'bonafide';
 
@@ -675,7 +677,22 @@ export const LandscapeCertificate3x2: React.FC<LandscapeCertificate3x2Props> = (
             <div className="grid grid-cols-3 items-end px-12 pb-3">
               {/* Left Signature */}
               <div className="flex flex-col items-center text-center">
-                <div className="h-8 flex items-end justify-center font-serif italic text-base text-slate-700" />
+                {docType !== 'transfer' ? (
+                  <div className="w-52 bg-white/75 px-2 rounded-t">
+                    <ClassTeacherSignatureDisplay
+                      school={school}
+                      className={student.className}
+                      section={student.section}
+                      staffList={StorageService.getStaff()}
+                      fallbackText=""
+                      heightClass="h-10"
+                      imgClassName="max-h-9 max-w-[160px] object-contain mx-auto"
+                      textClassName="font-serif italic font-bold text-sm text-slate-800 truncate"
+                    />
+                  </div>
+                ) : (
+                  <div className="h-8 flex items-end justify-center font-serif italic text-base text-slate-700" />
+                )}
                 <div className="w-52 border-t-[1.5px] pt-1 bg-white/75 rounded-b px-2" style={{ borderColor: t.primary }}>
                   <div className="text-[12.5px] font-bold text-slate-900">{t.leftSigEn}</div>
                   <div className="text-[10px] text-slate-600">{t.leftSigBn}</div>

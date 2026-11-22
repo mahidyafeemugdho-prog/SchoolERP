@@ -52,6 +52,12 @@ export const SettingsView: React.FC = () => {
   const [saveSuccess, setSaveSuccess] = useState<string>('');
   const [importNotice, setImportNotice] = useState<string>('');
   const [autoTransparentSig, setAutoTransparentSig] = useState<boolean>(true);
+  const [selectedClassTeacherTarget, setSelectedClassTeacherTarget] = useState<string>('all');
+  const availableClassLevels = React.useMemo(() => {
+    const stored = StorageService.getClasses().map((c) => c.name);
+    const defaults = ['Play', 'Nurany', 'Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'];
+    return Array.from(new Set([...stored, ...defaults]));
+  }, []);
 
   // Super Admin Credentials state
   const [adminCreds, setAdminCreds] = useState<SuperAdminCredentials>(() =>
@@ -220,6 +226,120 @@ export const SettingsView: React.FC = () => {
       language === 'bn'
         ? 'প্রধান শিক্ষকের স্বাক্ষর মুছে ফেলা হয়েছে।'
         : 'Principal signature removed.'
+    );
+    setTimeout(() => setSaveSuccess(''), 3000);
+  };
+
+  const activeClassTeacherSig =
+    selectedClassTeacherTarget === 'all'
+      ? profile.classTeacherSignatureUrl || ''
+      : profile.classTeacherSignatures?.[selectedClassTeacherTarget]?.signatureUrl || '';
+
+  const activeClassTeacherName =
+    selectedClassTeacherTarget === 'all'
+      ? profile.classTeacherName || ''
+      : profile.classTeacherSignatures?.[selectedClassTeacherTarget]?.name || '';
+
+  const handleClassTeacherNameChange = (nameVal: string) => {
+    setProfile((prev) => {
+      if (selectedClassTeacherTarget === 'all') {
+        return { ...prev, classTeacherName: nameVal };
+      }
+      const prevMap = prev.classTeacherSignatures || {};
+      return {
+        ...prev,
+        classTeacherSignatures: {
+          ...prevMap,
+          [selectedClassTeacherTarget]: {
+            ...(prevMap[selectedClassTeacherTarget] || {}),
+            name: nameVal,
+          },
+        },
+      };
+    });
+  };
+
+  const handleSaveClassTeacherName = () => {
+    updateSchoolProfile(profile);
+    setSaveSuccess(
+      language === 'bn'
+        ? 'শ্রেণি শিক্ষকের নাম ও স্বাক্ষরের তথ্য সংরক্ষিত হয়েছে।'
+        : 'Class teacher signature details saved.'
+    );
+    setTimeout(() => setSaveSuccess(''), 3000);
+  };
+
+  const handleClassTeacherSignatureUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const applySig = (dataUrl: string) => {
+      let updated: SchoolProfile;
+      if (selectedClassTeacherTarget === 'all') {
+        updated = { ...profile, classTeacherSignatureUrl: dataUrl };
+      } else {
+        const prevMap = profile.classTeacherSignatures || {};
+        updated = {
+          ...profile,
+          classTeacherSignatures: {
+            ...prevMap,
+            [selectedClassTeacherTarget]: {
+              ...(prevMap[selectedClassTeacherTarget] || {}),
+              signatureUrl: dataUrl,
+            },
+          },
+        };
+      }
+      setProfile(updated);
+      updateSchoolProfile(updated);
+      setSaveSuccess(
+        language === 'bn'
+          ? `শ্রেণি শিক্ষকের স্বাক্ষর (${selectedClassTeacherTarget === 'all' ? 'সকল শ্রেণি' : selectedClassTeacherTarget}) সংরক্ষিত হয়েছে — মার্কশিট, মেধা তালিকা ও রুটিনে প্রদর্শিত হবে।`
+          : `Class teacher signature saved for ${selectedClassTeacherTarget === 'all' ? 'all classes' : selectedClassTeacherTarget}.`
+      );
+      setTimeout(() => setSaveSuccess(''), 3500);
+    };
+
+    try {
+      const compressed = await compressSignatureImage(file, {
+        maxWidth: 420,
+        maxHeight: 140,
+        autoTransparentBg: autoTransparentSig,
+      });
+      if (!compressed) return;
+      applySig(compressed);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        applySig(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleRemoveClassTeacherSignature = () => {
+    let updated: SchoolProfile;
+    if (selectedClassTeacherTarget === 'all') {
+      updated = { ...profile, classTeacherSignatureUrl: '' };
+    } else {
+      const prevMap = profile.classTeacherSignatures || {};
+      updated = {
+        ...profile,
+        classTeacherSignatures: {
+          ...prevMap,
+          [selectedClassTeacherTarget]: {
+            ...(prevMap[selectedClassTeacherTarget] || {}),
+            signatureUrl: '',
+          },
+        },
+      };
+    }
+    setProfile(updated);
+    updateSchoolProfile(updated);
+    setSaveSuccess(
+      language === 'bn'
+        ? 'শ্রেণি শিক্ষকের স্বাক্ষর মুছে ফেলা হয়েছে।'
+        : 'Class teacher signature removed.'
     );
     setTimeout(() => setSaveSuccess(''), 3000);
   };
@@ -758,6 +878,121 @@ export const SettingsView: React.FC = () => {
                   <span>{language === 'bn' ? 'মুছে ফেলুন' : 'Remove'}</span>
                 </button>
               )}
+            </div>
+          </div>
+
+          {/* Class Teacher Digital Signature Upload Card */}
+          <div className="p-4 bg-emerald-50/50 rounded-xl border border-emerald-200 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center space-x-4">
+                <div className="w-40 h-16 rounded-xl border-2 border-dashed border-emerald-300 bg-white flex items-center justify-center overflow-hidden shrink-0 shadow-xs px-2">
+                  {activeClassTeacherSig ? (
+                    <img
+                      src={activeClassTeacherSig}
+                      alt="Class Teacher Signature"
+                      className="max-h-14 max-w-full object-contain"
+                    />
+                  ) : (
+                    <div className="text-center text-slate-400 flex flex-col items-center">
+                      <PenTool className="w-4 h-4 text-emerald-500 mb-0.5" />
+                      <span className="text-[10px]">
+                        {language === 'bn' ? 'স্বাক্ষর নেই' : 'No Signature'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900 text-xs flex items-center space-x-1.5">
+                    <span>
+                      {language === 'bn'
+                        ? 'শ্রেণি শিক্ষকের ডিজিটাল স্বাক্ষর (Class Teacher Signature)'
+                        : 'Class Teacher Digital Signature'}
+                    </span>
+                  </h4>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    {language === 'bn'
+                      ? 'সকল শ্রেণির জন্য ডিফল্ট স্বাক্ষর অথবা নির্দিষ্ট শ্রেণির (যেমন: Class 10) আলাদা শ্রেণি শিক্ষকের নাম ও স্বাক্ষর যোগ করুন — মার্কশিট, মেধা তালিকা ও রুটিনে প্রদর্শিত হবে।'
+                      : 'Set a default signature or per-class Class Teacher name & signature for marksheets, merit lists, and exam routines.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2 shrink-0">
+                <label className="flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold cursor-pointer shadow-xs transition-colors">
+                  <PenTool className="w-3.5 h-3.5" />
+                  <span>
+                    {language === 'bn'
+                      ? activeClassTeacherSig
+                        ? 'স্বাক্ষর পরিবর্তন'
+                        : 'স্বাক্ষর আপলোড করুন'
+                      : activeClassTeacherSig
+                      ? 'Change Signature'
+                      : 'Upload Signature'}
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleClassTeacherSignatureUpload}
+                    className="hidden"
+                  />
+                </label>
+                {activeClassTeacherSig && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveClassTeacherSignature}
+                    className="flex items-center space-x-1 px-2.5 py-2 bg-white hover:bg-rose-50 border border-slate-200 text-rose-600 rounded-lg text-xs font-semibold transition-colors"
+                    title="Remove Class Teacher Signature"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{language === 'bn' ? 'মুছে ফেলুন' : 'Remove'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 pt-2 border-t border-emerald-200/70">
+              <div className="sm:col-span-4">
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  {language === 'bn' ? 'শ্রেণি নির্বাচন করুন' : 'Target Class'}
+                </label>
+                <select
+                  value={selectedClassTeacherTarget}
+                  onChange={(e) => setSelectedClassTeacherTarget(e.target.value)}
+                  className="w-full px-2.5 py-1.5 bg-white border border-emerald-200 rounded-lg text-xs font-semibold text-slate-800"
+                >
+                  <option value="all">
+                    {language === 'bn' ? 'সকল শ্রেণি (Default)' : 'All Classes (Default)'}
+                  </option>
+                  {availableClassLevels.map((cls) => (
+                    <option key={cls} value={cls}>
+                      {cls}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="sm:col-span-6">
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  {language === 'bn'
+                    ? 'শ্রেণি শিক্ষকের নাম (ঐচ্ছিক - স্বাক্ষর ইমেজ না দিলে প্রদর্শিত হবে)'
+                    : 'Class Teacher Name (Optional fallback text)'}
+                </label>
+                <input
+                  type="text"
+                  value={activeClassTeacherName}
+                  onChange={(e) => handleClassTeacherNameChange(e.target.value)}
+                  placeholder={language === 'bn' ? 'যেমন: Md. Kamal Uddin' : 'e.g. Md. Kamal Uddin'}
+                  className="w-full px-2.5 py-1.5 bg-white border border-emerald-200 rounded-lg text-xs"
+                />
+              </div>
+              <div className="sm:col-span-2 flex items-end">
+                <button
+                  type="button"
+                  onClick={handleSaveClassTeacherName}
+                  className="w-full px-3 py-1.5 bg-white hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-lg text-xs font-bold transition-colors"
+                >
+                  {language === 'bn' ? 'নাম সংরক্ষণ' : 'Save Name'}
+                </button>
+              </div>
             </div>
           </div>
 

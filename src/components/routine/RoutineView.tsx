@@ -34,6 +34,8 @@ import {
   isSuperAdminApprover,
 } from '../../utils/approvalWorkflow';
 import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
+import { ClassTeacherSignatureDisplay } from '../common/ClassTeacherSignatureDisplay';
+import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 
 interface RoutineViewProps {
   initialViewMode?: 'class' | 'teacher' | 'room';
@@ -1258,7 +1260,15 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
               {/* Institutional Signatures */}
               <div className="grid grid-cols-3 items-start gap-4 pt-8 mt-6 text-xs text-slate-800">
                 <div className="text-center">
-                  <div className="h-9 mb-0.5" />
+                  <ClassTeacherSignatureDisplay
+                    school={school}
+                    className={selectedClass}
+                    section={selectedSection}
+                    staffList={allStaff}
+                    fallbackText=""
+                    heightClass="h-9"
+                    textClassName="font-serif italic font-black text-sm text-slate-900"
+                  />
                   <div className="border-t-2 border-slate-800 pt-1 mx-auto w-44 font-bold">
                     শ্রেণি শিক্ষকের স্বাক্ষর
                   </div>
@@ -1272,9 +1282,12 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
                   <span className="text-[10px] text-slate-500">Routine In-charge</span>
                 </div>
                 <div className="text-center">
-                  <div className="h-9 mb-0.5 flex items-end justify-center font-serif italic font-black text-sm text-slate-900">
-                    {school.principalNameEn || school.principalNameBn || 'Principal'}
-                  </div>
+                  <PrincipalSignatureDisplay
+                    school={school}
+                    fallbackText="Principal"
+                    heightClass="h-9"
+                    textClassName="font-serif italic font-black text-sm text-slate-900"
+                  />
                   <div className="border-t-2 border-slate-800 pt-1 mx-auto w-48 font-bold">
                     অধ্যক্ষ / প্রধান শিক্ষকের স্বাক্ষর ও সিল
                   </div>

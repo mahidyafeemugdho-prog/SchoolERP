@@ -52,6 +52,9 @@ export interface SchoolProfile {
   principalNameEn: string;
   principalNameBn: string;
   principalSignatureUrl?: string;
+  classTeacherSignatureUrl?: string;
+  classTeacherName?: string;
+  classTeacherSignatures?: Record<string, { name?: string; signatureUrl?: string }>;
   establishedYear: string;
   currentSession: string;
   logoUrl?: string;
@@ -217,6 +220,7 @@ export interface Staff {
   otherAllowance: number;
   providentFundDeduction: number;
   assignedClasses?: string[];
+  signatureUrl?: string;
   assignedSubjects?: string[];
   subject?: string;
   permanentAddress?: string;
