@@ -5,6 +5,8 @@ import {
   isEmbeddedIframe,
   isMobileBrowser,
 } from '../../services/firebase';
+import { SaaSApi, isSaaSBackendUnavailableError } from '../../services/saasApi';
+import { validateLoginIdentifier } from '../../utils/loginIdentifier';
 import campusBackdropImg from '../../assets/images/smart_school_campus_1794653963006.jpg';
 import firebaseConfig from '../../../firebase-applet-config.json';
 import {
@@ -184,7 +186,7 @@ export const HeroLoginView: React.FC = () => {
     e.preventDefault();
     const trimmedUser = username.trim();
     if (!trimmedUser || !password.trim()) {
-      setErrorMessage('Please enter your registered email/username and password.');
+      setErrorMessage('Please enter your email, mobile number, or username and password.');
       return;
     }
 
@@ -261,11 +263,12 @@ export const HeroLoginView: React.FC = () => {
 
   const handlePasswordResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const targetEmail = resetEmail.trim();
-    if (!targetEmail || !targetEmail.includes('@')) {
+    const targetInput = resetEmail.trim();
+    const parsed = validateLoginIdentifier(targetInput);
+    if (!parsed.valid) {
       setResetStatus({
         type: 'error',
-        text: 'Please enter a valid registered email address.',
+        text: parsed.error || 'Please enter a valid email address, mobile number, or username.',
       });
       return;
     }
@@ -273,7 +276,21 @@ export const HeroLoginView: React.FC = () => {
     setIsResetting(true);
     setResetStatus(null);
     try {
-      await resetFirebasePassword(targetEmail);
+      let emailToReset = parsed.kind === 'email' ? parsed.displayValue : '';
+      if (!emailToReset) {
+        const resolved = await SaaSApi.resolveLoginIdentifier(targetInput);
+        if (resolved.isSyntheticEmail) {
+          setIsResetting(false);
+          setResetStatus({
+            type: 'error',
+            text: 'This account uses a Mobile/Username login without a personal email inbox. Please contact your School Admin to reset your password.',
+          });
+          return;
+        }
+        emailToReset = resolved.resolvedEmail;
+      }
+
+      await resetFirebasePassword(emailToReset);
       setIsResetting(false);
       setResetStatus({
         type: 'success',
@@ -281,9 +298,14 @@ export const HeroLoginView: React.FC = () => {
       });
     } catch (err: any) {
       setIsResetting(false);
+      const fallbackMsg = isSaaSBackendUnavailableError(err)
+        ? 'Username/mobile lookup requires server connection. Enter your registered @ email or contact your School Admin.'
+        : err?.code === 'USER_NOT_FOUND'
+        ? 'No account matched this username or mobile number.'
+        : err?.message || 'Could not send reset email. Please verify your login ID or contact your School Admin.';
       setResetStatus({
         type: 'error',
-        text: err?.message || 'Could not send reset email. Please verify the address or contact your School Admin.',
+        text: fallbackMsg,
       });
     }
   };
@@ -470,12 +492,12 @@ export const HeroLoginView: React.FC = () => {
                   <div className="flex items-center h-12 rounded-xl border border-slate-300 bg-white px-3.5 focus-within:border-[#0A58DF] focus-within:ring-2 focus-within:ring-[#0A58DF]/15 transition-all">
                     <Mail className="w-5 h-5 text-[#0A58DF] shrink-0 mr-3" />
                     <input
-                      type="email"
+                      type="text"
                       value={resetEmail}
                       onChange={(e) => setResetEmail(e.target.value)}
-                      placeholder="Registered Email Address"
-                      aria-label="Registered Email Address"
-                      autoComplete="email"
+                      placeholder="Email, Mobile Number, or Username"
+                      aria-label="Registered Email, Mobile Number, or Username"
+                      autoComplete="username"
                       className="w-full h-full bg-transparent text-slate-800 placeholder:text-slate-400 text-sm sm:text-[15px] focus:outline-none"
                     />
                   </div>
@@ -512,15 +534,15 @@ export const HeroLoginView: React.FC = () => {
                     <User className="w-5 h-5 text-[#0A58DF] shrink-0 mr-3" />
                     <input
                       type="text"
-                      inputMode="email"
+                      inputMode="text"
                       autoComplete="username"
                       value={username}
                       onChange={(e) => {
                         setUsername(e.target.value);
                         if (errorMessage) setErrorMessage(null);
                       }}
-                      placeholder="Email Address"
-                      aria-label="Email Address"
+                      placeholder="Email, Mobile Number, or Username"
+                      aria-label="Email, Mobile Number, or Username"
                       className="w-full h-full bg-transparent text-slate-800 placeholder:text-slate-400 text-sm sm:text-[15px] focus:outline-none"
                     />
                   </div>

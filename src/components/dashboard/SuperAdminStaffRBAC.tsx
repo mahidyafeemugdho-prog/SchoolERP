@@ -41,6 +41,7 @@ import {
   ID_CARD_THEME_OPTIONS,
   IDCardTheme,
 } from '../common/ModernIDCardFronts';
+import { formatDisplayLoginId, isSyntheticAuthEmail, validateLoginIdentifier } from '../../utils/loginIdentifier';
 
 const DEFAULT_PERMISSIONS: Record<string, StaffRBACPermissions> = {
   admin: {
@@ -256,18 +257,42 @@ export const SuperAdminStaffRBAC: React.FC = () => {
 
   const handleSaveStaff = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nameEn.trim() || !username.trim() || !email.trim()) return;
+    if (!nameEn.trim() || !username.trim()) return;
 
-    const trimmedUsername = username.trim().toLowerCase();
-    const cleanEmail = email.trim().toLowerCase();
+    const trimmedUsername = username.trim();
+    const cleanEmail = email.trim();
     const cleanPass = password.trim();
     const staffId = editingStaff ? editingStaff.id : `st_${Date.now()}`;
     const targetSchoolId = saasSession?.school?.schoolId || currentUser?.schoolId;
 
     setProvisioningError('');
+
+    const parsedUsername = validateLoginIdentifier(trimmedUsername);
+    if (!parsedUsername.valid) {
+      setProvisioningError(
+        (language === 'bn' ? parsedUsername.errorBn : parsedUsername.error) ||
+          'Please enter a valid username or mobile number.'
+      );
+      return;
+    }
+
+    let parsedOptionalEmail: ReturnType<typeof validateLoginIdentifier> | null = null;
+    if (cleanEmail) {
+      parsedOptionalEmail = validateLoginIdentifier(cleanEmail);
+      if (!parsedOptionalEmail.valid) {
+        setProvisioningError(
+          (language === 'bn' ? parsedOptionalEmail.errorBn : parsedOptionalEmail.error) ||
+            'Please enter a valid email or login ID.'
+        );
+        return;
+      }
+    }
+
     setIsProvisioning(true);
 
     let provisionedUid = editingStaff?.authUid;
+    let provisionedEmail = cleanEmail || editingStaff?.email || trimmedUsername;
+    let provisionedUsername = trimmedUsername;
     let authStatus: Staff['authProvisionStatus'] =
       editingStaff?.authProvisionStatus || (editingStaff?.authUid ? 'provisioned' : 'pending_provisioning');
 
@@ -281,7 +306,8 @@ export const SuperAdminStaffRBAC: React.FC = () => {
 
       if (shouldProvisionAuth) {
         const res = await SaaSApi.provisionUser({
-          email: cleanEmail,
+          email: parsedOptionalEmail ? parsedOptionalEmail.displayValue : parsedUsername.displayValue,
+          username: parsedUsername.kind !== 'email' ? parsedUsername.displayValue : undefined,
           password: cleanPass,
           displayName: nameEn.trim(),
           schoolRole: role,
@@ -290,6 +316,8 @@ export const SuperAdminStaffRBAC: React.FC = () => {
           phone,
         });
         provisionedUid = res.user.uid;
+        provisionedEmail = res.user.email;
+        provisionedUsername = res.user.username || trimmedUsername;
         authStatus = 'provisioned';
       }
 
@@ -298,8 +326,8 @@ export const SuperAdminStaffRBAC: React.FC = () => {
           ...editingStaff,
           nameEn,
           nameBn: nameBn || nameEn,
-          username: trimmedUsername,
-          email: cleanEmail,
+          username: provisionedUsername,
+          email: provisionedEmail,
           role,
           designation,
           department,
@@ -325,7 +353,7 @@ export const SuperAdminStaffRBAC: React.FC = () => {
           designation,
           department,
           role,
-          email: cleanEmail,
+          email: provisionedEmail,
           phone,
           qualification: 'B.Sc / M.A',
           joiningDate: new Date().toISOString().split('T')[0],
@@ -335,7 +363,7 @@ export const SuperAdminStaffRBAC: React.FC = () => {
           otherAllowance: 1500,
           providentFundDeduction: 2000,
           status: 'active',
-          username: trimmedUsername,
+          username: provisionedUsername,
           authUid: provisionedUid,
           schoolId: targetSchoolId,
           authProvisionStatus: authStatus,
@@ -348,10 +376,10 @@ export const SuperAdminStaffRBAC: React.FC = () => {
 
         setActiveCredentials({
           name: nameEn,
-          username: trimmedUsername,
+          username: provisionedUsername,
           password: cleanPass,
           role,
-          email: cleanEmail,
+          email: provisionedEmail,
         });
         setShowCredentialsModal(true);
       }
@@ -576,9 +604,11 @@ export const SuperAdminStaffRBAC: React.FC = () => {
 
                     <td className="py-3 px-4">
                       <div className="font-mono text-slate-800 font-semibold">
-                        {st.username || st.employeeId.toLowerCase()}
+                        {formatDisplayLoginId({ username: st.username, email: st.email }) || st.employeeId.toLowerCase()}
                       </div>
-                      <div className="text-[10px] text-slate-400">{st.email}</div>
+                      {!isSyntheticAuthEmail(st.email) && st.email && (
+                        <div className="text-[10px] text-slate-400">{st.email}</div>
+                      )}
                     </td>
 
                     <td className="py-3 px-4">
@@ -787,13 +817,15 @@ export const SuperAdminStaffRBAC: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Username *</label>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Username / Mobile / Login ID *
+                    </label>
                     <input
                       type="text"
                       required
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
-                      placeholder="e.g. jamal.teacher"
+                      placeholder="e.g. jamal01 or 017XXXXXXXX"
                       className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg font-mono text-xs"
                     />
                   </div>
@@ -813,13 +845,16 @@ export const SuperAdminStaffRBAC: React.FC = () => {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Official Login Email *</label>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    {language === 'bn'
+                      ? 'অফিশিয়াল লগইন ইমেইল (ঐচ্ছিক — চাইলে ইমেইল বা মোবাইল/নাম ব্যবহার করুন)'
+                      : 'Official Login Email (Optional if using Username / Mobile above)'}
+                  </label>
                   <input
-                    type="email"
-                    required
+                    type="text"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="e.g. jamal@school.edu.bd"
+                    placeholder="e.g. jamal@school.edu.bd (optional)"
                     className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
                   />
                 </div>

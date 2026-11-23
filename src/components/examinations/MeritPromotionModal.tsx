@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ClassLevel, Exam, SchoolProfile, Student } from '../../types';
 import { StorageService } from '../../services/storage';
+import { buildClassSequence } from '../../utils/academicClasses';
 import {
   AlertTriangle,
   ArrowRight,
@@ -36,28 +37,33 @@ interface MeritPromotionModalProps {
   onPromoted: (summaryMessage: string) => void;
 }
 
-const CLASS_SEQUENCE: string[] = [
-  'Play',
-  'Nurany',
-  'Nursery',
-  'KG',
-  'Class 1',
-  'Class 2',
-  'Class 3',
-  'Class 4',
-  'Class 5',
-  'Class 6',
-  'Class 7',
-  'Class 8',
-  'Class 9',
-  'Class 10',
-];
+function getClassSequenceFromStorage(): string[] {
+  const seq = buildClassSequence(StorageService.getClasses());
+  return seq.length > 0
+    ? seq
+    : [
+        'Play',
+        'Nurany',
+        'Nursery',
+        'KG',
+        'Class 1',
+        'Class 2',
+        'Class 3',
+        'Class 4',
+        'Class 5',
+        'Class 6',
+        'Class 7',
+        'Class 8',
+        'Class 9',
+        'Class 10',
+      ];
+}
 
-function getDefaultNextClass(currentClass: string): string {
-  const idx = CLASS_SEQUENCE.indexOf(currentClass);
+function getDefaultNextClass(currentClass: string, sequence: string[]): string {
+  const idx = sequence.indexOf(currentClass);
   if (idx === -1) return currentClass;
-  if (idx === CLASS_SEQUENCE.length - 1) return '__GRADUATED__';
-  return CLASS_SEQUENCE[idx + 1];
+  if (idx === sequence.length - 1) return '__GRADUATED__';
+  return sequence[idx + 1];
 }
 
 function getDefaultNextSession(currentSession?: string): string {
@@ -82,7 +88,16 @@ export const MeritPromotionModal: React.FC<MeritPromotionModalProps> = ({
   toBnNumber,
   onPromoted,
 }) => {
-  const [targetClass, setTargetClass] = useState<string>(() => getDefaultNextClass(selectedClass));
+  const classSequence = useMemo(() => getClassSequenceFromStorage(), [isOpen]);
+  const [targetClass, setTargetClass] = useState<string>(() =>
+    getDefaultNextClass(selectedClass, getClassSequenceFromStorage())
+  );
+
+  useEffect(() => {
+    if (isOpen) {
+      setTargetClass(getDefaultNextClass(selectedClass, getClassSequenceFromStorage()));
+    }
+  }, [isOpen, selectedClass]);
   const [newSession, setNewSession] = useState<string>(() =>
     getDefaultNextSession(school.currentSession)
   );
@@ -305,7 +320,7 @@ export const MeritPromotionModal: React.FC<MeritPromotionModalProps> = ({
               onChange={(e) => setTargetClass(e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-xl bg-white font-bold text-blue-900"
             >
-              {CLASS_SEQUENCE.map((cls) => (
+              {classSequence.map((cls) => (
                 <option key={cls} value={cls}>
                   {cls}
                 </option>

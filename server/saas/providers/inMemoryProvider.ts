@@ -18,6 +18,10 @@ import {
   TransactionContext,
   getDefaultPlatformPaymentChannels,
 } from '../types';
+import {
+  normalizeLoginUsernameKey,
+  normalizePhoneNumber,
+} from '../../../src/utils/loginIdentifier';
 
 interface InMemoryAuthUser {
   uid: string;
@@ -340,6 +344,41 @@ export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
     const norm = email.toLowerCase();
     const found = Array.from(this.saasUsers.values()).find((u) => u.email === norm);
     return found ? structuredClone(found) : null;
+  }
+
+  async getSaaSUserByUsernameNormalized(usernameNormalized: string): Promise<SaaSUserRecord | null> {
+    if (!usernameNormalized) return null;
+    const found = Array.from(this.saasUsers.values()).find((u) => {
+      const storedKey =
+        u.usernameNormalized || (u.username ? normalizeLoginUsernameKey(u.username) : '');
+      return storedKey === usernameNormalized;
+    });
+    return found ? structuredClone(found) : null;
+  }
+
+  async findSaaSUsersByLoginIdentifier(
+    usernameNormalized: string,
+    phoneNormalized?: string
+  ): Promise<SaaSUserRecord[]> {
+    const all = Array.from(this.saasUsers.values());
+    const directMatches = usernameNormalized
+      ? all.filter((u) => {
+          const storedKey =
+            u.usernameNormalized || (u.username ? normalizeLoginUsernameKey(u.username) : '');
+          return storedKey === usernameNormalized;
+        })
+      : [];
+    if (directMatches.length > 0) {
+      return directMatches.map((u) => structuredClone(u));
+    }
+    if (phoneNormalized) {
+      const phoneMatches = all.filter((u) => {
+        const storedPhone = u.phoneNormalized || (u.phone ? normalizePhoneNumber(u.phone) : '');
+        return storedPhone === phoneNormalized;
+      });
+      return phoneMatches.map((u) => structuredClone(u));
+    }
+    return [];
   }
 
   async listSaaSUsersBySchool(schoolId: string): Promise<SaaSUserRecord[]> {

@@ -3,7 +3,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { CloudSyncService } from '../../services/cloudSync';
-import { RoutinePeriod, DayOfWeek } from '../../types';
+import { ClassInfo, RoutinePeriod, DayOfWeek } from '../../types';
+import { formatClassOptionLabel, getManagedClassList, getManagedClassNames } from '../../utils/academicClasses';
 import {
   CalendarDays,
   Printer,
@@ -50,7 +51,13 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
   const teachers = allStaff.filter((s) => s.role === 'teacher' || s.role === 'admin');
   const matchedTeacherStaff = resolveTeacherStaffProfile(currentUser, allStaff);
   const [viewMode, setViewMode] = useState<'class' | 'teacher' | 'room'>(initialViewMode || 'class');
-  const [selectedClass, setSelectedClass] = useState<string>('Class 10');
+  const [academicClasses, setAcademicClasses] = useState<ClassInfo[]>(() => StorageService.getClasses());
+  const managedClassList = React.useMemo(() => getManagedClassList(academicClasses), [academicClasses]);
+  const managedClassNames = React.useMemo(() => getManagedClassNames(academicClasses), [academicClasses]);
+  const [selectedClass, setSelectedClass] = useState<string>(() => {
+    const names = getManagedClassNames(StorageService.getClasses());
+    return names.includes('Class 10') ? 'Class 10' : names[0] || 'Class 10';
+  });
   const [selectedSection, setSelectedSection] = useState<string>('A');
   const subjects = StorageService.getSubjects();
   const [selectedTeacher, setSelectedTeacher] = useState<string>(
@@ -123,6 +130,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
 
   useEffect(() => {
     const handleSync = () => {
+      setAcademicClasses(StorageService.getClasses());
       setRoutines(StorageService.getRoutines());
       try {
         const t = localStorage.getItem('school_routine_tiffin_time');
@@ -131,9 +139,22 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
         if (a !== null) setTiffinAfterPeriod(parseInt(a, 10));
       } catch {}
     };
+    const handleClassesUpdated = () => {
+      setAcademicClasses(StorageService.getClasses());
+    };
     window.addEventListener('school_cloud_data_synced', handleSync);
-    return () => window.removeEventListener('school_cloud_data_synced', handleSync);
+    window.addEventListener('school_classes_updated', handleClassesUpdated);
+    return () => {
+      window.removeEventListener('school_cloud_data_synced', handleSync);
+      window.removeEventListener('school_classes_updated', handleClassesUpdated);
+    };
   }, []);
+
+  useEffect(() => {
+    if (managedClassNames.length > 0 && !managedClassNames.includes(selectedClass as any)) {
+      setSelectedClass(managedClassNames[0]);
+    }
+  }, [managedClassNames, selectedClass]);
 
   const handleUpdateTiffinTime = (newTime: string) => {
     setTiffinTime(newTime);
@@ -552,8 +573,10 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
                 onChange={(e) => setSelectedClass(e.target.value)}
                 className="px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white"
               >
-                {['Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'].map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                {managedClassList.map((cls) => (
+                  <option key={cls.id} value={cls.name}>
+                    {formatClassOptionLabel(cls, language)}
+                  </option>
                 ))}
               </select>
             </div>

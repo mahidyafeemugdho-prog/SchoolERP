@@ -3,7 +3,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useSchool } from '../../context/SchoolContext';
 import { StorageService } from '../../services/storage';
-import { Student } from '../../types';
+import { ClassInfo, Student } from '../../types';
+import { formatClassOptionLabel, getManagedClassList } from '../../utils/academicClasses';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
@@ -53,14 +54,27 @@ export const CertificatesView: React.FC = () => {
   const { schoolProfile } = useSchool();
   const school = schoolProfile;
   const activeSchoolCode = resolveSchoolCode(saasSession?.school?.schoolId, schoolProfile);
+  const [academicClasses, setAcademicClasses] = useState<ClassInfo[]>(() => StorageService.getClasses());
+  const managedClassList = React.useMemo(() => getManagedClassList(academicClasses), [academicClasses]);
   const students = StorageService.getStudents();
   const exams = StorageService.getExams();
   const [, setSyncTick] = useState<number>(0);
 
   useEffect(() => {
-    const handleSync = () => setSyncTick((n) => n + 1);
+    const handleSync = () => {
+      setAcademicClasses(StorageService.getClasses());
+      setSyncTick((n) => n + 1);
+    };
+    const handleClassesUpdated = () => {
+      setAcademicClasses(StorageService.getClasses());
+      setSyncTick((n) => n + 1);
+    };
     window.addEventListener('school_cloud_data_synced', handleSync);
-    return () => window.removeEventListener('school_cloud_data_synced', handleSync);
+    window.addEventListener('school_classes_updated', handleClassesUpdated);
+    return () => {
+      window.removeEventListener('school_cloud_data_synced', handleSync);
+      window.removeEventListener('school_classes_updated', handleClassesUpdated);
+    };
   }, []);
 
   const [selectedStudentId, setSelectedStudentId] = useState<string>(() => {
@@ -258,8 +272,8 @@ export const CertificatesView: React.FC = () => {
               className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white font-medium text-slate-800"
             >
               <option value="all">All Classes (সকল শ্রেণি)</option>
-              {['Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'].map((c) => (
-                <option key={c} value={c}>{c}</option>
+              {managedClassList.map((cls) => (
+                <option key={cls.id} value={cls.name}>{formatClassOptionLabel(cls, language)}</option>
               ))}
             </select>
           </div>

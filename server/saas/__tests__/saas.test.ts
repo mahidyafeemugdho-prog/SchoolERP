@@ -1324,4 +1324,217 @@ describe('SmartSchoolBD Multi-Tenant SaaS Platform API & Security Tests', () => 
     expect(delCustom.status).toBe(200);
     expect(delCustom.body.deletedPlanId).toBe('eid_bundle');
   });
+
+  it('28. Supports @ email, mobile numbers (BD/Bangla), plain names, and name+number combos for provisioning & login resolution', async () => {
+    const s1 = await createTestSchool();
+    expect(s1.status).toBe(201);
+    const schoolAdminToken = ctx.auth.issueTestTokenForEmail('admin@dmhs.edu.bd')!;
+
+    // 1. Provision by mobile number only (no @)
+    const mobUserRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${schoolAdminToken}`)
+      .send({
+        displayName: 'Kamal Hossain',
+        email: '01712345678',
+        password: 'Password@123',
+        schoolRole: 'teacher',
+      });
+    expect(mobUserRes.status).toBe(201);
+    expect(mobUserRes.body.user.username).toBe('01712345678');
+    expect(mobUserRes.body.user.email).toContain('@sch001.users.smartschool.bd');
+
+    // Resolve mobile across standard, +880, 880, and Bangla digits
+    for (const variant of ['01712345678', '+880 1712-345678', '8801712345678', '০১৭১২৩৪৫৬৭৮']) {
+      const resolveRes = await request(ctx.app)
+        .post('/api/saas/auth/resolve-login')
+        .send({ identifier: variant });
+      expect(resolveRes.status).toBe(200);
+      expect(resolveRes.body.resolvedEmail).toBe(mobUserRes.body.user.email);
+      expect(resolveRes.body.isSyntheticEmail).toBe(true);
+    }
+
+    // Duplicate mobile in different formatting rejected with 409
+    const dupMobRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${schoolAdminToken}`)
+      .send({
+        displayName: 'Duplicate Mobile',
+        email: '+8801712345678',
+        password: 'Password@123',
+        schoolRole: 'teacher',
+      });
+    expect(dupMobRes.status).toBe(409);
+    expect(dupMobRes.body.code).toBe('DUPLICATE_USERNAME');
+
+    // 2. Provision by plain name and name+number combo
+    const plainNameRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${schoolAdminToken}`)
+      .send({
+        displayName: 'Abdur Rahim',
+        email: 'rahim',
+        password: 'Password@123',
+        schoolRole: 'student',
+      });
+    expect(plainNameRes.status).toBe(201);
+    expect(plainNameRes.body.user.username).toBe('rahim');
+
+    const comboNameRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${schoolAdminToken}`)
+      .send({
+        displayName: 'Jamal Teacher',
+        email: 'jamal@dmhs.edu.bd',
+        username: 'jamal01',
+        password: 'Password@123',
+        schoolRole: 'teacher',
+      });
+    expect(comboNameRes.status).toBe(201);
+    expect(comboNameRes.body.user.username).toBe('jamal01');
+    expect(comboNameRes.body.user.email).toBe('jamal@dmhs.edu.bd');
+
+    // Resolve case-insensitively
+    const resolvePlain = await request(ctx.app)
+      .post('/api/saas/auth/resolve-login')
+      .send({ identifier: 'RAHIM' });
+    expect(resolvePlain.status).toBe(200);
+    expect(resolvePlain.body.resolvedEmail).toBe(plainNameRes.body.user.email);
+    expect(resolvePlain.body.isSyntheticEmail).toBe(true);
+
+    const resolveCombo = await request(ctx.app)
+      .post('/api/saas/auth/resolve-login')
+      .send({ identifier: 'JAMAL01' });
+    expect(resolveCombo.status).toBe(200);
+    expect(resolveCombo.body.resolvedEmail).toBe('jamal@dmhs.edu.bd');
+    expect(resolveCombo.body.isSyntheticEmail).toBe(false);
+
+    // @ email still resolves directly
+    const resolveAt = await request(ctx.app)
+      .post('/api/saas/auth/resolve-login')
+      .send({ identifier: 'jamal@dmhs.edu.bd' });
+    expect(resolveAt.status).toBe(200);
+    expect(resolveAt.body.resolvedEmail).toBe('jamal@dmhs.edu.bd');
+    expect(resolveAt.body.isSyntheticEmail).toBe(false);
+  });
+
+  it('29. Handles ambiguous secondary phones, disabled accounts, missing accounts, and malformed resolve-login inputs', async () => {
+    const s1 = await createTestSchool();
+    expect(s1.status).toBe(201);
+    const schoolAdminToken = ctx.auth.issueTestTokenForEmail('admin@dmhs.edu.bd')!;
+
+    // Two students sharing a parent's contact phone while having distinct usernames
+    const st1 = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${schoolAdminToken}`)
+      .send({
+        displayName: 'Sibling One',
+        email: 'sibling1',
+        phone: '01811223344',
+        password: 'Password@123',
+        schoolRole: 'student',
+      });
+    expect(st1.status).toBe(201);
+
+    const st2 = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${schoolAdminToken}`)
+      .send({
+        displayName: 'Sibling Two',
+        email: 'sibling2',
+        phone: '+8801811223344',
+        password: 'Password@123',
+        schoolRole: 'student',
+      });
+    expect(st2.status).toBe(201);
+
+    // Resolving shared secondary phone returns 409 AMBIGUOUS_IDENTIFIER
+    const ambigRes = await request(ctx.app)
+      .post('/api/saas/auth/resolve-login')
+      .send({ identifier: '01811223344' });
+    expect(ambigRes.status).toBe(409);
+    expect(ambigRes.body.code).toBe('AMBIGUOUS_IDENTIFIER');
+
+    // Disabled user returns 403 ACCOUNT_DISABLED
+    await request(ctx.app)
+      .patch(`/api/saas/users/${st1.body.user.uid}/status`)
+      .set('Authorization', `Bearer ${schoolAdminToken}`)
+      .send({ disabled: true });
+
+    const disabledRes = await request(ctx.app)
+      .post('/api/saas/auth/resolve-login')
+      .send({ identifier: 'sibling1' });
+    expect(disabledRes.status).toBe(403);
+    expect(disabledRes.body.code).toBe('ACCOUNT_DISABLED');
+
+    // Missing identifier returns 404
+    const missingRes = await request(ctx.app)
+      .post('/api/saas/auth/resolve-login')
+      .send({ identifier: 'nobody_here' });
+    expect(missingRes.status).toBe(404);
+    expect(missingRes.body.code).toBe('USER_NOT_FOUND');
+
+    // Non-string object injection returns 400
+    const badTypeRes = await request(ctx.app)
+      .post('/api/saas/auth/resolve-login')
+      .send({ identifier: { $ne: '' } });
+    expect(badTypeRes.status).toBe(400);
+  });
+
+  it('30. Allows switching login ID between @ email and mobile/username and creating schools with mobile/username admin IDs', async () => {
+    // Master Admin creates a school using a mobile number for admin login
+    const schoolRes = await createTestSchool({
+      schoolName: 'Mobile Admin School',
+      schoolCode: 'MOB01',
+      adminEmail: '01955443322',
+    });
+    expect(schoolRes.status).toBe(201);
+    expect(schoolRes.body.school.adminUsername).toBe('01955443322');
+    expect(schoolRes.body.school.adminEmail).toContain('@sch001.users.smartschool.bd');
+
+    // Resolving school admin mobile works and /me returns adminUsername
+    const resolveAdmin = await request(ctx.app)
+      .post('/api/saas/auth/resolve-login')
+      .send({ identifier: '01955443322' });
+    expect(resolveAdmin.status).toBe(200);
+    expect(resolveAdmin.body.resolvedEmail).toBe(schoolRes.body.school.adminEmail);
+
+    const adminToken = ctx.auth.issueTestTokenForEmail(schoolRes.body.school.adminEmail)!;
+    const meRes = await request(ctx.app)
+      .get('/api/saas/me')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(meRes.status).toBe(200);
+    expect(meRes.body.principal.username).toBe('01955443322');
+
+    // School Admin provisions a teacher with @ email, then user switches own login to name+number and back to @ email
+    const tRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        displayName: 'Tariq Mahmud',
+        email: 'tariq@mob.edu.bd',
+        password: 'Password@123',
+        schoolRole: 'teacher',
+      });
+    expect(tRes.status).toBe(201);
+
+    const tToken = ctx.auth.issueTestTokenForEmail('tariq@mob.edu.bd')!;
+    const switchToCombo = await request(ctx.app)
+      .patch('/api/saas/me/credentials')
+      .set('Authorization', `Bearer ${tToken}`)
+      .send({ email: 'tariq07' });
+    expect(switchToCombo.status).toBe(200);
+    expect(switchToCombo.body.user.username).toBe('tariq07');
+    expect(switchToCombo.body.user.email).toContain('@sch001.users.smartschool.bd');
+
+    const tComboToken = ctx.auth.issueTestTokenForEmail(switchToCombo.body.user.email)!;
+    const switchBackToEmail = await request(ctx.app)
+      .patch('/api/saas/me/credentials')
+      .set('Authorization', `Bearer ${tComboToken}`)
+      .send({ email: 'tariq.new@mob.edu.bd' });
+    expect(switchBackToEmail.status).toBe(200);
+    expect(switchBackToEmail.body.user.email).toBe('tariq.new@mob.edu.bd');
+    expect(switchBackToEmail.body.user.username).toBeUndefined();
+  });
 });
+

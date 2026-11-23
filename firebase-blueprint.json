@@ -74,9 +74,13 @@
       "properties": {
         "uid": { "type": "string" },
         "email": { "type": "string" },
+        "username": { "type": "string" },
+        "usernameNormalized": { "type": "string" },
+        "phoneNormalized": { "type": "string" },
         "displayName": { "type": "string" },
         "schoolId": { "type": "string" },
         "schoolRole": { "type": "string" },
+        "phone": { "type": "string" },
         "avatarUrl": { "type": "string" },
         "status": { "type": "string", "enum": ["active", "disabled"] }
       },

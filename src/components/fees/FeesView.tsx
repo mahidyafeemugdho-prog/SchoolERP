@@ -3,7 +3,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useSchool } from '../../context/SchoolContext';
 import { StorageService } from '../../services/storage';
-import { FeeInvoice, FeePayment, Expense, ExpenseLineItem, Student, FeeItem, ClassFeeConfig, OnlinePaymentRequest, MfsPaymentSettings, IncomeVoucher } from '../../types';
+import { ClassInfo, FeeInvoice, FeePayment, Expense, ExpenseLineItem, Student, FeeItem, ClassFeeConfig, OnlinePaymentRequest, MfsPaymentSettings, IncomeVoucher } from '../../types';
+import { formatClassOptionLabel, getManagedClassList } from '../../utils/academicClasses';
 import { ClassFeeSetupTab } from './ClassFeeSetupTab';
 import { ScheduledFeesTab } from './ScheduledFeesTab';
 import { TransportStudentsTab } from './TransportStudentsTab';
@@ -202,6 +203,8 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const [expenses, setExpenses] = useState<Expense[]>(() => StorageService.getExpenses());
   const [incomeVouchers, setIncomeVouchers] = useState<IncomeVoucher[]>(() => StorageService.getIncomeVouchers());
   const [incomeCreateSignal, setIncomeCreateSignal] = useState<number>(0);
+  const [academicClasses, setAcademicClasses] = useState<ClassInfo[]>(() => StorageService.getClasses());
+  const managedClassList = useMemo(() => getManagedClassList(academicClasses), [academicClasses]);
   const [classFeeConfigs, setClassFeeConfigs] = useState<ClassFeeConfig[]>(() => StorageService.getClassFeeConfigs());
 
   // Online Fee Payments & Approvals State
@@ -212,6 +215,7 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
   const skipNextAutoItemsRef = useRef<boolean>(false);
 
   const refreshFinanceData = () => {
+    setAcademicClasses(StorageService.getClasses());
     setInvoices(StorageService.getInvoices());
     setPayments(StorageService.getPayments());
     setExpenses(StorageService.getExpenses());
@@ -229,11 +233,17 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
     const handleIncomeVoucherUpdate = () => {
       setIncomeVouchers(StorageService.getIncomeVouchers());
     };
+    const handleClassesUpdated = () => {
+      setAcademicClasses(StorageService.getClasses());
+      setClassFeeConfigs(StorageService.getClassFeeConfigs());
+    };
     window.addEventListener('school_cloud_data_synced', handleSync);
     window.addEventListener('school_income_vouchers_updated', handleIncomeVoucherUpdate);
+    window.addEventListener('school_classes_updated', handleClassesUpdated);
     return () => {
       window.removeEventListener('school_cloud_data_synced', handleSync);
       window.removeEventListener('school_income_vouchers_updated', handleIncomeVoucherUpdate);
+      window.removeEventListener('school_classes_updated', handleClassesUpdated);
     };
   }, []);
   const [onlineStatusFilter, setOnlineStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
@@ -2681,8 +2691,8 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                       className="w-full px-2.5 py-1.5 text-[11px] border border-slate-200 rounded-lg bg-white font-medium"
                     >
                       <option value="all">{language === 'bn' ? 'সকল শ্রেণি (All Classes)' : 'All Classes'}</option>
-                      {['Class 10', 'Class 9', 'Class 8', 'Class 7', 'Class 6', 'Class 5', 'Class 4', 'Class 3', 'Class 2', 'Class 1', 'KG', 'Nursery'].map((c) => (
-                        <option key={c} value={c}>{c}</option>
+                      {[...managedClassList].reverse().map((cls) => (
+                        <option key={cls.id} value={cls.name}>{formatClassOptionLabel(cls, language)}</option>
                       ))}
                     </select>
                   </div>
@@ -3903,8 +3913,8 @@ export const FeesView: React.FC<FeesViewProps> = ({ initialSubTab, jumpNonce }) 
                   className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-white"
                 >
                   <option value="all">{language === 'bn' ? 'সকল শ্রেণি' : 'All Classes'}</option>
-                  {['Class 10', 'Class 9', 'Class 8', 'Class 7', 'Class 6', 'Class 5', 'Class 4', 'Class 3', 'Class 2', 'Class 1', 'KG', 'Nursery'].map((c) => (
-                    <option key={c} value={c}>{c}</option>
+                  {[...managedClassList].reverse().map((cls) => (
+                    <option key={cls.id} value={cls.name}>{formatClassOptionLabel(cls, language)}</option>
                   ))}
                 </select>
               </div>

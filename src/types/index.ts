@@ -160,6 +160,7 @@ export interface Student {
   status: 'active' | 'transferred' | 'graduated' | 'inactive';
   admissionDate: string;
   email?: string;
+  username?: string;
   phone?: string;
   authUid?: string;
   password?: string; // Legacy local fallback field; new logins use Firebase Auth

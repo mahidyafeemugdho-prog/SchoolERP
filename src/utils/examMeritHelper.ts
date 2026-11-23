@@ -176,3 +176,115 @@ export function computeSingleExamStudentMeritRank({
     failedCount: targetEntry?.failedCount ?? 0,
   };
 }
+
+export interface ClassExamMeritInput {
+  classStudents: Student[];
+  classSubjects: Subject[];
+  getSubjectsForStudent: (student: Student, subjects: Subject[]) => Subject[];
+  getStudentMarkForSubject: (studentId: string, subjectId: string) => MarksEntry | undefined;
+}
+
+/**
+ * Computes SingleExamMeritResult for every student in `classStudents` in one O(N) pass,
+ * ideal for bulk whole-class marksheet rendering and printing.
+ */
+export function computeClassExamMeritMap({
+  classStudents,
+  classSubjects,
+  getSubjectsForStudent,
+  getStudentMarkForSubject,
+}: ClassExamMeritInput): Map<string, SingleExamMeritResult> {
+  const resultMap = new Map<string, SingleExamMeritResult>();
+  if (classStudents.length === 0) return resultMap;
+
+  const calculated = classStudents.map((std) => {
+    const relevantSubs = getSubjectsForStudent(std, classSubjects);
+    let totalObtained = 0;
+    let totalFullMarks = 0;
+    const gpas: number[] = [];
+    let hasFail = false;
+    let failedCount = 0;
+    let subjectsWithMarksCount = 0;
+
+    for (const sub of relevantSubs) {
+      const m = getStudentMarkForSubject(std.id, sub.id);
+      if (m) {
+        totalFullMarks += sub.fullMarks;
+        subjectsWithMarksCount++;
+        totalObtained += m.total;
+        gpas.push(m.gpa);
+        if (m.grade === 'F') {
+          hasFail = true;
+          failedCount++;
+        }
+      }
+    }
+
+    const res = calculateTotalGPA(gpas, hasFail);
+    const isPassed = subjectsWithMarksCount > 0 && !hasFail && res.status === 'PASSED' && res.overallGrade !== 'F';
+
+    return {
+      student: std,
+      totalObtained,
+      totalFullMarks,
+      gpa: res.totalGPA,
+      overallGrade: res.overallGrade,
+      hasFail,
+      failedCount,
+      subjectsWithMarksCount,
+      isPassed,
+    };
+  });
+
+  const passedStudents = calculated
+    .filter((entry) => entry.isPassed)
+    .sort((a, b) => {
+      if (b.gpa !== a.gpa) return b.gpa - a.gpa;
+      if (b.totalObtained !== a.totalObtained) return b.totalObtained - a.totalObtained;
+      return compareStudentsByRoll(a.student, b.student);
+    });
+
+  const classRankMap = new Map<string, number>();
+  passedStudents.forEach((entry, idx) => {
+    classRankMap.set(entry.student.id, idx + 1);
+  });
+
+  const sectionTotals = new Map<string, number>();
+  const sectionPassedCounts = new Map<string, number>();
+  const sectionRankMap = new Map<string, number>();
+
+  for (const std of classStudents) {
+    const secKey = (std.section || '').trim().toLowerCase();
+    sectionTotals.set(secKey, (sectionTotals.get(secKey) || 0) + 1);
+  }
+
+  for (const entry of passedStudents) {
+    const secKey = (entry.student.section || '').trim().toLowerCase();
+    const nextRank = (sectionPassedCounts.get(secKey) || 0) + 1;
+    sectionPassedCounts.set(secKey, nextRank);
+    sectionRankMap.set(entry.student.id, nextRank);
+  }
+
+  for (const entry of calculated) {
+    const secKey = (entry.student.section || '').trim().toLowerCase();
+    const status: SingleExamMeritResult['status'] =
+      entry.subjectsWithMarksCount === 0 ? 'pending' : entry.isPassed ? 'passed' : 'failed';
+
+    resultMap.set(entry.student.id, {
+      status,
+      classRank: classRankMap.get(entry.student.id) ?? null,
+      classPassedCount: passedStudents.length,
+      classTotalStudents: classStudents.length,
+      sectionRank: sectionRankMap.get(entry.student.id) ?? null,
+      sectionPassedCount: sectionPassedCounts.get(secKey) || 0,
+      sectionTotalStudents: sectionTotals.get(secKey) || 0,
+      totalObtained: entry.totalObtained,
+      totalFullMarks: entry.totalFullMarks,
+      gpa: entry.gpa,
+      overallGrade: entry.overallGrade,
+      failedCount: entry.failedCount,
+    });
+  }
+
+  return resultMap;
+}

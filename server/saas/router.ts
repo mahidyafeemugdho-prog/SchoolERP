@@ -18,6 +18,7 @@ import { createSaaSMiddleware, AuthenticatedRequest } from './middleware';
 import { evaluateSubscriptionState } from './subscriptionService';
 import { createTenantService } from './tenantService';
 import { createPaymentService } from './paymentService';
+import { toFirebaseAdminServiceError } from './providers/firebaseProvider';
 
 export interface SaasRouterDeps {
   db: DatabaseProviderInterface;
@@ -34,6 +35,14 @@ function handleRouteError(res: Response, err: unknown) {
       code: err.code,
       error: err.message,
       details: err.details,
+    });
+  }
+  const iamMapped = toFirebaseAdminServiceError(err);
+  if (iamMapped) {
+    return res.status(iamMapped.statusCode).json({
+      success: false,
+      code: iamMapped.code,
+      error: iamMapped.message,
     });
   }
   const message = err instanceof Error ? err.message : 'Internal server error';
@@ -73,11 +82,18 @@ export function createSaasRouter(deps: SaasRouterDeps) {
     });
   });
 
+  const isAdminUnavailableOrDenied = (err: unknown): boolean => {
+    if (err instanceof SaaSServiceError) {
+      return err.code === 'ADMIN_SDK_UNAVAILABLE' || err.code === 'ADMIN_IAM_PERMISSION_DENIED';
+    }
+    return Boolean(toFirebaseAdminServiceError(err));
+  };
+
   const loadPaymentChannelsSafe = async (): Promise<PlatformPaymentChannels> => {
     try {
       return await deps.db.getPaymentChannels();
     } catch (dbErr: any) {
-      if (dbErr instanceof SaaSServiceError && dbErr.code === 'ADMIN_SDK_UNAVAILABLE') {
+      if (isAdminUnavailableOrDenied(dbErr)) {
         return getDefaultPlatformPaymentChannels();
       }
       throw dbErr;
@@ -92,7 +108,7 @@ export function createSaasRouter(deps: SaasRouterDeps) {
       try {
         plans = await deps.db.getPlans();
       } catch (dbErr: any) {
-        if (dbErr instanceof SaaSServiceError && dbErr.code === 'ADMIN_SDK_UNAVAILABLE') {
+        if (isAdminUnavailableOrDenied(dbErr)) {
           plans = DEFAULT_SUBSCRIPTION_PLANS;
           catalogSource = 'default_catalog';
         } else {
@@ -121,6 +137,58 @@ export function createSaasRouter(deps: SaasRouterDeps) {
     }
   });
 
+  // Lightweight sliding-window rate limit for unauthenticated login resolution
+  const resolveRateBuckets = new Map<string, number[]>();
+  const RESOLVE_WINDOW_MS = 60_000;
+  const RESOLVE_MAX_ATTEMPTS = 45;
+
+  router.post('/auth/resolve-login', async (req, res) => {
+    try {
+      const clientKey =
+        (typeof req.headers['x-forwarded-for'] === 'string'
+          ? req.headers['x-forwarded-for'].split(',')[0]?.trim()
+          : undefined) ||
+        req.ip ||
+        'unknown';
+      const nowMs = nowProvider().getTime();
+      const recent = (resolveRateBuckets.get(clientKey) || []).filter(
+        (ts) => nowMs - ts < RESOLVE_WINDOW_MS
+      );
+      if (recent.length >= RESOLVE_MAX_ATTEMPTS) {
+        return res.status(429).json({
+          success: false,
+          code: 'RATE_LIMITED',
+          error: 'Too many login attempts. Please wait a moment and try again.',
+        });
+      }
+      recent.push(nowMs);
+      resolveRateBuckets.set(clientKey, recent);
+      if (resolveRateBuckets.size > 500) {
+        for (const [k, list] of resolveRateBuckets.entries()) {
+          if (list.every((ts) => nowMs - ts >= RESOLVE_WINDOW_MS)) {
+            resolveRateBuckets.delete(k);
+          }
+        }
+      }
+
+      if (!req.body || typeof req.body.identifier !== 'string') {
+        return res.status(400).json({
+          success: false,
+          code: 'VALIDATION_ERROR',
+          error: 'Login identifier must be a text string.',
+        });
+      }
+
+      const resolved = await tenantService.resolveLoginIdentifier(req.body.identifier);
+      return res.json({
+        success: true,
+        ...resolved,
+      });
+    } catch (err) {
+      handleRouteError(res, err);
+    }
+  });
+
   /**
    * GET /api/saas/me
    * Resolves verified principal, assigned school tenant, and real-time subscription access state.
@@ -138,6 +206,7 @@ export function createSaasRouter(deps: SaasRouterDeps) {
       ]);
       const principal = {
         ...basePrincipal,
+        username: userRecord?.username || basePrincipal.username,
         displayName: userRecord?.displayName || basePrincipal.displayName,
         phone: userRecord?.phone || basePrincipal.phone,
         avatarUrl:
@@ -245,6 +314,7 @@ export function createSaasRouter(deps: SaasRouterDeps) {
             item.schoolCode.toLowerCase().includes(q) ||
             item.schoolName.toLowerCase().includes(q) ||
             item.adminEmail.toLowerCase().includes(q) ||
+            (item.adminUsername && item.adminUsername.toLowerCase().includes(q)) ||
             item.principalName.toLowerCase().includes(q);
           if (!match) return false;
         }

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
-import { ScheduledFee, ClassLevel } from '../../types';
+import { ClassInfo, ScheduledFee, ClassLevel } from '../../types';
+import { getManagedClassNames } from '../../utils/academicClasses';
 import { DigitInput } from '../common/DigitInput';
 import {
   Calendar,
@@ -39,18 +40,31 @@ export const ScheduledFeesTab: React.FC = () => {
   const [month, setMonth] = useState<string>('March 2026');
   const [description, setDescription] = useState<string>('');
   const [isCompulsory, setIsCompulsory] = useState<boolean>(true);
+  const [academicClasses, setAcademicClasses] = useState<ClassInfo[]>(() => StorageService.getClasses());
+  const ALL_CLASSES: ClassLevel[] = useMemo(() => getManagedClassNames(academicClasses), [academicClasses]);
+
+  useEffect(() => {
+    const handleClassesChange = () => {
+      setAcademicClasses(StorageService.getClasses());
+    };
+    const handleSync = () => {
+      setAcademicClasses(StorageService.getClasses());
+      setScheduledFees(StorageService.getScheduledFees());
+    };
+    window.addEventListener('school_classes_updated', handleClassesChange);
+    window.addEventListener('school_cloud_data_synced', handleSync);
+    return () => {
+      window.removeEventListener('school_classes_updated', handleClassesChange);
+      window.removeEventListener('school_cloud_data_synced', handleSync);
+    };
+  }, []);
+
   const [applicableClassesMode, setApplicableClassesMode] = useState<'all' | 'custom'>('all');
-  const [selectedClasses, setSelectedClasses] = useState<ClassLevel[]>([
-    'Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4',
-    'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10',
-  ]);
+  const [selectedClasses, setSelectedClasses] = useState<ClassLevel[]>(() =>
+    getManagedClassNames(StorageService.getClasses())
+  );
 
   const todayStr = '2026-10-20';
-
-  const ALL_CLASSES: ClassLevel[] = [
-    'Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4',
-    'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10',
-  ];
 
   const handleOpenAdd = () => {
     setEditingFee(null);
@@ -219,7 +233,7 @@ export const ScheduledFeesTab: React.FC = () => {
                     </span>
                     <span className="font-bold text-slate-700">
                       {fee.applicableClasses === 'all'
-                        ? (language === 'bn' ? 'সকল শ্রেণি (Nursery-10)' : 'All Classes')
+                        ? (language === 'bn' ? 'সকল শ্রেণি (All Classes)' : 'All Classes')
                         : `${fee.applicableClasses.length} Classes`}
                     </span>
                   </div>
@@ -371,7 +385,7 @@ export const ScheduledFeesTab: React.FC = () => {
                       checked={applicableClassesMode === 'all'}
                       onChange={() => setApplicableClassesMode('all')}
                     />
-                    <span>{language === 'bn' ? 'সকল শ্রেণি (Nursery - 10)' : 'All Classes'}</span>
+                    <span>{language === 'bn' ? 'সকল শ্রেণি (All Classes)' : 'All Classes'}</span>
                   </label>
                   <label className="flex items-center space-x-1.5 cursor-pointer">
                     <input

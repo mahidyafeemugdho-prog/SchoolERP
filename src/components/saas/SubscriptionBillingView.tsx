@@ -12,6 +12,8 @@ import {
   SaaSSubscriptionHistoryDTO,
   getEffectivePlanPriceBdt,
   isSaaSBackendUnavailableError,
+  isSaaSIamPermissionError,
+  isNetlifyHostingEnvironment,
 } from '../../services/saasApi';
 import { auth, db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
@@ -285,10 +287,16 @@ export const SubscriptionBillingView: React.FC<SubscriptionBillingViewProps> = (
             : 'Payment request submitted! Your subscription will be activated once Master Admin verifies and approves the Transaction ID.',
       });
     } catch (err: any) {
-      const msg = isSaaSBackendUnavailableError(err)
+      const msg = isSaaSIamPermissionError(err)
         ? language === 'bn'
-          ? 'পেমেন্ট রিকোয়েস্ট জমা দেওয়ার জন্য মূল SaaS ব্যাকএন্ড সার্ভার (FIREBASE_SERVICE_ACCOUNT_JSON) চালু থাকতে হবে। প্রয়োজনে প্ল্যাটফর্ম সাপোর্টে যোগাযোগ করুন।'
-          : 'Submitting a payment request requires the active SaaS backend server (FIREBASE_SERVICE_ACCOUNT_JSON configured). Please contact platform support if unavailable.'
+          ? 'Firebase Admin সার্ভারের IAM অনুমোদন (Cloud Datastore User) এখনো সেট করা হয়নি। প্ল্যাটফর্ম অ্যাডমিনকে জানান।'
+          : 'Server Firebase Admin IAM permissions are not yet granted on the Firebase project.'
+        : isSaaSBackendUnavailableError(err)
+        ? language === 'bn'
+          ? isNetlifyHostingEnvironment()
+            ? 'পেমেন্ট রিকোয়েস্ট জমা দেওয়ার জন্য মূল SaaS ব্যাকএন্ড সার্ভার (FIREBASE_SERVICE_ACCOUNT_JSON) চালু থাকতে হবে। প্রয়োজনে প্ল্যাটফর্ম সাপোর্টে যোগাযোগ করুন।'
+            : 'পেমেন্ট রিকোয়েস্ট জমা দেওয়ার জন্য ব্যাকএন্ড সার্ভারের সাথে সংযোগ প্রয়োজন। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।'
+          : 'Submitting a payment request requires the active SaaS backend server. Please try again or contact platform support.'
         : err?.message || 'Failed to submit payment request.';
       setFeedback({
         type: 'error',

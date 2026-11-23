@@ -8,6 +8,7 @@ import {
   Student,
 } from '../../types';
 import { StorageService } from '../../services/storage';
+import { getManagedClassNames } from '../../utils/academicClasses';
 import { compareRolls, compareStudentsByClassAndRoll } from '../../utils/studentSort';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
@@ -54,21 +55,6 @@ interface ExamSeatPlanTabProps {
 
 type PrintLayoutMode = 'room_map' | 'desk_stickers' | 'notice_summary';
 type SeatStrategy = 'sequential' | 'zigzag_class' | 'zigzag_roll';
-
-const ALL_CLASSES = [
-  'Nursery',
-  'KG',
-  'Class 1',
-  'Class 2',
-  'Class 3',
-  'Class 4',
-  'Class 5',
-  'Class 6',
-  'Class 7',
-  'Class 8',
-  'Class 9',
-  'Class 10',
-];
 
 const DEFAULT_ROOMS: ExamSeatRoom[] = [
   {
@@ -186,19 +172,40 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
     return () => window.removeEventListener('school_cloud_data_synced', handleSync);
   }, [selectedExamId, selectedClass]);
 
+  const [managedClassNames, setManagedClassNames] = useState<string[]>(() =>
+    getManagedClassNames(StorageService.getClasses())
+  );
+
+  useEffect(() => {
+    const refreshClasses = () => {
+      setManagedClassNames(getManagedClassNames(StorageService.getClasses()));
+    };
+    window.addEventListener('school_classes_updated', refreshClasses);
+    window.addEventListener('school_cloud_data_synced', refreshClasses);
+    return () => {
+      window.removeEventListener('school_classes_updated', refreshClasses);
+      window.removeEventListener('school_cloud_data_synced', refreshClasses);
+    };
+  }, []);
+
   const activeStudents = useMemo(
     () => allStudents.filter((s) => s.status === 'active'),
     [allStudents]
   );
 
-  // Classes that actually have active students, plus current selectedClass
+  // Classes from Academic Structure + any active students' classes
   const availableClasses = useMemo(() => {
-    const withCounts = ALL_CLASSES.map((cls) => ({
+    const orderedNames = Array.from(
+      new Set([
+        ...managedClassNames,
+        ...activeStudents.map((s) => s.className).filter(Boolean),
+      ])
+    );
+    return orderedNames.map((cls) => ({
       name: cls,
       count: activeStudents.filter((s) => s.className === cls).length,
     }));
-    return withCounts;
-  }, [activeStudents]);
+  }, [activeStudents, managedClassNames]);
 
   // Pool of eligible students based on class toggles, section, shift
   const eligibleStudents = useMemo(() => {

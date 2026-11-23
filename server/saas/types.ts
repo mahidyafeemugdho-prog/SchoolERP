@@ -154,6 +154,7 @@ export interface SchoolTenantRecord {
   principalName: string;
   adminName: string;
   adminEmail: string;
+  adminUsername?: string;
   adminUid: string;
   status: SchoolStatus;
   subscription: SchoolSubscriptionInfo;
@@ -235,6 +236,9 @@ export interface SubscriptionHistoryRecord {
 export interface SaaSUserRecord {
   uid: string;
   email: string;
+  username?: string;
+  usernameNormalized?: string;
+  phoneNormalized?: string;
   displayName: string;
   schoolId: string;
   schoolRole: SaaSRole;
@@ -262,6 +266,7 @@ export interface MasterAdminVaultRecord {
 export interface AuthPrincipal {
   uid: string;
   email: string;
+  username?: string;
   emailVerified: boolean;
   schoolId: string | null;
   schoolRole: SaaSRole | null;
@@ -282,6 +287,7 @@ export interface CreateSchoolInput {
   principalName: string;
   adminName: string;
   adminEmail: string;
+  adminUsername?: string;
   adminPassword: string;
   initialPlan: SubscriptionPlanId;
   startDate: string;
@@ -315,7 +321,8 @@ export interface CreatePaymentRequestInput {
 }
 
 export interface CreateTenantUserInput {
-  email: string;
+  email?: string;
+  username?: string;
   password: string;
   displayName: string;
   schoolRole: Exclude<SaaSRole, 'master_admin'>;
@@ -334,6 +341,7 @@ export interface CustomClaimsPayload {
 export interface UpdateOwnCredentialsInput {
   displayName?: string;
   email?: string;
+  username?: string;
   password?: string;
   phone?: string;
   avatarUrl?: string;
@@ -342,6 +350,7 @@ export interface UpdateOwnCredentialsInput {
 export interface UpdateTenantUserCredentialsInput {
   displayName?: string;
   email?: string;
+  username?: string;
   password?: string;
   phone?: string;
   schoolRole?: Exclude<SaaSRole, 'master_admin'>;
@@ -487,6 +496,11 @@ export interface DatabaseProviderInterface {
   createSaaSUserRecord(user: SaaSUserRecord): Promise<SaaSUserRecord>;
   getSaaSUserByUid(uid: string): Promise<SaaSUserRecord | null>;
   getSaaSUserByEmail(email: string): Promise<SaaSUserRecord | null>;
+  getSaaSUserByUsernameNormalized(usernameNormalized: string): Promise<SaaSUserRecord | null>;
+  findSaaSUsersByLoginIdentifier(
+    usernameNormalized: string,
+    phoneNormalized?: string
+  ): Promise<SaaSUserRecord[]>;
   listSaaSUsersBySchool(schoolId: string): Promise<SaaSUserRecord[]>;
   updateSaaSUserRecord(uid: string, updates: Partial<SaaSUserRecord>): Promise<SaaSUserRecord>;
   deleteSaaSUserRecord(uid: string, schoolIdHint?: string): Promise<void>;

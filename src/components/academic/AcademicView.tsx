@@ -42,8 +42,15 @@ export const AcademicView: React.FC = () => {
       setSubjects(StorageService.getSubjects());
       setHolidays(StorageService.getHolidays());
     };
+    const handleClassesUpdated = () => {
+      setClasses(StorageService.getClasses());
+    };
     window.addEventListener('school_cloud_data_synced', handleSync);
-    return () => window.removeEventListener('school_cloud_data_synced', handleSync);
+    window.addEventListener('school_classes_updated', handleClassesUpdated);
+    return () => {
+      window.removeEventListener('school_cloud_data_synced', handleSync);
+      window.removeEventListener('school_classes_updated', handleClassesUpdated);
+    };
   }, []);
   const [selectedClass, setSelectedClass] = useState<string>(() => {
     const list = StorageService.getClasses();
@@ -168,8 +175,21 @@ export const AcademicView: React.FC = () => {
   // Save Class (Add or Edit)
   const handleSaveClass = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!classNameEn.trim()) {
+    const trimmedName = classNameEn.trim();
+    if (!trimmedName) {
       setClassFormError('Please enter class name in English.');
+      return;
+    }
+
+    const duplicate = classes.find(
+      (c) => c.name.trim().toLowerCase() === trimmedName.toLowerCase() && c.id !== editingClass?.id
+    );
+    if (duplicate) {
+      setClassFormError(
+        language === 'bn'
+          ? `"${trimmedName}" নামে ইতোমধ্যে একটি শ্রেণি রয়েছে।`
+          : `A class named "${trimmedName}" already exists.`
+      );
       return;
     }
 
@@ -183,46 +203,45 @@ export const AcademicView: React.FC = () => {
     if (editingClass) {
       // Update existing class
       const oldName = editingClass.name;
-      const updatedClasses = classes.map((c) =>
-        c.id === editingClass.id
-          ? {
-              ...c,
-              name: classNameEn.trim(),
-              nameBn: classNameBn.trim() || classNameEn.trim(),
-              sections: safeSections,
-              shifts: classShifts,
-              hasGroups: classHasGroups,
-              order: classOrder,
-            }
-          : c
-      );
+      const updatedClasses = classes
+        .map((c) =>
+          c.id === editingClass.id
+            ? {
+                ...c,
+                name: trimmedName,
+                nameBn: classNameBn.trim() || trimmedName,
+                sections: safeSections,
+                shifts: classShifts,
+                hasGroups: classHasGroups,
+                order: classOrder,
+              }
+            : c
+        )
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
       StorageService.saveClasses(updatedClasses);
       setClasses(updatedClasses);
 
-      // If class was renamed, also update subjects referencing oldName
-      if (oldName !== classNameEn.trim()) {
-        const updatedSubs = subjects.map((sub) =>
-          sub.className === oldName ? { ...sub, className: classNameEn.trim() as ClassLevel } : sub
-        );
-        StorageService.saveSubjects(updatedSubs);
-        setSubjects(updatedSubs);
+      // If class was renamed, propagate rename across subjects, students, exams, marks & routines
+      if (oldName !== trimmedName) {
+        StorageService.renameClassReferences(oldName, trimmedName);
+        setSubjects(StorageService.getSubjects());
         if (selectedClass === oldName) {
-          setSelectedClass(classNameEn.trim());
+          setSelectedClass(trimmedName);
         }
       }
     } else {
       // Create new class
       const newClass: ClassInfo = {
         id: `c_${Date.now()}`,
-        name: classNameEn.trim(),
-        nameBn: classNameBn.trim() || classNameEn.trim(),
+        name: trimmedName,
+        nameBn: classNameBn.trim() || trimmedName,
         order: classOrder,
         sections: safeSections,
         shifts: classShifts,
         hasGroups: classHasGroups,
         isActive: true,
       };
-      const updated = [...classes, newClass].sort((a, b) => a.order - b.order);
+      const updated = [...classes, newClass].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
       StorageService.saveClasses(updated);
       setClasses(updated);
     }

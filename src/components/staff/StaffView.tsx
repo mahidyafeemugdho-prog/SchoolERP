@@ -838,9 +838,9 @@ export const StaffView: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold mb-1">Email Address</label>
+                  <label className="block font-semibold mb-1">Email / Login ID</label>
                   <input
-                    type="email"
+                    type="text"
                     value={formData.email || ''}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg"

@@ -413,20 +413,149 @@ export const StorageService = {
 
   // Classes
   getClasses(): ClassInfo[] {
-    const list = getStored<ClassInfo[]>(STORAGE_KEYS.CLASSES, initialClasses);
-    if (!list || list.length < initialClasses.length) {
-      const existingNames = new Set(list?.map((c) => c.name) || []);
-      const missing = initialClasses.filter((c) => !existingNames.has(c.name));
-      if (missing.length > 0) {
-        const merged = [...(list || []), ...missing].sort((a, b) => a.order - b.order);
-        safeSetLocalStorage(STORAGE_KEYS.CLASSES, JSON.stringify(merged));
-        return merged;
-      }
+    const raw = safeGetLocalStorage(STORAGE_KEYS.CLASSES);
+    if (raw === null) {
+      const seeded = [...initialClasses].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      safeSetLocalStorage(STORAGE_KEYS.CLASSES, JSON.stringify(seeded));
+      return seeded;
     }
-    return list;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return [...parsed].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      }
+    } catch {
+      // fall through to defaults on malformed JSON
+    }
+    return [...initialClasses].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   },
   saveClasses(classes: ClassInfo[]): void {
-    setStored(STORAGE_KEYS.CLASSES, classes);
+    const sorted = [...classes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    setStored(STORAGE_KEYS.CLASSES, sorted);
+    CloudSyncService.pushSliceToCloud('academics', true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('school_classes_updated', { detail: sorted }));
+    }
+  },
+  renameClassReferences(oldName: string, newName: string): void {
+    const from = oldName.trim();
+    const to = newName.trim();
+    if (!from || !to || from === to) return;
+
+    const subjects = this.getSubjects();
+    let subjectsChanged = false;
+    const nextSubjects = subjects.map((sub) => {
+      if (sub.className === from) {
+        subjectsChanged = true;
+        return { ...sub, className: to as ClassLevel };
+      }
+      return sub;
+    });
+    if (subjectsChanged) this.saveSubjects(nextSubjects);
+
+    const students = this.getStudents();
+    let studentsChanged = false;
+    const nextStudents = students.map((st) => {
+      if (st.className === from) {
+        studentsChanged = true;
+        return { ...st, className: to as ClassLevel };
+      }
+      return st;
+    });
+    if (studentsChanged) {
+      setStored(STORAGE_KEYS.STUDENTS, nextStudents);
+      CloudSyncService.pushSliceToCloud('students', true);
+    }
+
+    const examRoutines = this.getExamRoutines();
+    let examRoutinesChanged = false;
+    const nextExamRoutines = examRoutines.map((r) => {
+      if (r.className === from) {
+        examRoutinesChanged = true;
+        return { ...r, className: to as ClassLevel };
+      }
+      return r;
+    });
+    if (examRoutinesChanged) this.saveExamRoutines(nextExamRoutines);
+
+    const marks = this.getMarks();
+    let marksChanged = false;
+    const nextMarks = marks.map((m) => {
+      if (m.className === from) {
+        marksChanged = true;
+        return { ...m, className: to as ClassLevel };
+      }
+      return m;
+    });
+    if (marksChanged) {
+      setStored(STORAGE_KEYS.MARKS, nextMarks);
+      CloudSyncService.pushSliceToCloud('academics', true);
+    }
+
+    const routines = this.getRoutines();
+    let routinesChanged = false;
+    const nextRoutines = routines.map((r) => {
+      if (r.className === from) {
+        routinesChanged = true;
+        return { ...r, className: to as ClassLevel };
+      }
+      return r;
+    });
+    if (routinesChanged) this.saveRoutines(nextRoutines);
+
+    const attendance = this.getAttendance();
+    let attendanceChanged = false;
+    const nextAttendance = attendance.map((a) => {
+      if (a.className === from) {
+        attendanceChanged = true;
+        return { ...a, className: to };
+      }
+      return a;
+    });
+    if (attendanceChanged) {
+      setStored(STORAGE_KEYS.ATTENDANCE, nextAttendance);
+      CloudSyncService.pushSliceToCloud('attendance', true);
+    }
+
+    const feeConfigs = this.getClassFeeConfigs();
+    let feesChanged = false;
+    const nextFeeConfigs = feeConfigs.map((c) => {
+      if (c.className === from) {
+        feesChanged = true;
+        return { ...c, className: to as ClassLevel };
+      }
+      return c;
+    });
+    if (feesChanged) this.saveClassFeeConfigs(nextFeeConfigs);
+
+    const exams = this.getExams();
+    let examsChanged = false;
+    const nextExams = exams.map((ex) => {
+      if (Array.isArray(ex.applicableClasses) && ex.applicableClasses.includes(from as ClassLevel)) {
+        examsChanged = true;
+        return {
+          ...ex,
+          applicableClasses: ex.applicableClasses.map((c) => (c === from ? (to as ClassLevel) : c)),
+        };
+      }
+      return ex;
+    });
+    if (examsChanged) {
+      setStored(STORAGE_KEYS.EXAMS, nextExams);
+      CloudSyncService.pushSliceToCloud('academics', true);
+    }
+
+    const profile = this.getSchoolProfile();
+    if (profile.classTeacherSignatures?.[from] && !profile.classTeacherSignatures?.[to]) {
+      const nextMap = { ...profile.classTeacherSignatures };
+      nextMap[to] = nextMap[from];
+      delete nextMap[from];
+      this.saveSchoolProfile({ ...profile, classTeacherSignatures: nextMap });
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('school_cloud_data_synced'));
+    }
   },
 
   // Subjects
@@ -1184,9 +1313,14 @@ export const StorageService = {
       }
     }
 
+    const activeManagedClasses = this.getClasses()
+      .filter((c) => c.isActive !== false)
+      .map((c) => c.name as ClassLevel);
     const targetClasses: ClassLevel[] =
       className === 'all'
-        ? (['Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'] as ClassLevel[])
+        ? activeManagedClasses.length > 0
+          ? activeManagedClasses
+          : (initialClasses.map((c) => c.name) as ClassLevel[])
         : [className];
 
     const currentAll = this.getExamRoutines();

@@ -21,6 +21,8 @@ import {
   SaaSUserDTO,
   computeClientSubscriptionState,
   isSaaSBackendUnavailableError,
+  isSaaSIamPermissionError,
+  isNetlifyHostingEnvironment,
 } from '../../services/saasApi';
 import { StorageService } from '../../services/storage';
 import {
@@ -50,6 +52,15 @@ import {
   Camera,
 } from 'lucide-react';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
+import {
+  formatDisplayLoginId,
+  isSyntheticAuthEmail,
+  normalizeLoginUsernameKey,
+  validateLoginIdentifier,
+} from '../../utils/loginIdentifier';
+import { Staff, Student } from '../../types';
+import { SearchablePicker } from '../common/SearchablePicker';
+import { filterStaffByQuery, filterStudentsByQuery } from '../../utils/personSearchFilter';
 
 export interface AccountCredentialsModalProps {
   isOpen: boolean;
@@ -163,8 +174,13 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
   useEffect(() => {
     if (!isOpen) return;
     setTab(initialTab);
+    const rawEmail = currentUser.email || saasSession?.principal?.email || '';
+    const rawUsername = saasSession?.principal?.username || currentUser.username || '';
+    const displayLogin = isSyntheticAuthEmail(rawEmail)
+      ? rawUsername || formatDisplayLoginId({ username: rawUsername, email: rawEmail })
+      : rawEmail || rawUsername;
     setMyDisplayName(currentUser.name || saasSession?.principal?.displayName || '');
-    setMyEmail(currentUser.email || saasSession?.principal?.email || '');
+    setMyEmail(displayLogin);
     const matchedStaff = StorageService.getStaff().find(
       (s) => s.authUid === currentUser.authUid || s.id === currentUser.linkedStaffId
     );
@@ -394,6 +410,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
       return (
         u.displayName.toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q) ||
+        (u.username && u.username.toLowerCase().includes(q)) ||
         u.schoolRole.toLowerCase().includes(q) ||
         (u.phone && u.phone.toLowerCase().includes(q)) ||
         (u.linkedStaffId && u.linkedStaffId.toLowerCase().includes(q)) ||
@@ -412,8 +429,20 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
     setMyFeedback(null);
 
     const cleanName = myDisplayName.trim();
-    const cleanEmail = myEmail.trim().toLowerCase();
-    const emailChanged = Boolean(!isMaster && cleanEmail && cleanEmail !== (currentUser.email || '').toLowerCase());
+    const rawEmail = currentUser.email || saasSession?.principal?.email || '';
+    const rawUsername = saasSession?.principal?.username || currentUser.username || '';
+    const baselineLoginId = isSyntheticAuthEmail(rawEmail)
+      ? rawUsername || formatDisplayLoginId({ username: rawUsername, email: rawEmail })
+      : rawEmail || rawUsername;
+    const cleanLoginInput = myEmail.trim();
+    const parsedLogin = validateLoginIdentifier(cleanLoginInput);
+    const currentKey = normalizeLoginUsernameKey(baselineLoginId);
+    const nextKey = parsedLogin.valid ? parsedLogin.normalizedKey : cleanLoginInput.toLowerCase();
+    const emailChanged = Boolean(
+      !isMaster &&
+        baselineLoginId !== cleanLoginInput &&
+        (nextKey !== currentKey || cleanLoginInput.toLowerCase() !== baselineLoginId.toLowerCase())
+    );
     const wantsPasswordChange = Boolean(newPassword || confirmPassword);
 
     if (!cleanName) {
@@ -424,10 +453,23 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
       return;
     }
 
-    if (emailChanged && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    if (!isMaster && !cleanLoginInput) {
       setMyFeedback({
         type: 'error',
-        text: language === 'bn' ? 'সঠিক ইমেইল ঠিকানা লিখুন।' : 'Please enter a valid email address.',
+        text:
+          language === 'bn'
+            ? 'লগইন ইমেইল, মোবাইল নম্বর বা ইউজারনেম খালি রাখা যাবে না।'
+            : 'Login email, mobile number, or username cannot be empty.',
+      });
+      return;
+    }
+
+    if (emailChanged && !parsedLogin.valid) {
+      setMyFeedback({
+        type: 'error',
+        text:
+          (language === 'bn' ? parsedLogin.errorBn : parsedLogin.error) ||
+          'Please enter a valid email, mobile number, or username.',
       });
       return;
     }
@@ -505,24 +547,37 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
 
       // Update backend SaaS profile + Firebase Auth displayName/email (and password if Google-only user)
       let backendSynced = true;
+      let syncedUser: { email: string; username?: string } | null = null;
       try {
-        await SaaSApi.updateMyCredentials({
+        const updateRes = await SaaSApi.updateMyCredentials({
           displayName: cleanName,
           phone: myPhone.trim(),
-          ...(emailChanged ? { email: cleanEmail } : {}),
+          ...(emailChanged ? { email: parsedLogin.displayValue } : {}),
           ...(wantsPasswordChange ? { password: newPassword } : {}),
         });
+        syncedUser = updateRes.user;
       } catch (apiErr: any) {
         const canClientHandle =
           isSaaSBackendUnavailableError(apiErr) &&
           !emailChanged &&
           (!wantsPasswordChange || userHasPassword);
         if (!canClientHandle) {
+          if (isSaaSIamPermissionError(apiErr)) {
+            throw new Error(
+              language === 'bn'
+                ? 'লগইন আইডি পরিবর্তন বা Google অ্যাকাউন্টে পাসওয়ার্ড সেট করতে Firebase প্রজেক্টে সার্ভারের IAM অনুমোদন (Cloud Datastore User, Firebase Authentication Admin, Service Usage Consumer) যুক্ত থাকতে হবে।'
+                : 'Changing login ID or setting a password on a Google-only account requires Firebase IAM permissions on the server service account.'
+            );
+          }
           if (isSaaSBackendUnavailableError(apiErr)) {
             throw new Error(
               language === 'bn'
-                ? 'ইমেইল পরিবর্তন বা Google অ্যাকাউন্টে নতুন পাসওয়ার্ড সেট করার জন্য মূল সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON কনফিগার থাকতে হবে।'
-                : 'Changing login email or adding a password to a Google-only account requires FIREBASE_SERVICE_ACCOUNT_JSON configured on the server.'
+                ? isNetlifyHostingEnvironment(serverDiagnostics)
+                  ? 'লগইন আইডি পরিবর্তন বা Google অ্যাকাউন্টে নতুন পাসওয়ার্ড সেট করার জন্য মূল সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON কনফিগার থাকতে হবে।'
+                  : 'লগইন আইডি পরিবর্তন বা Google অ্যাকাউন্টে পাসওয়ার্ড সেট করতে ব্যাকএন্ড সার্ভারের সাথে সংযোগ প্রয়োজন।'
+                : isNetlifyHostingEnvironment(serverDiagnostics)
+                ? 'Changing login identifier or adding a password to a Google-only account requires FIREBASE_SERVICE_ACCOUNT_JSON configured on the server.'
+                : 'Backend server is currently unavailable to update login identifier.'
             );
           }
           throw apiErr;
@@ -530,19 +585,32 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
         backendSynced = false;
       }
 
-      // Keep local staff/student directory email in sync if matched
+      // Keep local staff/student directory email/username in sync if matched
       if (emailChanged) {
+        const nextEmailVal = syncedUser?.email || (parsedLogin.kind === 'email' ? parsedLogin.displayValue : rawEmail);
+        const nextUsernameVal = syncedUser?.username;
         const staffList = StorageService.getStaff();
         const stMatch = staffList.find(
           (s) => s.authUid === currentUser.authUid || s.id === currentUser.linkedStaffId
         );
         if (stMatch) {
-          StorageService.updateStaff({ ...stMatch, email: cleanEmail, nameEn: cleanName, phone: myPhone.trim() || stMatch.phone });
+          StorageService.updateStaff({
+            ...stMatch,
+            email: nextEmailVal || stMatch.email,
+            ...(nextUsernameVal ? { username: nextUsernameVal } : {}),
+            nameEn: cleanName,
+            phone: myPhone.trim() || stMatch.phone,
+          });
         }
         const stuList = StorageService.getStudents();
         const stuMatch = stuList.find((st) => st.authUid === currentUser.authUid);
         if (stuMatch) {
-          StorageService.updateStudent({ ...stuMatch, email: cleanEmail, phone: myPhone.trim() || stuMatch.phone });
+          StorageService.updateStudent({
+            ...stuMatch,
+            email: nextEmailVal || stuMatch.email,
+            ...(nextUsernameVal ? { username: nextUsernameVal } : {}),
+            phone: myPhone.trim() || stuMatch.phone,
+          });
         }
       }
 
@@ -577,6 +645,10 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
   // HANDLERS: SCHOOL USERS MANAGER
   // =========================================================================
   const handleSelectQuickStaff = (staffId: string) => {
+    if (!staffId) {
+      setCreateForm((prev) => ({ ...prev, linkedStaffId: '' }));
+      return;
+    }
     const found = unprovisionedStaff.find((s) => s.id === staffId);
     if (!found) return;
     const schoolSlug = (selectedSchoolId || 'sch').toLowerCase();
@@ -630,13 +702,16 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
     e.preventDefault();
     setUsersFeedback(null);
 
-    if (!createForm.displayName.trim() || !createForm.email.trim() || createForm.password.length < 6) {
+    const parsedCreateLogin = validateLoginIdentifier(createForm.email);
+    if (!createForm.displayName.trim() || !parsedCreateLogin.valid || createForm.password.length < 6) {
       setUsersFeedback({
         type: 'error',
         text:
-          language === 'bn'
-            ? 'নাম, সঠিক ইমেইল এবং কমপক্ষে 6 অক্ষরের পাসওয়ার্ড দিন।'
-            : 'Please provide full name, valid email, and a password of at least 6 characters.',
+          !parsedCreateLogin.valid && createForm.email.trim()
+            ? (language === 'bn' ? parsedCreateLogin.errorBn : parsedCreateLogin.error) || 'Invalid login ID.'
+            : language === 'bn'
+            ? 'নাম, সঠিক ইমেইল/মোবাইল/ইউজারনেম এবং কমপক্ষে 6 অক্ষরের পাসওয়ার্ড দিন।'
+            : 'Please provide full name, a valid email/mobile/username, and a password of at least 6 characters.',
       });
       return;
     }
@@ -645,11 +720,12 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
     try {
       const res = await SaaSApi.provisionUser({
         displayName: createForm.displayName.trim(),
-        email: createForm.email.trim().toLowerCase(),
+        email: parsedCreateLogin.displayValue,
+        ...(parsedCreateLogin.kind !== 'email' ? { username: parsedCreateLogin.displayValue } : {}),
         password: createForm.password,
         schoolRole: createForm.schoolRole,
         schoolId: selectedSchoolId,
-        phone: createForm.phone.trim() || undefined,
+        phone: createForm.phone.trim() || parsedCreateLogin.normalizedPhone || undefined,
         linkedStaffId: createForm.linkedStaffId || undefined,
         linkedStudentId: createForm.linkedStudentId || undefined,
       });
@@ -664,6 +740,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
               ...st,
               authUid: res.user.uid,
               email: res.user.email,
+              ...(res.user.username ? { username: res.user.username } : {}),
               authProvisionStatus: 'provisioned',
             });
           }
@@ -675,17 +752,19 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
               ...stu,
               authUid: res.user.uid,
               email: res.user.email,
+              ...(res.user.username ? { username: res.user.username } : {}),
             });
           }
         }
       }
 
+      const createdDisplayId = formatDisplayLoginId(res.user);
       setUsersFeedback({
         type: 'success',
         text:
           language === 'bn'
-            ? `নতুন লগইন একাউন্ট তৈরি হয়েছে: ${res.user.email}`
-            : `Login account created for ${res.user.displayName} (${res.user.email}).`,
+            ? `নতুন লগইন একাউন্ট তৈরি হয়েছে: ${createdDisplayId}`
+            : `Login account created for ${res.user.displayName} (${createdDisplayId}).`,
       });
       setShowCreateForm(false);
       setCreateForm({
@@ -699,10 +778,18 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
       });
       await fetchSchoolUsers(selectedSchoolId);
     } catch (err: any) {
-      const msg = isSaaSBackendUnavailableError(err)
+      const msg = isSaaSIamPermissionError(err)
         ? language === 'bn'
-          ? 'নতুন শিক্ষক/স্টাফ/শিক্ষার্থী লগইন তৈরি করতে মূল Node.js সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON কনফিগার থাকতে হবে।'
-          : 'Provisioning new school user logins requires FIREBASE_SERVICE_ACCOUNT_JSON configured on the Node.js server.'
+          ? 'নতুন শিক্ষক/স্টাফ/শিক্ষার্থী একাউন্ট তৈরি করতে আপনার Firebase প্রজেক্টের IAM-এ সার্ভার সার্ভিস একাউন্টকে Cloud Datastore User, Firebase Authentication Admin এবং Service Usage Consumer রোল দিতে হবে।'
+          : 'Creating school user logins requires Cloud Datastore User, Firebase Authentication Admin, and Service Usage Consumer IAM roles on your Firebase project.'
+        : isSaaSBackendUnavailableError(err)
+        ? language === 'bn'
+          ? isNetlifyHostingEnvironment(serverDiagnostics)
+            ? 'নতুন শিক্ষক/স্টাফ/শিক্ষার্থী লগইন তৈরি করতে মূল Node.js সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON কনফিগার থাকতে হবে।'
+            : 'সার্ভারের সাথে সংযোগ পাওয়া যায়নি বা সার্ভার রিস্টার্ট হচ্ছে। কিছুক্ষণ পর আবার চেষ্টা করুন।'
+          : isNetlifyHostingEnvironment(serverDiagnostics)
+          ? 'Provisioning new school user logins requires FIREBASE_SERVICE_ACCOUNT_JSON configured on the Node.js server.'
+          : 'Backend server is unavailable or restarting. Please try again in a moment.'
         : err?.message || 'Failed to create user login account.';
       setUsersFeedback({
         type: 'error',
@@ -715,9 +802,12 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
 
   const handleOpenEditUser = (u: SaaSUserDTO) => {
     setEditingUser(u);
+    const initialEditLogin = isSyntheticAuthEmail(u.email)
+      ? u.username || formatDisplayLoginId(u)
+      : u.email || u.username || '';
     setEditUserForm({
       displayName: u.displayName || '',
-      email: u.email || '',
+      email: initialEditLogin,
       phone: u.phone || '',
       schoolRole: u.schoolRole || 'teacher',
       linkedStudentId: u.linkedStudentId || '',
@@ -732,10 +822,16 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
     if (!editingUser) return;
     setUsersFeedback(null);
 
-    if (!editUserForm.displayName.trim() || !editUserForm.email.trim()) {
+    const parsedEditLogin = validateLoginIdentifier(editUserForm.email);
+    if (!editUserForm.displayName.trim() || !parsedEditLogin.valid) {
       setUsersFeedback({
         type: 'error',
-        text: language === 'bn' ? 'নাম এবং ইমেইল খালি রাখা যাবে না।' : 'Name and email are required.',
+        text:
+          !parsedEditLogin.valid && editUserForm.email.trim()
+            ? (language === 'bn' ? parsedEditLogin.errorBn : parsedEditLogin.error) || 'Invalid login ID.'
+            : language === 'bn'
+            ? 'নাম এবং ইমেইল / মোবাইল / ইউজারনেম খালি রাখা যাবে না।'
+            : 'Name and login identifier are required.',
       });
       return;
     }
@@ -759,14 +855,14 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
           : editingUser.linkedStudentId;
       const res = await SaaSApi.updateUserCredentials(editingUser.uid, {
         displayName: editUserForm.displayName.trim(),
-        email: editUserForm.email.trim().toLowerCase(),
+        email: parsedEditLogin.displayValue,
         phone: editUserForm.phone.trim(),
         schoolRole: editUserForm.schoolRole,
         ...(nextLinkedStudentId !== undefined ? { linkedStudentId: nextLinkedStudentId } : {}),
         ...(editUserForm.newPassword ? { password: editUserForm.newPassword } : {}),
       });
 
-      // Keep local staff/student directory email synced if viewing same school
+      // Keep local staff/student directory email/username synced if viewing same school
       if (isViewingActiveLocalSchool) {
         if (editingUser.linkedStaffId) {
           const st = StorageService.getStaff().find((x) => x.id === editingUser.linkedStaffId || x.authUid === editingUser.uid);
@@ -774,6 +870,7 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
             StorageService.updateStaff({
               ...st,
               email: res.user.email,
+              username: res.user.username || st.username,
               nameEn: res.user.displayName,
               phone: res.user.phone || st.phone,
             });
@@ -787,26 +884,36 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
             StorageService.updateStudent({
               ...stu,
               email: res.user.email,
+              username: res.user.username,
               phone: res.user.phone || stu.phone,
             });
           }
         }
       }
 
+      const updatedDisplayId = formatDisplayLoginId(res.user);
       setEditingUser(null);
       setUsersFeedback({
         type: 'success',
         text:
           language === 'bn'
-            ? `${res.user.displayName}-এর ইউজার/পাসওয়ার্ড আপডেট হয়েছে!`
-            : `Updated credentials for ${res.user.displayName} (${res.user.email}).`,
+            ? `${res.user.displayName}-এর ইউজার (${updatedDisplayId}) ও পাসওয়ার্ড আপডেট হয়েছে!`
+            : `Updated credentials for ${res.user.displayName} (${updatedDisplayId}).`,
       });
       await fetchSchoolUsers(selectedSchoolId);
     } catch (err: any) {
-      const msg = isSaaSBackendUnavailableError(err)
+      const msg = isSaaSIamPermissionError(err)
         ? language === 'bn'
-          ? 'অন্য ইউজারের তথ্য বা পাসওয়ার্ড পরিবর্তনের জন্য মূল সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON কনফিগার থাকতে হবে।'
-          : 'Updating another user’s credentials requires FIREBASE_SERVICE_ACCOUNT_JSON configured on the server.'
+          ? 'অন্য ইউজারের তথ্য বা পাসওয়ার্ড পরিবর্তনের জন্য Firebase প্রজেক্টে IAM অনুমোদন (Cloud Datastore User, Firebase Authentication Admin, Service Usage Consumer) প্রয়োজন।'
+          : 'Updating another user’s credentials requires Firebase project IAM permissions.'
+        : isSaaSBackendUnavailableError(err)
+        ? language === 'bn'
+          ? isNetlifyHostingEnvironment(serverDiagnostics)
+            ? 'অন্য ইউজারের তথ্য বা পাসওয়ার্ড পরিবর্তনের জন্য মূল সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON কনফিগার থাকতে হবে।'
+            : 'ব্যাকএন্ড সার্ভারের সাথে সংযোগ পাওয়া যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।'
+          : isNetlifyHostingEnvironment(serverDiagnostics)
+          ? 'Updating another user’s credentials requires FIREBASE_SERVICE_ACCOUNT_JSON configured on the server.'
+          : 'Backend server is temporarily unavailable. Please retry in a moment.'
         : err?.message || 'Failed to update user credentials.';
       setUsersFeedback({
         type: 'error',
@@ -830,10 +937,18 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
       });
       await fetchSchoolUsers(selectedSchoolId);
     } catch (err: any) {
-      const msg = isSaaSBackendUnavailableError(err)
+      const msg = isSaaSIamPermissionError(err)
         ? language === 'bn'
-          ? 'ইউজারের লগইন চালু/বন্ধ করতে মূল সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON কনফিগার থাকতে হবে।'
-          : 'Toggling user login status requires FIREBASE_SERVICE_ACCOUNT_JSON configured on the server.'
+          ? 'ইউজারের লগইন চালু/বন্ধ করতে Firebase প্রজেক্টে IAM অনুমোদন (Cloud Datastore User, Firebase Authentication Admin, Service Usage Consumer) প্রয়োজন।'
+          : 'Toggling user login status requires Firebase project IAM permissions.'
+        : isSaaSBackendUnavailableError(err)
+        ? language === 'bn'
+          ? isNetlifyHostingEnvironment(serverDiagnostics)
+            ? 'ইউজারের লগইন চালু/বন্ধ করতে মূল সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON কনফিগার থাকতে হবে।'
+            : 'ব্যাকএন্ড সার্ভারের সাথে সংযোগ পাওয়া যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।'
+          : isNetlifyHostingEnvironment(serverDiagnostics)
+          ? 'Toggling user login status requires FIREBASE_SERVICE_ACCOUNT_JSON configured on the server.'
+          : 'Backend server is temporarily unavailable. Please retry in a moment.'
         : err?.message || 'Failed to update user status.';
       setUsersFeedback({
         type: 'error',
@@ -886,10 +1001,18 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
       });
       await fetchSchoolUsers(selectedSchoolId);
     } catch (err: any) {
-      const msg = isSaaSBackendUnavailableError(err)
+      const msg = isSaaSIamPermissionError(err)
         ? language === 'bn'
-          ? 'ইউজারের লগইন একাউন্ট স্থায়ীভাবে মুছে ফেলতে মূল সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON কনফিগার থাকতে হবে।'
-          : 'Permanently deleting another user’s login account requires FIREBASE_SERVICE_ACCOUNT_JSON configured on the server.'
+          ? 'ইউজারের লগইন একাউন্ট মুছতে Firebase প্রজেক্টে IAM অনুমোদন (Cloud Datastore User, Firebase Authentication Admin, Service Usage Consumer) প্রয়োজন।'
+          : 'Deleting another user’s login account requires Firebase project IAM permissions.'
+        : isSaaSBackendUnavailableError(err)
+        ? language === 'bn'
+          ? isNetlifyHostingEnvironment(serverDiagnostics)
+            ? 'ইউজারের লগইন একাউন্ট স্থায়ীভাবে মুছে ফেলতে মূল সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON কনফিগার থাকতে হবে।'
+            : 'ব্যাকএন্ড সার্ভারের সাথে সংযোগ পাওয়া যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।'
+          : isNetlifyHostingEnvironment(serverDiagnostics)
+          ? 'Permanently deleting another user’s login account requires FIREBASE_SERVICE_ACCOUNT_JSON configured on the server.'
+          : 'Backend server is temporarily unavailable. Please retry in a moment.'
         : err?.message || 'Failed to delete user login.';
       setUsersFeedback({
         type: 'error',
@@ -906,7 +1029,9 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
       vaultCred?.hasStoredPassword && vaultCred.managedPassword
         ? `\nPassword: ${vaultCred.managedPassword}`
         : '';
-    const text = `School ID: ${u.schoolId}\nName: ${u.displayName}\nRole: ${u.schoolRole}\nLogin Email: ${u.email}${passwordLine}`;
+    const displayLogin = formatDisplayLoginId(u);
+    const extraEmail = u.username && !isSyntheticAuthEmail(u.email) && u.email ? `\nEmail: ${u.email}` : '';
+    const text = `School ID: ${u.schoolId}\nName: ${u.displayName}\nRole: ${u.schoolRole}\nLogin ID: ${displayLogin}${extraEmail}${passwordLine}`;
     navigator.clipboard?.writeText(text).then(() => {
       setCopiedUid(u.uid);
       setTimeout(() => setCopiedUid(null), 2000);
@@ -1023,7 +1148,10 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                       </span>
                     </div>
                     <div className="text-[11px] text-slate-600 font-mono truncate">
-                      {currentUser.email}
+                      {formatDisplayLoginId({
+                        username: saasSession?.principal?.username || currentUser.username,
+                        email: currentUser.email || saasSession?.principal?.email,
+                      })}
                     </div>
                     <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5">
                       <span>
@@ -1176,18 +1304,25 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                   </div>
                 </div>
 
-                {/* Login Email / Username */}
+                {/* Login Email / Mobile / Username */}
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">
-                    {language === 'bn' ? 'লগইন ইমেইল / ইউজারনেম (Login Email)' : 'Login Email / Username'}
+                    {language === 'bn'
+                      ? 'লগইন আইডি (ইমেইল / মোবাইল / যেকোনো নাম)'
+                      : 'Login ID (Email, Mobile Number, or Username)'}
                   </label>
                   <div className="relative">
                     <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                     <input
-                      type="email"
+                      type="text"
                       value={myEmail}
                       disabled={isMaster}
                       onChange={(e) => setMyEmail(e.target.value)}
+                      placeholder={
+                        language === 'bn'
+                          ? 'user@school.edu.bd অথবা 017... অথবা নাম/নম্বর'
+                          : 'Email, 017..., or any username'
+                      }
                       className={`w-full pl-9 pr-3 py-2 border rounded-xl text-xs font-mono focus:outline-none ${
                         isMaster
                           ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
@@ -1381,34 +1516,56 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                       <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                       <div className="space-y-1">
                         <div className="font-extrabold">
-                          {serverDiagnostics?.adminSdkReady
+                          {fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
+                            ? language === 'bn'
+                              ? 'Firebase প্রজেক্টে সার্ভারের IAM অনুমোদন এখনো সেট করা হয়নি'
+                              : 'Firebase Project IAM Permissions Needed for Server User Provisioning'
+                            : serverDiagnostics?.adminSdkReady
                             ? language === 'bn'
                               ? `সার্ভার সংযুক্ত আছে, তবে রিকোয়েস্টে সময় লেগেছে (${fallbackTriggerCode || 'TIMEOUT'})`
                               : `Server Admin SDK is ready, but loading timed out (${fallbackTriggerCode || 'TIMEOUT'})`
-                            : healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE'
+                            : (healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE') &&
+                              isNetlifyHostingEnvironment(serverDiagnostics)
                             ? language === 'bn'
                               ? 'Netlify Functions (/api/saas/*) পাওয়া যাচ্ছে না — শুধু স্ট্যাটিক ফোল্ডার ডিপ্লয় হয়েছে'
                               : 'Netlify Functions (/api/saas/*) returned HTML instead of API JSON'
+                            : healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE'
+                            ? language === 'bn'
+                              ? 'ব্যাকএন্ড সার্ভার সাময়িকভাবে রিস্টার্ট হচ্ছে বা সংযোগ পাচ্ছে না'
+                              : 'Backend server is restarting or temporarily unreachable'
                             : serverDiagnostics?.initStatus === 'invalid_json'
                             ? language === 'bn'
                               ? 'সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON ফরম্যাটে ত্রুটি (invalid_json)'
                               : 'Server FIREBASE_SERVICE_ACCOUNT_JSON Parse Error'
                             : language === 'bn'
-                            ? 'সার্ভারে Firebase Admin SDK (FIREBASE_SERVICE_ACCOUNT_JSON) সংযুক্ত না থাকায় নতুন ইউজার তৈরি, পাসওয়ার্ড পরিবর্তন বা লগইন চালু/বন্ধ করা যাচ্ছে না।'
+                            ? 'সার্ভারে Firebase Admin SDK প্রস্তুত না থাকায় নতুন ইউজার তৈরি, পাসওয়ার্ড পরিবর্তন বা লগইন চালু/বন্ধ করা যাচ্ছে না।'
                             : 'Server Firebase Admin SDK is not configured yet — creating users, changing another user’s password, or toggling logins is currently unavailable.'}
                         </div>
                         <p className="text-amber-900">
-                          {serverDiagnostics?.adminSdkReady
+                          {fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
+                            ? language === 'bn'
+                              ? 'নতুন শিক্ষক/স্টাফ/শিক্ষার্থী লগইন তৈরি করতে Google Cloud IAM-এ সার্ভার সার্ভিস একাউন্টকে Cloud Datastore User, Firebase Authentication Admin এবং Service Usage Consumer রোল দিয়ে "আবার চেষ্টা" বাটনে চাপ দিন। শুধু নিজের পাসওয়ার্ড প্রথম ট্যাব ("আমার একাউন্ট ও পাসওয়ার্ড") থেকে বদলানো যাবে।'
+                              : 'Grant Cloud Datastore User, Firebase Authentication Admin, and Service Usage Consumer to the server service account in Google Cloud IAM, then click Retry. You can still update your own password in the first tab.'
+                            : serverDiagnostics?.adminSdkReady
                             ? language === 'bn'
                               ? 'সার্ভার চালু আছে — "আবার চেষ্টা" বাটনে চাপ দিয়ে ইউজার ও পাসওয়ার্ড লোড করুন।'
                               : 'Server is online — click Retry to load users and Super Admin vault credentials.'
-                            : healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE'
+                            : (healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE') &&
+                              isNetlifyHostingEnvironment(serverDiagnostics)
                             ? language === 'bn'
                               ? 'শুধু dist ফোল্ডার নয়, GitHub বা Netlify CLI দিয়ে পুরো প্রোজেক্ট (netlify/functions) ডিপ্লয় করুন।'
                               : 'Deploy the full project (including netlify/functions) via GitHub or Netlify CLI rather than static dist upload.'
+                            : healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE'
+                            ? language === 'bn'
+                              ? 'কয়েক সেকেন্ড অপেক্ষা করে "আবার চেষ্টা" বাটনে চাপ দিন।'
+                              : 'Wait a few seconds and click Retry.'
+                            : isNetlifyHostingEnvironment(serverDiagnostics)
+                            ? language === 'bn'
+                              ? 'সমাধান (Netlify): Site configuration → Environment variables-এ FIREBASE_SERVICE_ACCOUNT_JSON (অথবা FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) যোগ করে Scopes = "All scopes" দিন এবং Deploys → "Clear cache and deploy site" করুন। শুধু নিজের পাসওয়ার্ড প্রথম ট্যাব ("আমার একাউন্ট ও পাসওয়ার্ড") থেকে বদলানো যাবে।'
+                              : 'Fix on Netlify: Add FIREBASE_SERVICE_ACCOUNT_JSON (or split FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) in Environment variables with Scope = "All scopes", then run "Clear cache and deploy site". You can still change your own password from the first tab.'
                             : language === 'bn'
-                            ? 'সমাধান (Netlify): Site configuration → Environment variables-এ FIREBASE_SERVICE_ACCOUNT_JSON (অথবা FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) যোগ করে Scopes = "All scopes" দিন এবং Deploys → "Clear cache and deploy site" করুন। শুধু নিজের পাসওয়ার্ড প্রথম ট্যাব ("আমার একাউন্ট ও পাসওয়ার্ড") থেকে বদলানো যাবে।'
-                            : 'Fix on Netlify: Add FIREBASE_SERVICE_ACCOUNT_JSON (or split FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) in Environment variables with Scope = "All scopes", then run "Clear cache and deploy site". You can still change your own password from the first tab.'}
+                            ? 'ব্যাকএন্ড সার্ভারের Firebase Admin ক্রেডেনশিয়াল বা IAM অনুমোদন নিশ্চিত করে "আবার চেষ্টা" চাপুন। শুধু নিজের পাসওয়ার্ড প্রথম ট্যাব ("আমার একাউন্ট ও পাসওয়ার্ড") থেকে বদলানো যাবে।'
+                            : 'Verify server Firebase Admin credentials/IAM permissions and click Retry. You can still update your own password from the first tab.'}
                         </p>
                       </div>
                     </div>
@@ -1490,18 +1647,38 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                           <label className="block text-[11px] font-semibold text-blue-900 mb-1">
                             {language === 'bn' ? 'বিদ্যমান শিক্ষক/স্টাফ বাছাই (ঐচ্ছিক)' : 'Pick Existing Staff (Optional)'}
                           </label>
-                          <select
+                          <SearchablePicker<Staff>
+                            items={unprovisionedStaff}
                             value={createForm.linkedStaffId}
-                            onChange={(e) => handleSelectQuickStaff(e.target.value)}
-                            className="w-full px-2.5 py-1.5 rounded-lg border border-blue-200 bg-white text-xs"
-                          >
-                            <option value="">-- Select Staff --</option>
-                            {unprovisionedStaff.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.employeeId} — {s.nameEn} ({s.role})
-                              </option>
-                            ))}
-                          </select>
+                            onChange={handleSelectQuickStaff}
+                            getId={(s) => s.id}
+                            filterItems={filterStaffByQuery}
+                            getPrimaryLabel={(s) =>
+                              `${s.employeeId} — ${s.nameBn || s.nameEn}${
+                                s.nameBn && s.nameEn && s.nameBn !== s.nameEn ? ` (${s.nameEn})` : ''
+                              }`
+                            }
+                            getBadgeText={(s) => getRoleLabel(s.role)}
+                            getSecondaryLabel={(s) =>
+                              [s.designation, s.phone, s.email].filter(Boolean).join(' • ')
+                            }
+                            placeholder={
+                              language === 'bn'
+                                ? 'নাম, আইডি, পদবি বা মোবাইল লিখে স্টাফ খুঁজুন...'
+                                : 'Search staff by name, ID, role, or mobile...'
+                            }
+                            searchPlaceholder={
+                              language === 'bn'
+                                ? 'স্টাফের নাম, আইডি বা মোবাইল লিখুন...'
+                                : 'Type staff name, ID, or mobile...'
+                            }
+                            language={language}
+                            borderTone="blue"
+                            resetKey={`create-staff-${isOpen}-${showCreateForm}-${selectedSchoolId}`}
+                            ariaLabel={
+                              language === 'bn' ? 'বিদ্যমান শিক্ষক/স্টাফ বাছাই' : 'Pick Existing Staff'
+                            }
+                          />
                         </div>
                       )}
                       {allLocalStudents.length > 0 && (
@@ -1515,25 +1692,57 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                               ? 'বিদ্যমান শিক্ষার্থী বাছাই (ঐচ্ছিক)'
                               : 'Pick Existing Student (Optional)'}
                           </label>
-                          <select
+                          <SearchablePicker<Student>
+                            items={
+                              createForm.schoolRole === 'guardian'
+                                ? allLocalStudents
+                                : unprovisionedStudents.length > 0
+                                ? unprovisionedStudents
+                                : allLocalStudents
+                            }
                             value={createForm.linkedStudentId}
-                            onChange={(e) => handleSelectQuickStudent(e.target.value)}
-                            className="w-full px-2.5 py-1.5 rounded-lg border border-blue-200 bg-white text-xs"
-                          >
-                            <option value="">
-                              {language === 'bn' ? '-- শিক্ষার্থী নির্বাচন করুন --' : '-- Select Student --'}
-                            </option>
-                            {(createForm.schoolRole === 'guardian'
-                              ? allLocalStudents
-                              : unprovisionedStudents.length > 0
-                              ? unprovisionedStudents
-                              : allLocalStudents
-                            ).map((st) => (
-                              <option key={st.id} value={st.id}>
-                                {st.studentId} — {st.nameBn || st.nameEn} ({st.className}, রোল {st.roll})
-                              </option>
-                            ))}
-                          </select>
+                            onChange={handleSelectQuickStudent}
+                            getId={(st) => st.id}
+                            filterItems={filterStudentsByQuery}
+                            getPrimaryLabel={(st) =>
+                              `${st.studentId} — ${st.nameBn || st.nameEn}${
+                                st.nameBn && st.nameEn && st.nameBn !== st.nameEn ? ` (${st.nameEn})` : ''
+                              }`
+                            }
+                            getBadgeText={(st) =>
+                              `${st.className}${st.section ? ` (${st.section})` : ''}, ${
+                                language === 'bn' ? 'রোল' : 'Roll'
+                              } ${st.roll}`
+                            }
+                            getSecondaryLabel={(st) => {
+                              const guardianText = st.guardianName || st.fatherNameBn || st.fatherNameEn;
+                              const phoneText = st.phone || st.guardianPhone || st.fatherPhone;
+                              return [
+                                guardianText
+                                  ? `${language === 'bn' ? 'অভিভাবক' : 'Guardian'}: ${guardianText}`
+                                  : '',
+                                phoneText || '',
+                              ]
+                                .filter(Boolean)
+                                .join(' • ');
+                            }}
+                            placeholder={
+                              language === 'bn'
+                                ? 'নাম, আইডি, রোল, শ্রেণি বা মোবাইল লিখে খুঁজুন...'
+                                : 'Search student by name, ID, roll, class, or mobile...'
+                            }
+                            searchPlaceholder={
+                              language === 'bn'
+                                ? 'শিক্ষার্থীর নাম, রোল, আইডি বা মোবাইল লিখুন...'
+                                : 'Type student name, roll, ID, or mobile...'
+                            }
+                            language={language}
+                            borderTone="blue"
+                            resetKey={`create-student-${isOpen}-${showCreateForm}-${selectedSchoolId}`}
+                            ariaLabel={
+                              language === 'bn' ? 'শিক্ষার্থী বাছাই' : 'Select Student'
+                            }
+                          />
                         </div>
                       )}
                     </div>
@@ -1588,14 +1797,16 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                     </div>
                     <div>
                       <label className="block font-semibold text-slate-700 mb-1">
-                        {language === 'bn' ? 'লগইন ইমেইল *' : 'Login Email *'}
+                        {language === 'bn'
+                          ? 'লগইন আইডি (ইমেইল / মোবাইল / যেকোনো নাম) *'
+                          : 'Login ID (Email, Mobile, or Username) *'}
                       </label>
                       <input
-                        type="email"
+                        type="text"
                         required
                         value={createForm.email}
                         onChange={(e) => setCreateForm((p) => ({ ...p, email: e.target.value }))}
-                        placeholder="user@school.edu.bd"
+                        placeholder="user@school.edu.bd, 017..., or rahim01"
                         className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs font-mono"
                       />
                     </div>
@@ -1771,13 +1982,16 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                     </div>
                     <div>
                       <label className="block font-semibold text-slate-700 mb-1">
-                        {language === 'bn' ? 'লগইন ইমেইল *' : 'Login Email *'}
+                        {language === 'bn'
+                          ? 'লগইন আইডি (ইমেইল / মোবাইল / ইউজারনেম) *'
+                          : 'Login ID (Email, Mobile, or Username) *'}
                       </label>
                       <input
-                        type="email"
+                        type="text"
                         required
                         value={editUserForm.email}
                         onChange={(e) => setEditUserForm((p) => ({ ...p, email: e.target.value }))}
+                        placeholder="user@school.edu.bd, 017..., or rahim01"
                         className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs font-mono"
                       />
                     </div>
@@ -1799,20 +2013,51 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                           <label className="block font-semibold text-slate-700 mb-1">
                             {language === 'bn' ? 'সংশ্লিষ্ট শিক্ষার্থী (Linked Student)' : 'Linked Student'}
                           </label>
-                          <select
+                          <SearchablePicker<Student>
+                            items={allLocalStudents}
                             value={editUserForm.linkedStudentId}
-                            onChange={(e) => setEditUserForm((p) => ({ ...p, linkedStudentId: e.target.value }))}
-                            className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs"
-                          >
-                            <option value="">
-                              {language === 'bn' ? '-- শিক্ষার্থী নির্বাচন করুন --' : '-- Select Student --'}
-                            </option>
-                            {allLocalStudents.map((st) => (
-                              <option key={st.id} value={st.id}>
-                                {st.studentId} — {st.nameBn || st.nameEn} ({st.className}, রোল {st.roll})
-                              </option>
-                            ))}
-                          </select>
+                            onChange={(id) => setEditUserForm((p) => ({ ...p, linkedStudentId: id }))}
+                            getId={(st) => st.id}
+                            filterItems={filterStudentsByQuery}
+                            getPrimaryLabel={(st) =>
+                              `${st.studentId} — ${st.nameBn || st.nameEn}${
+                                st.nameBn && st.nameEn && st.nameBn !== st.nameEn ? ` (${st.nameEn})` : ''
+                              }`
+                            }
+                            getBadgeText={(st) =>
+                              `${st.className}${st.section ? ` (${st.section})` : ''}, ${
+                                language === 'bn' ? 'রোল' : 'Roll'
+                              } ${st.roll}`
+                            }
+                            getSecondaryLabel={(st) => {
+                              const guardianText = st.guardianName || st.fatherNameBn || st.fatherNameEn;
+                              const phoneText = st.phone || st.guardianPhone || st.fatherPhone;
+                              return [
+                                guardianText
+                                  ? `${language === 'bn' ? 'অভিভাবক' : 'Guardian'}: ${guardianText}`
+                                  : '',
+                                phoneText || '',
+                              ]
+                                .filter(Boolean)
+                                .join(' • ');
+                            }}
+                            placeholder={
+                              language === 'bn'
+                                ? 'নাম, আইডি, রোল, শ্রেণি বা মোবাইল লিখে খুঁজুন...'
+                                : 'Search student by name, ID, roll, class, or mobile...'
+                            }
+                            searchPlaceholder={
+                              language === 'bn'
+                                ? 'শিক্ষার্থীর নাম, রোল, আইডি বা মোবাইল লিখুন...'
+                                : 'Type student name, roll, ID, or mobile...'
+                            }
+                            language={language}
+                            borderTone="slate"
+                            resetKey={`edit-student-${isOpen}-${editingUser.uid}`}
+                            ariaLabel={
+                              language === 'bn' ? 'সংশ্লিষ্ট শিক্ষার্থী নির্বাচন' : 'Linked Student'
+                            }
+                          />
                         </div>
                       )}
                   </div>
@@ -1888,8 +2133,8 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                     onChange={(e) => setUserSearch(e.target.value)}
                     placeholder={
                       language === 'bn'
-                        ? 'নাম, ইমেইল বা রোল দিয়ে খুঁজুন...'
-                        : 'Search by name, email, or role...'
+                        ? 'নাম, ইমেইল, মোবাইল, ইউজারনেম বা রোল দিয়ে খুঁজুন...'
+                        : 'Search by name, email, mobile, username, or role...'
                     }
                     className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
@@ -1960,7 +2205,8 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                               )}
                             </div>
                             <div className="text-[11px] font-mono text-slate-600 truncate">
-                              {u.email}
+                              {formatDisplayLoginId(u)}
+                              {u.username && !isSyntheticAuthEmail(u.email) && u.email ? ` (${u.email})` : ''}
                               {u.phone ? ` • ${u.phone}` : ''}
                               {u.linkedStudentId && (() => {
                                 const stu = allLocalStudents.find((s) => s.id === u.linkedStudentId || s.studentId === u.linkedStudentId);
@@ -2083,11 +2329,11 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                               <span>
                                 {language === 'bn' ? (
                                   <>
-                                    আপনি কি নিশ্চিতভাবে <strong>{u.displayName}</strong> (<span className="font-mono">{u.email}</span>)-এর ইউজার ও পাসওয়ার্ড স্থায়ীভাবে মুছে ফেলতে চান? ডিলিট করলে সে আর লগইন করতে পারবে না।
+                                    আপনি কি নিশ্চিতভাবে <strong>{u.displayName}</strong> (<span className="font-mono">{formatDisplayLoginId(u)}</span>)-এর ইউজার ও পাসওয়ার্ড স্থায়ীভাবে মুছে ফেলতে চান? ডিলিট করলে সে আর লগইন করতে পারবে না।
                                   </>
                                 ) : (
                                   <>
-                                    Permanently delete login credentials for <strong>{u.displayName}</strong> (<span className="font-mono">{u.email}</span>)? They will no longer be able to log in.
+                                    Permanently delete login credentials for <strong>{u.displayName}</strong> (<span className="font-mono">{formatDisplayLoginId(u)}</span>)? They will no longer be able to log in.
                                   </>
                                 )}
                               </span>

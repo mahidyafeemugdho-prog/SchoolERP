@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initializeApp, getApps, cert, applicationDefault, App } from 'firebase-admin/app';
+import { initializeApp, getApps, getApp, cert, applicationDefault, App } from 'firebase-admin/app';
 import { getAuth, Auth } from 'firebase-admin/auth';
 import { getFirestore, Firestore, Timestamp } from 'firebase-admin/firestore';
 import bundledAppletConfig from '../../../firebase-applet-config.json';
@@ -26,6 +26,10 @@ import {
   TransactionContext,
   getDefaultPlatformPaymentChannels,
 } from '../types';
+import {
+  normalizeLoginUsernameKey,
+  normalizePhoneNumber,
+} from '../../../src/utils/loginIdentifier';
 
 function getSafeDirname(): string {
   try {
@@ -73,6 +77,7 @@ function loadAppletConfig(): FirebaseAppletConfig {
 let cachedApp: App | null = null;
 let adminInitError: string | null = null;
 let adminInitStatus: 'ok' | 'missing_credentials' | 'invalid_json' | 'missing_fields' | 'init_error' = 'missing_credentials';
+let adminAuthMode: 'service_account' | 'adc' | 'none' = 'none';
 
 function stripWrappingQuotesAndFences(raw: string): string {
   let value = raw.replace(/^\uFEFF/, '').trim();
@@ -192,10 +197,19 @@ function getAdminApp(): { app: App | null; config: FirebaseAppletConfig; hasCred
     return { app: cachedApp, config, hasCredentials: true };
   }
   if (getApps().length > 0) {
-    cachedApp = getApps()[0];
+    cachedApp = getApp();
     adminInitStatus = 'ok';
+    if (adminAuthMode === 'none') {
+      adminAuthMode = 'adc';
+    }
     return { app: cachedApp, config, hasCredentials: true };
   }
+
+  const isNetlifyRuntime = Boolean(
+    process.env.NETLIFY === 'true' || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT
+  );
+  const isTestEnv = Boolean(process.env.VITEST || process.env.NODE_ENV === 'test');
+  const hasValidProjectId = Boolean(config.projectId && !/remixed/i.test(config.projectId));
 
   try {
     const serviceAccountJson = getRawServiceAccountEnv();
@@ -214,6 +228,7 @@ function getAdminApp(): { app: App | null; config: FirebaseAppletConfig; hasCred
           projectId: parsed.project_id || config.projectId,
         });
         adminInitStatus = 'ok';
+        adminAuthMode = 'service_account';
         adminInitError = null;
         return { app: cachedApp, config, hasCredentials: true };
       }
@@ -239,6 +254,7 @@ function getAdminApp(): { app: App | null; config: FirebaseAppletConfig; hasCred
         projectId: envProjectId,
       });
       adminInitStatus = 'ok';
+      adminAuthMode = 'service_account';
       adminInitError = null;
       return { app: cachedApp, config, hasCredentials: true };
     }
@@ -254,40 +270,58 @@ function getAdminApp(): { app: App | null; config: FirebaseAppletConfig; hasCred
               projectId: parsed.project_id || config.projectId,
             });
             adminInitStatus = 'ok';
+            adminAuthMode = 'service_account';
             adminInitError = null;
             return { app: cachedApp, config, hasCredentials: true };
           }
         } catch {
           // Fall back to applicationDefault below
         }
+        if (!process.env.GOOGLE_CLOUD_QUOTA_PROJECT && hasValidProjectId) {
+          process.env.GOOGLE_CLOUD_QUOTA_PROJECT = config.projectId;
+        }
         cachedApp = initializeApp({
           credential: applicationDefault(),
           projectId: config.projectId,
         });
         adminInitStatus = 'ok';
+        adminAuthMode = 'adc';
         adminInitError = null;
         return { app: cachedApp, config, hasCredentials: true };
       }
+      // If a stale/non-existent path was injected, clear it so applicationDefault() can fall back to metadata ADC
+      delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
     }
 
-    // Attempt ADC only when explicitly enabled or running inside the target Firebase GCP project
+    // Attempt Application Default Credentials (ADC) in managed Cloud Run / AI Studio or when explicitly enabled
     const runtimeProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
-    if (process.env.FIREBASE_USE_ADC === 'true' || (runtimeProject && runtimeProject === config.projectId)) {
+    const shouldTryAdc =
+      process.env.FIREBASE_USE_ADC === 'true' ||
+      (runtimeProject && runtimeProject === config.projectId) ||
+      (!isNetlifyRuntime && !isTestEnv && process.env.FIREBASE_USE_ADC !== 'false' && hasValidProjectId);
+
+    if (shouldTryAdc && hasValidProjectId) {
+      if (!process.env.GOOGLE_CLOUD_QUOTA_PROJECT && config.projectId) {
+        process.env.GOOGLE_CLOUD_QUOTA_PROJECT = config.projectId;
+      }
       cachedApp = initializeApp({
         credential: applicationDefault(),
         projectId: config.projectId,
       });
       adminInitStatus = 'ok';
+      adminAuthMode = 'adc';
       adminInitError = null;
       return { app: cachedApp, config, hasCredentials: true };
     }
 
     adminInitStatus = 'missing_credentials';
+    adminAuthMode = 'none';
     adminInitError =
-      'Firebase Admin credentials (FIREBASE_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS) are not configured on this server.';
+      'Firebase Admin credentials are not configured on this server.';
     return { app: null, config, hasCredentials: false };
   } catch (err: any) {
     adminInitStatus = 'init_error';
+    adminAuthMode = 'none';
     adminInitError = err?.message || 'Failed to initialize Firebase Admin SDK';
     return { app: null, config, hasCredentials: false };
   }
@@ -303,6 +337,7 @@ export function getFirebaseAdminDiagnostics() {
   return {
     adminSdkReady: hasCredentials,
     initStatus: adminInitStatus,
+    authMode: adminAuthMode,
     hasServiceAccountJson,
     hasSplitCredentials: hasClientEmail && hasPrivateKey,
     hasClientEmail,
@@ -944,6 +979,80 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
     return snap.empty ? null : (snap.docs[0].data() as SaaSUserRecord);
   }
 
+  async getSaaSUserByUsernameNormalized(usernameNormalized: string): Promise<SaaSUserRecord | null> {
+    if (!usernameNormalized) return null;
+    const db = this.getDb();
+    const snap = await db
+      .collection('saas_users')
+      .where('usernameNormalized', '==', usernameNormalized)
+      .limit(1)
+      .get();
+    if (!snap.empty) {
+      return snap.docs[0].data() as SaaSUserRecord;
+    }
+
+    // Legacy fallback for older docs written without usernameNormalized index
+    const fallbackSnap = await db.collection('saas_users').limit(500).get();
+    for (const d of fallbackSnap.docs) {
+      const u = d.data() as SaaSUserRecord;
+      const key = u.usernameNormalized || (u.username ? normalizeLoginUsernameKey(u.username) : '');
+      if (key === usernameNormalized) {
+        return u;
+      }
+    }
+    return null;
+  }
+
+  async findSaaSUsersByLoginIdentifier(
+    usernameNormalized: string,
+    phoneNormalized?: string
+  ): Promise<SaaSUserRecord[]> {
+    const db = this.getDb();
+
+    if (usernameNormalized) {
+      const directSnap = await db
+        .collection('saas_users')
+        .where('usernameNormalized', '==', usernameNormalized)
+        .limit(5)
+        .get();
+      if (!directSnap.empty) {
+        return directSnap.docs.map((d) => d.data() as SaaSUserRecord);
+      }
+    }
+
+    if (phoneNormalized) {
+      const phoneSnap = await db
+        .collection('saas_users')
+        .where('phoneNormalized', '==', phoneNormalized)
+        .limit(5)
+        .get();
+      if (!phoneSnap.empty) {
+        return phoneSnap.docs.map((d) => d.data() as SaaSUserRecord);
+      }
+    }
+
+    // Bounded legacy fallback for records created before usernameNormalized / phoneNormalized fields
+    const allSnap = await db.collection('saas_users').limit(500).get();
+    const all = allSnap.docs.map((d) => d.data() as SaaSUserRecord);
+
+    if (usernameNormalized) {
+      const legacyDirect = all.filter((u) => {
+        const key = u.usernameNormalized || (u.username ? normalizeLoginUsernameKey(u.username) : '');
+        return key === usernameNormalized;
+      });
+      if (legacyDirect.length > 0) return legacyDirect;
+    }
+
+    if (phoneNormalized) {
+      return all.filter((u) => {
+        const storedPhone = u.phoneNormalized || (u.phone ? normalizePhoneNumber(u.phone) : '');
+        return storedPhone === phoneNormalized;
+      });
+    }
+
+    return [];
+  }
+
   async listSaaSUsersBySchool(schoolId: string): Promise<SaaSUserRecord[]> {
     const db = this.getDb();
     const [scopedSnap, globalSnap] = await Promise.all([
@@ -1240,6 +1349,34 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
       return fn(ctx);
     });
   }
+}
+
+export function toFirebaseAdminServiceError(err: unknown): SaaSServiceError | null {
+  if (!err || typeof err !== 'object') return null;
+  if (err instanceof SaaSServiceError) return err;
+  const anyErr = err as any;
+  const code = anyErr?.code;
+  const httpStatus = anyErr?.httpResponse?.status;
+  const message = String(anyErr?.message || '');
+  const httpStatusText = String(anyErr?.httpResponse?.data?.error?.status || '');
+  const isIamDenied =
+    code === 7 ||
+    code === 'permission-denied' ||
+    code === 'PERMISSION_DENIED' ||
+    code === 'auth/insufficient-permission' ||
+    (code === 'auth/internal-error' && (httpStatus === 403 || /permission|identitytoolkit|serviceusage|disabled/i.test(message))) ||
+    httpStatus === 403 ||
+    httpStatusText === 'PERMISSION_DENIED' ||
+    /7 PERMISSION_DENIED|Missing or insufficient permissions|USER_PROJECT_DENIED|serviceusage\.services\.use/i.test(message);
+
+  if (isIamDenied) {
+    return new SaaSServiceError(
+      'Server Firebase Admin SDK does not yet have IAM permissions (Cloud Datastore User, Firebase Authentication Admin, Service Usage Consumer) on this Firebase project.',
+      503,
+      'ADMIN_IAM_PERMISSION_DENIED'
+    );
+  }
+  return null;
 }
 
 export function isFirebaseAdminConfigured(): boolean {

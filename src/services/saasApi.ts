@@ -68,6 +68,7 @@ export interface SaaSSchoolRecord {
   principalName: string;
   adminName: string;
   adminEmail: string;
+  adminUsername?: string;
   adminUid: string;
   status: SaaSSchoolStatus;
   subscription: {
@@ -141,6 +142,7 @@ export interface SaaSSubscriptionHistoryDTO {
 export interface SaaSUserDTO {
   uid: string;
   email: string;
+  username?: string;
   displayName: string;
   schoolId: string;
   schoolRole: string;
@@ -157,6 +159,7 @@ export interface SaaSMeResponse {
   principal: {
     uid: string;
     email: string;
+    username?: string;
     emailVerified: boolean;
     schoolId: string | null;
     schoolRole: string | null;
@@ -192,6 +195,7 @@ export interface SaaSMasterAnalytics {
 export interface SaaSHealthDiagnostics {
   adminSdkReady: boolean;
   initStatus: 'ok' | 'missing_credentials' | 'invalid_json' | 'missing_fields' | 'init_error';
+  authMode?: 'service_account' | 'adc' | 'none';
   hasServiceAccountJson: boolean;
   hasSplitCredentials: boolean;
   hasClientEmail: boolean;
@@ -347,6 +351,24 @@ export const DEFAULT_FALLBACK_CHANNELS: SaaSPlatformPaymentChannels = {
   supportEmail: 'support@smartschoolbd.com',
 };
 
+export function isSaaSIamPermissionError(err: any): boolean {
+  const code = err?.code;
+  const msg = String(err?.message || '');
+  return (
+    code === 'ADMIN_IAM_PERMISSION_DENIED' ||
+    /ADMIN_IAM_PERMISSION_DENIED|IAM permissions|7 PERMISSION_DENIED|USER_PROJECT_DENIED|serviceusage\.services\.use/i.test(msg)
+  );
+}
+
+export function isNetlifyHostingEnvironment(diagnostics?: Pick<SaaSHealthDiagnostics, 'isNetlifyRuntime'> | null): boolean {
+  if (diagnostics?.isNetlifyRuntime) return true;
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname.toLowerCase();
+    return host.endsWith('.netlify.app') || host.endsWith('.netlify.live');
+  }
+  return false;
+}
+
 export function isSaaSBackendUnavailableError(err: any): boolean {
   const code = err?.code;
   const status = err?.status;
@@ -355,6 +377,7 @@ export function isSaaSBackendUnavailableError(err: any): boolean {
     code === 'EMPTY_RESPONSE' ||
     code === 'INVALID_ME_RESPONSE' ||
     code === 'ADMIN_SDK_UNAVAILABLE' ||
+    code === 'ADMIN_IAM_PERMISSION_DENIED' ||
     code === 'AUTH_VERIFIER_UNAVAILABLE'
   ) {
     return true;
@@ -520,6 +543,21 @@ export const SaaSApi = {
       platformPaymentChannels: SaaSPlatformPaymentChannels;
     }>('/plans', {}, false),
 
+  resolveLoginIdentifier: (identifier: string) =>
+    saasFetch<{
+      success: boolean;
+      resolvedEmail: string;
+      method: 'email' | 'username' | 'phone';
+      isSyntheticEmail: boolean;
+    }>(
+      '/auth/resolve-login',
+      {
+        method: 'POST',
+        body: JSON.stringify({ identifier }),
+      },
+      false
+    ),
+
   getMe: async () => {
     const data = await saasFetch<SaaSMeResponse>('/me');
     if (!data || !data.principal || typeof data.principal !== 'object') {
@@ -537,6 +575,7 @@ export const SaaSApi = {
   updateMyCredentials: (payload: {
     displayName?: string;
     email?: string;
+    username?: string;
     password?: string;
     phone?: string;
     avatarUrl?: string;
@@ -546,6 +585,7 @@ export const SaaSApi = {
       user: {
         uid: string;
         email: string;
+        username?: string;
         displayName: string;
         phone?: string;
         avatarUrl?: string;
@@ -584,7 +624,8 @@ export const SaaSApi = {
 
   // Staff / User Provisioning Endpoints
   provisionUser: (payload: {
-    email: string;
+    email?: string;
+    username?: string;
     password: string;
     displayName: string;
     schoolRole: string;
@@ -614,6 +655,7 @@ export const SaaSApi = {
     payload: {
       displayName?: string;
       email?: string;
+      username?: string;
       password?: string;
       phone?: string;
       schoolRole?: string;
@@ -654,6 +696,7 @@ export const SaaSApi = {
     principalName: string;
     adminName: string;
     adminEmail: string;
+    adminUsername?: string;
     adminPassword: string;
     initialPlan: SaaSPlanId;
     startDate: string;

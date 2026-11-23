@@ -2,7 +2,8 @@ import React, { useState, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
-import { Student, StudentDocument, ClassLevel, ShiftType, GroupType } from '../../types';
+import { ClassInfo, Student, StudentDocument, ClassLevel, ShiftType, GroupType } from '../../types';
+import { formatClassOptionLabel, getManagedClassList, getManagedClassNames } from '../../utils/academicClasses';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName, toEnNumber } from '../../utils/i18n';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
@@ -71,7 +72,13 @@ import {
 import { useSchool } from '../../context/SchoolContext';
 import QRCode from 'qrcode';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
-import { SaaSApi, isSaaSBackendUnavailableError } from '../../services/saasApi';
+import {
+  SaaSApi,
+  isSaaSBackendUnavailableError,
+  isSaaSIamPermissionError,
+  isNetlifyHostingEnvironment,
+} from '../../services/saasApi';
+import { formatDisplayLoginId, isSyntheticAuthEmail, validateLoginIdentifier } from '../../utils/loginIdentifier';
 import {
   ModernStudentIDCardFront,
   ModernStudentIDCardBack,
@@ -88,6 +95,9 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
   const { t, language, toBnNumber, formatDate } = useLanguage();
   const { schoolProfile: school } = useSchool();
   const activeSchoolCode = resolveSchoolCode(saasSession?.school?.schoolId, school);
+  const [academicClasses, setAcademicClasses] = useState<ClassInfo[]>(() => StorageService.getClasses());
+  const managedClassList = React.useMemo(() => getManagedClassList(academicClasses), [academicClasses]);
+  const managedClassNames = React.useMemo(() => getManagedClassNames(academicClasses), [academicClasses]);
   const [students, setStudents] = useState<Student[]>(() => StorageService.getStudents());
   const [selectedClass, setSelectedClass] = useState<string>('all');
   const [selectedSection, setSelectedSection] = useState<string>('all');
@@ -115,13 +125,19 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
   // Keep student list in sync in real-time when another device or tab adds a student
   React.useEffect(() => {
     const handleSync = () => {
+      setAcademicClasses(StorageService.getClasses());
       setStudents(StorageService.getStudents());
+    };
+    const handleClassesUpdated = () => {
+      setAcademicClasses(StorageService.getClasses());
     };
     handleSync();
     window.addEventListener('school_cloud_data_synced', handleSync);
+    window.addEventListener('school_classes_updated', handleClassesUpdated);
     window.addEventListener('storage', handleSync);
     return () => {
       window.removeEventListener('school_cloud_data_synced', handleSync);
+      window.removeEventListener('school_classes_updated', handleClassesUpdated);
       window.removeEventListener('storage', handleSync);
     };
   }, []);
@@ -181,12 +197,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
     setPasswordChangeError('');
     setPasswordChangeSuccess('');
 
-    const cleanEmail = studentAuthEmail.trim().toLowerCase();
+    const parsedLogin = validateLoginIdentifier(studentAuthEmail);
     const cleanPass = newStudentPassword.trim();
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    if (!parsedLogin.valid) {
       setPasswordChangeError(
-        language === 'bn' ? 'সঠিক লগইন ইমেইল ঠিকানা লিখুন।' : 'Please enter a valid login email address.'
+        (language === 'bn' ? parsedLogin.errorBn : parsedLogin.error) ||
+          'Please enter a valid email, mobile number, or username.'
       );
       return;
     }
@@ -212,31 +229,39 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
     setSavingStudentPassword(true);
     try {
       let resolvedUid = targetPasswordStudent.authUid || '';
+      let savedEmail = parsedLogin.displayValue;
+      let savedUsername: string | undefined = parsedLogin.kind !== 'email' ? parsedLogin.displayValue : undefined;
 
       if (targetPasswordStudent.authUid) {
         const res = await SaaSApi.updateUserCredentials(targetPasswordStudent.authUid, {
           displayName: targetPasswordStudent.nameEn || targetPasswordStudent.nameBn,
-          email: cleanEmail,
+          email: parsedLogin.displayValue,
           phone: targetPasswordStudent.guardianPhone || targetPasswordStudent.phone,
           ...(cleanPass ? { password: cleanPass } : {}),
         });
         resolvedUid = res.user.uid;
+        savedEmail = res.user.email;
+        savedUsername = res.user.username;
       } else {
         const res = await SaaSApi.provisionUser({
-          email: cleanEmail,
+          email: parsedLogin.displayValue,
+          ...(parsedLogin.kind !== 'email' ? { username: parsedLogin.displayValue } : {}),
           password: cleanPass,
           displayName: targetPasswordStudent.nameEn || targetPasswordStudent.nameBn,
           schoolRole: 'student',
           schoolId: saasSession?.school?.schoolId,
           linkedStudentId: targetPasswordStudent.id,
-          phone: targetPasswordStudent.guardianPhone || targetPasswordStudent.phone,
+          phone: parsedLogin.normalizedPhone || targetPasswordStudent.guardianPhone || targetPasswordStudent.phone,
         });
         resolvedUid = res.user.uid;
+        savedEmail = res.user.email;
+        savedUsername = res.user.username;
       }
 
       const updatedStudent: Student = {
         ...targetPasswordStudent,
-        email: cleanEmail,
+        email: savedEmail,
+        username: savedUsername,
         authUid: resolvedUid,
       };
       delete updatedStudent.password;
@@ -244,17 +269,28 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
       setTargetPasswordStudent(updatedStudent);
       setStudents(StorageService.getStudents());
       setNewStudentPassword('');
+      const displayLogin = formatDisplayLoginId({ username: savedUsername, email: savedEmail });
       setPasswordChangeSuccess(
         language === 'bn'
-          ? `শিক্ষার্থী ${updatedStudent.nameBn || updatedStudent.nameEn}-এর Firebase লগইন (${cleanEmail}) সফলভাবে আপডেট হয়েছে!`
-          : `Student Firebase login (${cleanEmail}) saved successfully!`
+          ? `শিক্ষার্থী ${updatedStudent.nameBn || updatedStudent.nameEn}-এর লগইন (${displayLogin}) সফলভাবে আপডেট হয়েছে!`
+          : `Student login (${displayLogin}) saved successfully!`
       );
     } catch (err: any) {
-      if (isSaaSBackendUnavailableError(err)) {
+      if (isSaaSIamPermissionError(err)) {
         setPasswordChangeError(
           language === 'bn'
-            ? `${err?.message || 'সার্ভারে Firebase Admin SDK কনফিগার করা নেই।'} (Netlify-তে চালালে Environment variables-এ FIREBASE_SERVICE_ACCOUNT_JSON বা FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY যোগ করে Scopes: All scopes দিয়ে Clear cache and deploy site করুন।)`
-            : `${err?.message || 'Firebase Admin SDK is not configured on the server.'} (On Netlify, add FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY in Environment variables with All scopes, then redeploy.)`
+            ? 'Firebase প্রজেক্টে সার্ভারের IAM অনুমোদন (Cloud Datastore User, Firebase Authentication Admin, Service Usage Consumer) এখনো যুক্ত বা সক্রিয় হয়নি। Google Cloud IAM-এ অনুমোদন দেওয়ার পর আবার চেষ্টা করুন।'
+            : 'Firebase Admin IAM permissions (Cloud Datastore User, Firebase Authentication Admin, Service Usage Consumer) are not yet granted on this Firebase project.'
+        );
+      } else if (isSaaSBackendUnavailableError(err)) {
+        setPasswordChangeError(
+          language === 'bn'
+            ? isNetlifyHostingEnvironment()
+              ? `${err?.message || 'সার্ভারে Firebase Admin SDK কনফিগার করা নেই।'} (Netlify-তে চালালে Environment variables-এ FIREBASE_SERVICE_ACCOUNT_JSON বা FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY যোগ করে Scopes: All scopes দিয়ে Clear cache and deploy site করুন।)`
+              : 'ব্যাকএন্ড সার্ভার সাময়িকভাবে পাওয়া যাচ্ছে না অথবা Firebase Admin সংযোগ প্রস্তুত নয়। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।'
+            : isNetlifyHostingEnvironment()
+            ? `${err?.message || 'Firebase Admin SDK is not configured on the server.'} (On Netlify, add FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY in Environment variables with All scopes, then redeploy.)`
+            : 'The backend server is temporarily unavailable or restarting. Please try again in a moment.'
         );
       } else {
         setPasswordChangeError(err?.message || 'Failed to update student login credentials.');
@@ -924,8 +960,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
             {language === 'bn'
-              ? `মোট ${toBnNumber(students.length)} জন শিক্ষার্থী প্লে থেকে দশম শ্রেণিতে ভর্তি রয়েছে`
-              : `Total ${students.length} students enrolled from Nursery to Class 10`}
+              ? `মোট ${toBnNumber(students.length)} জন শিক্ষার্থী ${managedClassList[0]?.nameBn || managedClassNames[0] || 'প্লে'} থেকে ${managedClassList[managedClassList.length - 1]?.nameBn || managedClassNames[managedClassNames.length - 1] || 'দশম'} শ্রেণিতে ভর্তি রয়েছে`
+              : `Total ${students.length} students enrolled from ${managedClassNames[0] || 'Play'} to ${managedClassNames[managedClassNames.length - 1] || 'Class 10'}`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1359,12 +1395,9 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
               onChange={(e) => setSelectedClass(e.target.value)}
               className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
             >
-              <option value="all">{language === 'bn' ? 'সকল শ্রেণি (Nursery - 10)' : 'All Classes'}</option>
-              {[
-                'Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4',
-                'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'
-              ].map((c) => (
-                <option key={c} value={c}>{c}</option>
+              <option value="all">{language === 'bn' ? 'সকল শ্রেণি (All Classes)' : 'All Classes'}</option>
+              {managedClassList.map((cls) => (
+                <option key={cls.id} value={cls.name}>{formatClassOptionLabel(cls, language)}</option>
               ))}
             </select>
           </div>
@@ -1592,10 +1625,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                             onClick={() => {
                               const schoolSlug = (activeSchoolCode || 'sch').toLowerCase().replace(/[^a-z0-9]/g, '');
                               const stuSlug = (s.studentId || s.id).toLowerCase().replace(/[^a-z0-9]/g, '');
-                              const suggested =
-                                s.email && s.email.includes('@')
-                                  ? s.email
-                                  : `${stuSlug}@${schoolSlug}.smartschool.bd`;
+                              const suggested = s.username
+                                ? s.username
+                                : s.email && s.email.includes('@') && !isSyntheticAuthEmail(s.email)
+                                ? s.email
+                                : s.authUid
+                                ? formatDisplayLoginId(s)
+                                : `${stuSlug}@${schoolSlug}.smartschool.bd`;
                               setTargetPasswordStudent(s);
                               setStudentAuthEmail(suggested);
                               setNewStudentPassword('');
@@ -1604,7 +1640,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                               setPasswordChangeSuccess('');
                               setShowPasswordModal(true);
                             }}
-                            title="লগইন ইমেইল ও পাসওয়ার্ড পরিবর্তন"
+                            title="লগইন আইডি (ইমেইল/মোবাইল/নাম) ও পাসওয়ার্ড পরিবর্তন"
                             className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded"
                           >
                             <KeyRound className="w-4 h-4 text-indigo-600" />
@@ -1980,12 +2016,12 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Class *</label>
                   <select
-                    value={formData.className || 'Class 10'}
+                    value={formData.className || managedClassNames[0] || 'Class 10'}
                     onChange={(e) => setFormData({ ...formData, className: e.target.value as any })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   >
-                    {['Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'].map((c) => (
-                      <option key={c} value={c}>{c}</option>
+                    {managedClassList.map((cls) => (
+                      <option key={cls.id} value={cls.name}>{formatClassOptionLabel(cls, language)}</option>
                     ))}
                   </select>
                 </div>
@@ -3022,16 +3058,18 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  {language === 'bn' ? 'শিক্ষার্থীর লগইন ইমেইল *' : 'Student Login Email *'}
+                  {language === 'bn'
+                    ? 'শিক্ষার্থীর লগইন আইডি (ইমেইল / মোবাইল / যেকোনো নাম) *'
+                    : 'Student Login ID (Email, Mobile, or Username) *'}
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <input
-                    type="email"
+                    type="text"
                     required
                     value={studentAuthEmail}
                     onChange={(e) => setStudentAuthEmail(e.target.value)}
-                    placeholder="student@school.smartschool.bd"
+                    placeholder="017..., rahim01, or student@school.smartschool.bd"
                     className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-xl text-xs font-mono font-semibold text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                   />
                 </div>
@@ -3088,7 +3126,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                       ? 'সংরক্ষণ হচ্ছে...'
                       : 'Saving...'
                     : language === 'bn'
-                    ? 'ইমেইল ও পাসওয়ার্ড সংরক্ষণ'
+                    ? 'লগইন আইডি ও পাসওয়ার্ড সংরক্ষণ'
                     : 'Save Credentials'}
                 </button>
               </div>

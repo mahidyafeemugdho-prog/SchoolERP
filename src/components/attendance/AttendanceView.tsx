@@ -2,7 +2,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
-import { AttendanceRecord, AttendanceStatus, Student, Staff, ClassAttendanceSchedule, AttendanceRuleConfig } from '../../types';
+import { getManagedClassNames } from '../../utils/academicClasses';
+import { AttendanceRecord, AttendanceStatus, ClassInfo, Student, Staff, ClassAttendanceSchedule, AttendanceRuleConfig } from '../../types';
 import {
   CalendarCheck2,
   Calendar,
@@ -99,7 +100,12 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({ initialSubTab, j
   // Daily Filters
   const [selectedDate, setSelectedDate] = useState<string>(() => toLocalDateStr());
   const effectiveDate = !isSuperAdminOrMaster ? realTodayStr : selectedDate;
-  const [selectedClass, setSelectedClass] = useState<string>('Class 10');
+  const [academicClasses, setAcademicClasses] = useState<ClassInfo[]>(() => StorageService.getClasses());
+  const ALL_CLASSES = getManagedClassNames(academicClasses);
+  const [selectedClass, setSelectedClass] = useState<string>(() => {
+    const names = getManagedClassNames(StorageService.getClasses());
+    return names.includes('Class 10') ? 'Class 10' : names[0] || 'Class 10';
+  });
   const [selectedSection, setSelectedSection] = useState<string>('A');
 
   // Staff View Mode: 'daily', 'monthly', 'yearly'
@@ -129,31 +135,38 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({ initialSubTab, j
 
   useEffect(() => {
     const handleSync = () => {
+      setAcademicClasses(StorageService.getClasses());
       setAttendanceRecords(StorageService.getAttendance());
+      setSyncTick((n) => n + 1);
+    };
+    const handleClassesUpdated = () => {
+      setAcademicClasses(StorageService.getClasses());
       setSyncTick((n) => n + 1);
     };
     const handleSatToggle = () => {
       setSaturdayOffTick((n) => n + 1);
     };
     window.addEventListener('school_cloud_data_synced', handleSync);
+    window.addEventListener('school_classes_updated', handleClassesUpdated);
     window.addEventListener('saturday_off_toggled', handleSatToggle);
     return () => {
       window.removeEventListener('school_cloud_data_synced', handleSync);
+      window.removeEventListener('school_classes_updated', handleClassesUpdated);
       window.removeEventListener('saturday_off_toggled', handleSatToggle);
     };
   }, []);
+
+  useEffect(() => {
+    if (ALL_CLASSES.length > 0 && !ALL_CLASSES.includes(selectedClass as any)) {
+      setSelectedClass(ALL_CLASSES[0]);
+    }
+  }, [ALL_CLASSES, selectedClass]);
 
   const [showSmsModal, setShowSmsModal] = useState<boolean>(false);
   const [smsSending, setSmsSending] = useState<boolean>(false);
   const [smsSentNotice, setSmsSentNotice] = useState<string>('');
 
   const canEdit = activeRole === 'super_admin' || activeRole === 'admin' || activeRole === 'teacher' || activeRole === 'master_admin';
-
-  const classList = StorageService.getClasses();
-  const ALL_CLASSES = classList.length > 0 ? classList.map((c) => c.name) : [
-    'Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4',
-    'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'
-  ];
 
   const activeHoliday = StorageService.isDateHoliday(effectiveDate);
 

@@ -9,6 +9,7 @@ import {
   SchoolTenantRecord,
 } from './types';
 import { evaluateSubscriptionState } from './subscriptionService';
+import { toFirebaseAdminServiceError } from './providers/firebaseProvider';
 
 export interface AuthenticatedRequest extends Request {
   principal?: AuthPrincipal;
@@ -47,7 +48,10 @@ export function createSaaSMiddleware(
         const [isDbMaster, userRecord] = await Promise.all([
           db.isMasterAdminUidOrEmail(principal.uid, principal.email),
           db.getSaaSUserByUid(principal.uid).catch((dbErr: any) => {
-            if (dbErr instanceof SaaSServiceError && dbErr.code === 'ADMIN_SDK_UNAVAILABLE') {
+            if (dbErr instanceof SaaSServiceError && (dbErr.code === 'ADMIN_SDK_UNAVAILABLE' || dbErr.code === 'ADMIN_IAM_PERMISSION_DENIED')) {
+              return null;
+            }
+            if (toFirebaseAdminServiceError(dbErr)) {
               return null;
             }
             throw dbErr;
@@ -186,6 +190,14 @@ export function createSaaSMiddleware(
           success: false,
           code: err.code,
           error: err.message,
+        });
+      }
+      const iamMapped = toFirebaseAdminServiceError(err);
+      if (iamMapped) {
+        return res.status(iamMapped.statusCode).json({
+          success: false,
+          code: iamMapped.code,
+          error: iamMapped.message,
         });
       }
       return res.status(500).json({

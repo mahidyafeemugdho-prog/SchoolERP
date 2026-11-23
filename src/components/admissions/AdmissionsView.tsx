@@ -3,7 +3,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useSchool } from '../../context/SchoolContext';
 import { StorageService } from '../../services/storage';
-import { AdmissionEnquiry, ClassLevel, GroupType, Student } from '../../types';
+import { AdmissionEnquiry, ClassInfo, ClassLevel, GroupType, Student } from '../../types';
+import { formatClassOptionLabel, getManagedClassList, getManagedClassNames, isEarlyChildhoodClass } from '../../utils/academicClasses';
 import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
 import { toEnNumber } from '../../utils/i18n';
@@ -53,16 +54,25 @@ export const AdmissionsView: React.FC = () => {
   const school = schoolProfile;
   const activeSchoolCode = resolveSchoolCode(saasSession?.school?.schoolId, schoolProfile);
 
+  const [academicClasses, setAcademicClasses] = useState<ClassInfo[]>(() => StorageService.getClasses());
+  const managedClassList = React.useMemo(() => getManagedClassList(academicClasses), [academicClasses]);
+  const managedClassNames = React.useMemo(() => getManagedClassNames(academicClasses), [academicClasses]);
   const [enquiries, setEnquiries] = useState<AdmissionEnquiry[]>(() => StorageService.getEnquiries());
 
   React.useEffect(() => {
     const handleSync = () => {
+      setAcademicClasses(StorageService.getClasses());
       setEnquiries(StorageService.getEnquiries());
     };
+    const handleClassesUpdated = () => {
+      setAcademicClasses(StorageService.getClasses());
+    };
     window.addEventListener('school_cloud_data_synced', handleSync);
+    window.addEventListener('school_classes_updated', handleClassesUpdated);
     window.addEventListener('storage', handleSync);
     return () => {
       window.removeEventListener('school_cloud_data_synced', handleSync);
+      window.removeEventListener('school_classes_updated', handleClassesUpdated);
       window.removeEventListener('storage', handleSync);
     };
   }, []);
@@ -81,7 +91,7 @@ export const AdmissionsView: React.FC = () => {
   // Form for New Admission Enquiry
   const [applicantNameEn, setApplicantNameEn] = useState<string>('');
   const [applicantNameBn, setApplicantNameBn] = useState<string>('');
-  const [applyingClass, setApplyingClass] = useState<ClassLevel>('Nursery');
+  const [applyingClass, setApplyingClass] = useState<ClassLevel>(() => getManagedClassNames(StorageService.getClasses())[0] || 'Nursery');
   const [gender, setGender] = useState<'Male' | 'Female'>('Male');
   const [dob, setDob] = useState<string>('2021-02-14');
   const [bloodGroup, setBloodGroup] = useState<string>('Unknown');
@@ -168,7 +178,7 @@ export const AdmissionsView: React.FC = () => {
   const handleOpenAddModal = () => {
     setApplicantNameEn('');
     setApplicantNameBn('');
-    setApplyingClass('Nursery');
+    setApplyingClass(managedClassNames[0] || 'Nursery');
     setGender('Male');
     setDob('2021-02-14');
     setBloodGroup('B+');
@@ -231,7 +241,7 @@ export const AdmissionsView: React.FC = () => {
     const nextRoll = String(existingInClass.length + 1).padStart(2, '0');
     setEnrollRoll(nextRoll);
     setEnrollSection('A');
-    setEnrollShift(enq.applyingClass === 'Nursery' || enq.applyingClass === 'KG' ? 'Morning' : 'Day');
+    setEnrollShift(isEarlyChildhoodClass(enq.applyingClass) ? 'Morning' : 'Day');
     setEnrollGroup(['Class 9', 'Class 10'].includes(enq.applyingClass) ? 'Science' : 'General');
     setEnrollBloodGroup(enq.bloodGroup || 'Unknown');
     setEnrollPhotoUrl(enq.photoUrl || '');
@@ -684,8 +694,8 @@ export const AdmissionsView: React.FC = () => {
                     onChange={(e) => setApplyingClass(e.target.value as ClassLevel)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg font-semibold text-blue-700 bg-white"
                   >
-                    {['Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'].map((c) => (
-                      <option key={c} value={c}>{c}</option>
+                    {managedClassList.map((cls) => (
+                      <option key={cls.id} value={cls.name}>{formatClassOptionLabel(cls, language)}</option>
                     ))}
                   </select>
                 </div>

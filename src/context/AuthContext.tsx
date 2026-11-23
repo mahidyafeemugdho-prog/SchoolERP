@@ -26,8 +26,10 @@ import {
   SaaSMeResponse,
   SaaSPlanId,
   SaaSSchoolRecord,
+  isSaaSBackendUnavailableError,
 } from '../services/saasApi';
 import { hydrateSchoolProfileFromSaaSSchool } from '../utils/schoolNameResolver';
+import { validateLoginIdentifier } from '../utils/loginIdentifier';
 import {
   cacheSessionPasswordVerifier,
   clearSessionPasswordVerifier,
@@ -161,6 +163,7 @@ function shouldUseClientSaaSFallback(err: any): boolean {
     code === 'EMPTY_RESPONSE' ||
     code === 'INVALID_ME_RESPONSE' ||
     code === 'ADMIN_SDK_UNAVAILABLE' ||
+    code === 'ADMIN_IAM_PERMISSION_DENIED' ||
     code === 'AUTH_VERIFIER_UNAVAILABLE'
   ) {
     return true;
@@ -278,6 +281,7 @@ async function buildFirebaseClientFallbackMe(
   const principal: SaaSMeResponse['principal'] = {
     uid: fbUser.uid,
     email: fbUser.email || saasUserDoc?.email || '',
+    username: typeof saasUserDoc?.username === 'string' ? saasUserDoc.username : undefined,
     emailVerified: Boolean(fbUser.emailVerified),
     schoolId,
     schoolRole,
@@ -529,6 +533,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         id: fbUser.uid,
         authUid: fbUser.uid,
         email: me.principal.email || fbUser.email || '',
+        username:
+          me.principal.username ||
+          matchedStaff?.username ||
+          matchedStudent?.username ||
+          undefined,
         phone:
           me.principal.phone ||
           matchedStaff?.phone ||
@@ -724,20 +733,75 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     safeSetLocalStorage('school_erp_role', role);
   };
 
-  const loginWithCredentials = async (emailInput: string, pass: string): Promise<LoginResult> => {
-    const email = emailInput.trim();
-    if (!email || !pass) {
+  const loginWithCredentials = async (identifierInput: string, pass: string): Promise<LoginResult> => {
+    const rawInput = identifierInput.trim();
+    if (!rawInput || !pass) {
       return {
         success: false,
         errorType: 'INVALID_CREDENTIALS',
-        errorMessage: 'Please enter your registered email and password.',
+        errorMessage: 'Please enter your email, mobile number, or username and password.',
       };
+    }
+
+    const parsedId = validateLoginIdentifier(rawInput);
+    if (!parsedId.valid) {
+      return {
+        success: false,
+        errorType: 'INVALID_CREDENTIALS',
+        errorMessage:
+          parsedId.error || 'Please enter a valid email address, mobile number, or username.',
+      };
+    }
+
+    let resolvedEmail = parsedId.kind === 'email' ? parsedId.displayValue : '';
+    if (!resolvedEmail) {
+      try {
+        const res = await SaaSApi.resolveLoginIdentifier(rawInput);
+        resolvedEmail = res.resolvedEmail;
+      } catch (resolveErr: any) {
+        if (resolveErr?.code === 'ACCOUNT_DISABLED') {
+          return {
+            success: false,
+            errorType: 'ACCOUNT_DISABLED',
+            errorMessage:
+              resolveErr?.message || 'This account has been disabled by your administrator.',
+          };
+        }
+        if (resolveErr?.code === 'AMBIGUOUS_IDENTIFIER') {
+          return {
+            success: false,
+            errorType: 'INVALID_CREDENTIALS',
+            errorMessage: resolveErr.message,
+          };
+        }
+        if (resolveErr?.code === 'USER_NOT_FOUND') {
+          return {
+            success: false,
+            errorType: 'INVALID_CREDENTIALS',
+            errorMessage:
+              'Invalid username, mobile number, or password. Please verify your credentials.',
+          };
+        }
+        if (isSaaSBackendUnavailableError(resolveErr)) {
+          return {
+            success: false,
+            errorType: 'AUTH_ERROR',
+            errorMessage:
+              'Mobile/username login requires backend server access. Please sign in with your @ email or check server connection.',
+          };
+        }
+        return {
+          success: false,
+          errorType: 'INVALID_CREDENTIALS',
+          errorMessage: resolveErr?.message || 'Unable to verify login identifier.',
+        };
+      }
     }
 
     try {
       isExplicitLoginInProgressRef.current = true;
       hasExplicitLoginThisLoadRef.current = true;
-      const cred = await loginWithFirebaseEmail(email, pass);
+      const cred = await loginWithFirebaseEmail(resolvedEmail, pass);
       const me = await hydrateFromSaasMe(cred.user);
 
       if (!me || !me.principal) {
@@ -789,7 +853,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
-      await cacheSessionPasswordVerifier(cred.user.uid, email, pass);
+      await cacheSessionPasswordVerifier(cred.user.uid, cred.user.email || resolvedEmail, pass);
       setFirebaseUser(cred.user);
       setIsAuthInitializing(false);
       return { success: true };
@@ -802,7 +866,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         code === 'auth/wrong-password' ||
         code === 'auth/user-not-found'
       ) {
-        msg = 'Invalid email or password. Please verify your Firebase account credentials.';
+        msg =
+          'Invalid email, mobile number, username, or password. Please verify your credentials.';
       } else if (code === 'auth/user-disabled') {
         return {
           success: false,
@@ -810,7 +875,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           errorMessage: 'This account has been disabled by your administrator.',
         };
       } else if (code === 'auth/invalid-email') {
-        msg = 'Please enter a valid email address.';
+        msg = 'Please enter a valid email address, mobile number, or username.';
       } else if (code === 'auth/operation-not-allowed') {
         msg =
           'Email/Password Sign-In is disabled in Firebase Console. Enable it under Authentication → Sign-in method, or use Google Sign-In.';
@@ -1007,6 +1072,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             code === 'NON_JSON_RESPONSE' ||
             code === 'EMPTY_RESPONSE' ||
             code === 'ADMIN_SDK_UNAVAILABLE' ||
+            code === 'ADMIN_IAM_PERMISSION_DENIED' ||
             code === 'AUTH_VERIFIER_UNAVAILABLE' ||
             status === 502 ||
             status === 503 ||

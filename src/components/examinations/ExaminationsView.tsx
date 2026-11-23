@@ -10,20 +10,28 @@ import {
   CombinedPassPolicy,
   ExamGPABreakdown,
 } from '../../utils/grading';
-import { Exam, MarksEntry, Student, Subject, ExamScheduleItem, ClassLevel } from '../../types';
+import { Exam, MarksEntry, Student, Subject, ExamScheduleItem, ClassLevel, ClassInfo } from '../../types';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { formatGroupName } from '../../utils/i18n';
 import { compareStudentsByRoll } from '../../utils/studentSort';
+import {
+  getManagedClassList,
+  getManagedClassNames,
+  getSectionsForClass,
+  classHasGroups,
+  isEarlyChildhoodClass,
+  formatClassOptionLabel,
+} from '../../utils/academicClasses';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 import { ClassTeacherSignatureDisplay } from '../common/ClassTeacherSignatureDisplay';
 import { buildPrincipalSignatureHtml, buildClassTeacherSignatureHtml } from '../../utils/signatureHelper';
-import {
-  computeSingleExamStudentMeritRank,
-  formatBnOrdinal,
-  formatEnOrdinal,
-} from '../../utils/examMeritHelper';
+import { computeClassExamMeritMap } from '../../utils/examMeritHelper';
 import { compressSignatureImage } from '../../utils/storageHelper';
-import { getMarksheetRowBreakdown } from '../../utils/marksheetBreakdown';
+import {
+  MarksheetLanguageMode,
+  buildMarksheetsPrintableHtml,
+} from '../../utils/marksheetLocale';
+import { OfficialMarksheetSheet } from './OfficialMarksheetSheet';
 import { DigitInput } from '../common/DigitInput';
 import {
   Award,
@@ -91,10 +99,16 @@ import {
 import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 
 // Helper to get subjects specifically matching a student's class and secondary stream (group)
-export const getSubjectsForStudent = (student: Student, allClassSubjects: Subject[]): Subject[] => {
+export const getSubjectsForStudent = (
+  student: Student,
+  allClassSubjects: Subject[],
+  academicClasses?: ClassInfo[]
+): Subject[] => {
   if (!student) return allClassSubjects;
-  const isNineOrTen = ['Class 9', 'Class 10'].includes(student.className);
-  if (!isNineOrTen) {
+  const hasSecondaryGroups = academicClasses
+    ? classHasGroups(student.className, academicClasses)
+    : ['Class 9', 'Class 10'].includes(student.className);
+  if (!hasSecondaryGroups) {
     return allClassSubjects;
   }
   const sGroup = (student.group || 'Science').toLowerCase();
@@ -145,9 +159,16 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
     }
   }, [jumpNonce, initialSubTab, activeRole]);
 
+  const [academicClasses, setAcademicClasses] = useState<ClassInfo[]>(() => StorageService.getClasses());
+  const activeClassInfos = React.useMemo(() => getManagedClassList(academicClasses), [academicClasses]);
+  const activeClassNames = React.useMemo(() => getManagedClassNames(academicClasses), [academicClasses]);
+
   const [exams, setExams] = useState<Exam[]>(() => StorageService.getExams());
   const [selectedExamId, setSelectedExamId] = useState<string>(() => exams[0]?.id || 'ex_1');
-  const [selectedClass, setSelectedClass] = useState<string>('Class 10');
+  const [selectedClass, setSelectedClass] = useState<string>(() => {
+    const initial = getManagedClassNames(StorageService.getClasses());
+    return initial.includes('Class 10') ? 'Class 10' : initial[0] || 'Class 10';
+  });
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>('sub_10_ban');
 
   // Merit List Filters & Modal
@@ -184,6 +205,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   useEffect(() => {
     const handleSync = () => {
       const latestExams = StorageService.getExams();
+      setAcademicClasses(StorageService.getClasses());
       setExams(latestExams);
       setAllMarks(StorageService.getMarks());
       setExamRoutines(StorageService.getExamRoutines());
@@ -195,9 +217,24 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
       });
       setSyncTick((n) => n + 1);
     };
+    const handleClassesUpdated = () => {
+      setAcademicClasses(StorageService.getClasses());
+      setSyncTick((n) => n + 1);
+    };
     window.addEventListener('school_cloud_data_synced', handleSync);
-    return () => window.removeEventListener('school_cloud_data_synced', handleSync);
+    window.addEventListener('school_classes_updated', handleClassesUpdated);
+    return () => {
+      window.removeEventListener('school_cloud_data_synced', handleSync);
+      window.removeEventListener('school_classes_updated', handleClassesUpdated);
+    };
   }, []);
+
+  useEffect(() => {
+    if (activeRole === 'student') return;
+    if (activeClassNames.length > 0 && !activeClassNames.includes(selectedClass as ClassLevel)) {
+      setSelectedClass(activeClassNames[0]);
+    }
+  }, [activeClassNames, selectedClass, activeRole]);
 
   // Routine Modal state
   const [showRoutineModal, setShowRoutineModal] = useState<boolean>(false);
@@ -234,9 +271,13 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   const [admitDensity, setAdmitDensity] = useState<TableDensity>('auto');
   const [admitInstructionMode, setAdmitInstructionMode] = useState<InstructionMode>('auto' as any);
 
-  // Marksheet Modal State
+  // Marksheet Modal State (Single & Whole-Class Bulk Print + Bilingual/English Toggle)
   const [showTranscriptModal, setShowTranscriptModal] = useState<boolean>(false);
   const [transcriptStudent, setTranscriptStudent] = useState<Student | null>(null);
+  const [marksheetBulkMode, setMarksheetBulkMode] = useState<boolean>(false);
+  const [marksheetLangMode, setMarksheetLangMode] = useState<MarksheetLanguageMode>('bilingual');
+  const [reportCardSectionFilter, setReportCardSectionFilter] = useState<string>('all');
+  const [marksheetPrintNotice, setMarksheetPrintNotice] = useState<string | null>(null);
   const [showTranscriptSigEditor, setShowTranscriptSigEditor] = useState<boolean>(false);
   const [transcriptClassTeacherNameDraft, setTranscriptClassTeacherNameDraft] = useState<string>('');
 
@@ -456,6 +497,23 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
       .sort(compareStudentsByRoll);
   }, [students, selectedClass, activeRole, authenticatedStudent]);
 
+  const reportCardSectionOptions = React.useMemo(() => {
+    const set = new Set<string>();
+    classStudents.forEach((s) => {
+      if (s.section) set.add(s.section);
+    });
+    return Array.from(set).sort();
+  }, [classStudents]);
+
+  React.useEffect(() => {
+    setReportCardSectionFilter('all');
+  }, [selectedClass]);
+
+  const filteredReportCardStudents = React.useMemo(() => {
+    if (reportCardSectionFilter === 'all') return classStudents;
+    return classStudents.filter((s) => s.section === reportCardSectionFilter);
+  }, [classStudents, reportCardSectionFilter]);
+
   // Subjects for selected class
   const classSubjects = subjects.filter((s) => s.className === selectedClass);
   const currentSubject = subjects.find((s) => s.id === selectedSubjectId) || classSubjects[0];
@@ -560,7 +618,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
         startDate: newExamStart,
         endDate: newExamEnd,
         isPublished: false,
-        applicableClasses: ['Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'],
+        applicableClasses: activeClassNames,
       };
       StorageService.saveExam(exam);
       setExams(StorageService.getExams());
@@ -597,8 +655,9 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
     const d = new Date(currentExam?.startDate || '2026-06-15');
     setRoutineDay(daysOfWeek[d.getDay()] || 'Monday');
     setRoutineStartTime('10:00 AM');
-    setRoutineEndTime(selectedClass === 'Nursery' || selectedClass === 'KG' ? '11:30 AM' : '01:00 PM');
-    setRoutineRoom(selectedClass === 'Nursery' ? 'Nursery Hall' : selectedClass === 'KG' ? 'KG Hall' : 'Room 201');
+    const isEarly = isEarlyChildhoodClass(selectedClass);
+    setRoutineEndTime(isEarly ? '11:30 AM' : '01:00 PM');
+    setRoutineRoom(isEarly ? `${selectedClass} Hall` : 'Room 201');
     setShowRoutineModal(true);
   };
 
@@ -819,7 +878,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
     const clsSubjects = subjects.filter((s) => s.className === targetCls);
     if (clsSubjects.length === 0) return [];
 
-    const isSecondaryGroupClass = ['Class 9', 'Class 10'].includes(targetCls);
+    const isSecondaryGroupClass = classHasGroups(targetCls, academicClasses);
     const slots: { slotNumber: number; title: string; subjects: Subject[]; isParallel: boolean }[] = [];
 
     if (isSecondaryGroupClass && autoRoutineParallelGroup) {
@@ -880,7 +939,19 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   }, [autoRoutineTargetClass, selectedClass, autoRoutineParallelGroup, subjects]);
 
   const handleOpenTranscript = (student: Student) => {
+    setMarksheetBulkMode(false);
+    setMarksheetPrintNotice(null);
     setTranscriptStudent(student);
+    setShowTranscriptModal(true);
+  };
+
+  const handleOpenBulkMarksheets = () => {
+    const first = filteredReportCardStudents[0] || classStudents[0] || null;
+    if (!first) return;
+    setMarksheetBulkMode(true);
+    setMarksheetPrintNotice(null);
+    setTranscriptStudent(first);
+    setShowTranscriptSigEditor(false);
     setShowTranscriptModal(true);
   };
 
@@ -890,7 +961,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
 
   // Group-filtered routines for Routine Tab display
   const displayClassRoutines = currentClassRoutines.filter((item) => {
-    if (!['Class 9', 'Class 10'].includes(selectedClass)) return true;
+    if (!classHasGroups(selectedClass, academicClasses)) return true;
     if (routineGroupFilter === 'all') return true;
     if (routineGroupFilter === 'compulsory') return !item.group || item.group.toLowerCase() === 'all';
     return (
@@ -915,7 +986,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   // Routine filtered strictly for the specific student's group on Admit Card
   const admitCardRoutines = currentClassRoutines.filter((item) => {
     if (!admitCardStudent) return true;
-    if (!['Class 9', 'Class 10'].includes(admitCardStudent.className)) return true;
+    if (!classHasGroups(admitCardStudent.className, academicClasses)) return true;
     const sGroup = (admitCardStudent.group || 'Science').toLowerCase();
     // Compulsory subjects with no group or 'all' apply to all students
     if (!item.group || item.group.toLowerCase() === 'all') return true;
@@ -1087,7 +1158,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
             </select>
           </div>
 
-          {/* Class Selector - ALL 12 CLASSES */}
+          {/* Class Selector - Synced with Academic Structure */}
           <div className="flex items-center space-x-2">
             <label className="font-semibold text-slate-700">Class:</label>
             <select
@@ -1101,8 +1172,10 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
               }}
               className="px-2.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white font-semibold text-blue-800"
             >
-              {['Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'].map((c) => (
-                <option key={c} value={c}>{c}</option>
+              {activeClassInfos.map((cls) => (
+                <option key={cls.id} value={cls.name}>
+                  {formatClassOptionLabel(cls, language)}
+                </option>
               ))}
             </select>
           </div>
@@ -1123,7 +1196,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                   else if (sub.group === 'Commerce') groupLabel = ' [ব্যবসায় শিক্ষা / Commerce]';
                   else if (sub.group === 'Humanities' || sub.group === 'Arts') groupLabel = ' [মানবিক / Humanities]';
                   else if (sub.group === 'Vocational') groupLabel = ' [কারিগরি / Vocational]';
-                  else if (['Class 9', 'Class 10'].includes(selectedClass)) groupLabel = ' [বাধ্যতামূলক / Compulsory]';
+                  else if (classHasGroups(selectedClass, academicClasses)) groupLabel = ' [বাধ্যতামূলক / Compulsory]';
 
                   return (
                     <option key={sub.id} value={sub.id}>
@@ -1231,8 +1304,8 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
             </div>
           </div>
 
-          {/* Bangladesh Curriculum Info Banner for Class 9 and 10 */}
-          {['Class 9', 'Class 10'].includes(selectedClass) && (
+          {/* Bangladesh Curriculum Info Banner for Group-based Secondary Classes */}
+          {classHasGroups(selectedClass, academicClasses) && (
             <div className="bg-blue-50/90 border border-blue-200 rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs print:hidden shadow-xs">
               <div className="flex items-start space-x-2.5">
                 <span className="p-1.5 bg-blue-600 text-white rounded-lg shrink-0 mt-0.5">
@@ -1387,7 +1460,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                     {selectedClass} Routine Schedule ({displayClassRoutines.length} Subject Entries)
                   </h4>
                 </div>
-                {['Class 9', 'Class 10'].includes(selectedClass) && (
+                {classHasGroups(selectedClass, academicClasses) && (
                   <div className="flex items-center space-x-1.5 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-300">
                     <span className="font-bold text-amber-950 text-[11px]">বিভাগ / Group:</span>
                     <select
@@ -2008,14 +2081,14 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                         if (!firstStd) return null;
 
                         const firstRoutines = currentClassRoutines.filter((item) => {
-                          if (!['Class 9', 'Class 10'].includes(firstStd.className)) return true;
+                          if (!classHasGroups(firstStd.className, academicClasses)) return true;
                           const sGroup = (firstStd.group || 'Science').toLowerCase();
                           if (!item.group || item.group.toLowerCase() === 'all') return true;
                           return item.group.toLowerCase().includes(sGroup);
                         });
 
                         const secondRoutines = secondStd ? currentClassRoutines.filter((item) => {
-                          if (!['Class 9', 'Class 10'].includes(secondStd.className)) return true;
+                          if (!classHasGroups(secondStd.className, academicClasses)) return true;
                           const sGroup = (secondStd.group || 'Science').toLowerCase();
                           if (!item.group || item.group.toLowerCase() === 'all') return true;
                           return item.group.toLowerCase().includes(sGroup);
@@ -2042,7 +2115,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                     ) : (
                       classStudents.map((std, idx) => {
                         const stdRoutines = currentClassRoutines.filter((item) => {
-                          if (!['Class 9', 'Class 10'].includes(std.className)) return true;
+                          if (!classHasGroups(std.className, academicClasses)) return true;
                           const sGroup = (std.group || 'Science').toLowerCase();
                           if (!item.group || item.group.toLowerCase() === 'all') return true;
                           return item.group.toLowerCase().includes(sGroup);
@@ -2429,7 +2502,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
           })()}
 
           {(() => {
-            const isNineOrTen = ['Class 9', 'Class 10'].includes(selectedClass);
+            const isNineOrTen = classHasGroups(selectedClass, academicClasses);
             const subjectGroup = currentSubject?.group;
             const isSpecificGroup = Boolean(isNineOrTen && subjectGroup && subjectGroup !== 'General');
 
@@ -2610,14 +2683,75 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
 
       {/* TAB: Report Cards Directory */}
       {activeTab === 'report_cards' && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-          <div className="p-4 border-b border-slate-200 flex items-center justify-between text-xs">
-            <span className="font-bold text-slate-900">
-              {language === 'bn' ? `${selectedClass} - নম্বরপত্র সংগ্রহ` : `${selectedClass} - Student Marksheet Generator`}
-            </span>
-            <span className="text-slate-500">
-              NCTB Grading Scale Applied
-            </span>
+        <div
+          className={`bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden ${
+            showTranscriptModal ? 'print:hidden' : ''
+          }`}
+        >
+          <div className="p-4 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+            <div>
+              <span className="font-bold text-slate-900">
+                {language === 'bn' ? `${selectedClass} - নম্বরপত্র সংগ্রহ` : `${selectedClass} - Student Marksheet Generator`}
+              </span>
+              <span className="text-slate-500 ml-2">
+                ({filteredReportCardStudents.length} {language === 'bn' ? 'জন শিক্ষার্থী' : 'students'} • NCTB Grading Scale)
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Language Switcher: Bangla + Eng / Bangla / English */}
+              <div className="inline-flex rounded-lg border border-slate-200 p-0.5 bg-slate-100">
+                {(
+                  [
+                    { id: 'bilingual', label: 'বাংলা + Eng' },
+                    { id: 'bn', label: 'বাংলা' },
+                    { id: 'en', label: 'English' },
+                  ] as { id: MarksheetLanguageMode; label: string }[]
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setMarksheetLangMode(opt.id)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${
+                      marksheetLangMode === opt.id
+                        ? 'bg-blue-600 text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {activeRole !== 'student' && reportCardSectionOptions.length > 1 && (
+                <select
+                  value={reportCardSectionFilter}
+                  onChange={(e) => setReportCardSectionFilter(e.target.value)}
+                  className="px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white text-xs font-semibold text-slate-700"
+                >
+                  <option value="all">{language === 'bn' ? 'সকল শাখা (All)' : 'All Sections'}</option>
+                  {reportCardSectionOptions.map((sec) => (
+                    <option key={sec} value={sec}>
+                      {language === 'bn' ? `শাখা ${sec}` : `Section ${sec}`}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {activeRole !== 'student' && filteredReportCardStudents.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleOpenBulkMarksheets}
+                  className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs transition-colors"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>
+                    {language === 'bn'
+                      ? `পুরো শ্রেণির মার্কশিট একসাথে প্রিন্ট (${filteredReportCardStudents.length} জন)`
+                      : `Print All Class Marksheets (${filteredReportCardStudents.length})`}
+                  </span>
+                </button>
+              )}
+            </div>
           </div>
           {activeRole === 'student' && !currentExam?.isPublished ? (
             <div className="p-8 text-center space-y-2">
@@ -2635,8 +2769,8 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
             </div>
           ) : (
           <div className="divide-y divide-slate-100">
-            {classStudents.map((std) => {
-              const relevantSubs = getSubjectsForStudent(std, classSubjects);
+            {filteredReportCardStudents.map((std) => {
+              const relevantSubs = getSubjectsForStudent(std, classSubjects, academicClasses);
               const studentSubjectMarks = relevantSubs.map((sub) => getStudentMarkForSubject(std.id, sub.id));
               const validMarks = studentSubjectMarks.filter(Boolean) as MarksEntry[];
               const hasFail = validMarks.some((m) => m.grade === 'F');
@@ -2644,16 +2778,16 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
               const gpaResult = calculateTotalGPA(gpas, hasFail);
 
               return (
-                <div key={std.id} className="p-4 flex items-center justify-between hover:bg-slate-50/60 transition-colors">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-800 font-bold flex items-center justify-center text-xs">
+                <div key={std.id} className="p-4 flex items-center justify-between gap-3 hover:bg-slate-50/60 transition-colors">
+                  <div className="flex items-center space-x-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-800 font-bold flex items-center justify-center text-xs shrink-0">
                       {std.roll}
                     </div>
-                    <div>
-                      <h4 className="font-bold text-slate-900 text-xs">{std.nameEn} ({std.nameBn})</h4>
-                      <p className="text-[11px] text-slate-500">
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-slate-900 text-xs truncate">{std.nameEn} ({std.nameBn})</h4>
+                      <p className="text-[11px] text-slate-500 truncate">
                         ID: {std.studentId} • Section {std.section} • {std.shift} Shift
-                        {['Class 9', 'Class 10'].includes(std.className) && (
+                        {classHasGroups(std.className, academicClasses) && (
                           <span className="font-bold text-blue-700 ml-1.5">
                             • {std.group || 'Science'}
                           </span>
@@ -2661,7 +2795,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-4">
+                  <div className="flex items-center space-x-3 sm:space-x-4 shrink-0">
                     <div className="text-right">
                       <div className="text-xs font-bold text-slate-900">
                         GPA: <span className="text-blue-700">{gpaResult.totalGPA.toFixed(2)}</span>
@@ -2729,7 +2863,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                   let totalObtained = 0;
                   const gpas: number[] = [];
                   let hasFail = false;
-                  const isNineOrTen = ['Class 9', 'Class 10'].includes(std.className);
+                  const isNineOrTen = classHasGroups(std.className, academicClasses);
                   const sGroup = (std.group || 'Science').toLowerCase();
 
                   return (
@@ -2857,7 +2991,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
 
         // Calculate Single Exam GPA OR Multi-Exam Combined Final CGPA per student
         const meritCalculated = meritEligibleStudents.map((std) => {
-          const relevantSubs = getSubjectsForStudent(std, classSubjects);
+          const relevantSubs = getSubjectsForStudent(std, classSubjects, academicClasses);
 
           if (!isCombinedMode) {
             let totalObtained = 0;
@@ -2984,7 +3118,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
 
         return (
           <div className="space-y-6">
-            <div className={showMeritPrintModal ? 'print:hidden space-y-6' : 'space-y-6'}>
+            <div className={showMeritPrintModal || showTranscriptModal ? 'print:hidden space-y-6' : 'space-y-6'}>
             {/* Printable Official School Header for Merit List */}
             <div className="hidden print:block text-center pb-4 border-b-2 border-slate-900">
               <div className="flex items-center justify-center space-x-3 mb-1">
@@ -3278,11 +3412,10 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                     onChange={(e) => setSelectedClass(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white font-medium"
                   >
-                    {[
-                      'Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4',
-                      'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'
-                    ].map((c) => (
-                      <option key={c} value={c}>{c}</option>
+                    {activeClassInfos.map((cls) => (
+                      <option key={cls.id} value={cls.name}>
+                        {formatClassOptionLabel(cls, language)}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -3297,10 +3430,12 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                     onChange={(e) => setMeritSection(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white"
                   >
-                    <option value="all">{language === 'bn' ? 'সকল শাখা (A, B, C)' : 'All Sections'}</option>
-                    <option value="A">Section A</option>
-                    <option value="B">Section B</option>
-                    <option value="C">Section C</option>
+                    <option value="all">{language === 'bn' ? 'সকল শাখা (All Sections)' : 'All Sections'}</option>
+                    {getSectionsForClass(selectedClass, academicClasses).map((sec) => (
+                      <option key={sec} value={sec}>
+                        Section {sec}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -3662,10 +3797,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                             {/* Action */}
                             <td className="py-3 px-3 text-right print:hidden">
                               <button
-                                onClick={() => {
-                                  setTranscriptStudent(item.student);
-                                  setShowTranscriptModal(true);
-                                }}
+                                onClick={() => handleOpenTranscript(item.student)}
                                 className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded font-semibold text-[11px] transition-colors"
                               >
                                 {language === 'bn' ? 'মার্কশিট' : 'Transcript'}
@@ -3749,10 +3881,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                           </td>
                           <td className="py-2.5 px-4 text-right print:hidden">
                             <button
-                              onClick={() => {
-                                setTranscriptStudent(item.student);
-                                setShowTranscriptModal(true);
-                              }}
+                              onClick={() => handleOpenTranscript(item.student)}
                               className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded text-[11px]"
                             >
                               Details
@@ -4664,145 +4793,259 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
         );
       })()}
 
-      {/* Official Academic Transcript / Marksheet Modal */}
-      {showTranscriptModal && transcriptStudent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-3xl w-full p-4 md:p-5 my-4 max-h-[96vh] overflow-y-auto print:p-0 print:m-0 print:border-none print:shadow-none print:max-h-none print:max-w-none print:w-full">
-            <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 print:hidden">
-              <div className="flex items-center space-x-2">
-                <Award className="w-4 h-4 text-amber-500" />
-                <h3 className="font-bold text-slate-900 text-xs">
-                  {language === 'bn' ? 'অফিসিয়াল মার্কশিট ও গ্রেড ট্রান্সক্রিপ্ট' : 'Official Academic Transcript'}
-                </h3>
-                {transcriptStudent.group && (
-                  <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded-full text-[10px] font-bold">
-                    গ্রুপ: {transcriptStudent.group}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center space-x-2">
-                {canManage && (
-                  <button
-                    type="button"
-                    onClick={() => setShowTranscriptSigEditor((v) => !v)}
-                    className={`flex items-center space-x-1 px-2.5 py-1 text-xs font-semibold rounded-lg border transition-colors ${
-                      showTranscriptSigEditor
-                        ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
-                    }`}
-                  >
-                    <PenTool className="w-3.5 h-3.5" />
-                    <span>{language === 'bn' ? 'শ্রেণি শিক্ষক স্বাক্ষর' : 'Class Teacher Sign'}</span>
-                  </button>
-                )}
-                <button
-                  onClick={() => window.print()}
-                  className="flex items-center space-x-1 px-3 py-1 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 shadow-xs"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>{language === 'bn' ? 'প্রিন্ট' : 'Print'}</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setShowTranscriptSigEditor(false);
-                    setShowTranscriptModal(false);
-                  }}
-                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
+      {/* Official Academic Transcript / Marksheet Modal (Single + Whole-Class Bulk + Bilingual/English) */}
+      {showTranscriptModal && transcriptStudent && (() => {
+        const bulkStudentsPool =
+          activeRole === 'student'
+            ? [transcriptStudent]
+            : filteredReportCardStudents.length > 0 &&
+              filteredReportCardStudents.some((s) => s.className === transcriptStudent.className)
+            ? filteredReportCardStudents
+            : students
+                .filter((s) => s.className === transcriptStudent.className && s.status === 'active')
+                .sort(compareStudentsByRoll);
 
-            {/* Inline Quick Class Teacher Signature Setup (Screen Only) */}
-            {canManage && showTranscriptSigEditor && (
-              <div className="mb-3 p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl print:hidden text-xs space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-emerald-950">
-                    {language === 'bn'
-                      ? `${transcriptStudent.className} — শ্রেণি শিক্ষকের স্বাক্ষর সেট করুন`
-                      : `${transcriptStudent.className} — Set Class Teacher Signature`}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowTranscriptSigEditor(false)}
-                    className="text-slate-500 hover:text-slate-800 text-[11px] font-semibold"
-                  >
-                    {language === 'bn' ? 'বন্ধ করুন' : 'Close'}
-                  </button>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    type="text"
-                    value={transcriptClassTeacherNameDraft}
-                    onChange={(e) => setTranscriptClassTeacherNameDraft(e.target.value)}
-                    placeholder={language === 'bn' ? 'শ্রেণি শিক্ষকের নাম লিখুন' : 'Class teacher name'}
-                    className="flex-1 min-w-[180px] px-2.5 py-1.5 bg-white border border-emerald-200 rounded-lg text-xs"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const prevMap = school.classTeacherSignatures || {};
-                      updateSchoolProfile({
-                        ...school,
-                        classTeacherSignatures: {
-                          ...prevMap,
-                          [transcriptStudent.className]: {
-                            ...(prevMap[transcriptStudent.className] || {}),
-                            name: transcriptClassTeacherNameDraft.trim(),
-                          },
-                        },
-                      });
-                    }}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs"
-                  >
-                    {language === 'bn' ? 'নাম সেভ' : 'Save Name'}
-                  </button>
-                  <label className="flex items-center space-x-1 px-3 py-1.5 bg-white hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-lg text-xs font-semibold cursor-pointer">
-                    <PenTool className="w-3.5 h-3.5" />
-                    <span>{language === 'bn' ? 'স্বাক্ষর ছবি আপলোড' : 'Upload Signature'}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        e.target.value = '';
-                        if (!file) return;
-                        let dataUrl = '';
-                        try {
-                          dataUrl = await compressSignatureImage(file, {
-                            maxWidth: 420,
-                            maxHeight: 140,
-                            autoTransparentBg: true,
-                          });
-                        } catch {
-                          dataUrl = await new Promise<string>((resolve) => {
-                            const reader = new FileReader();
-                            reader.onload = () => resolve(String(reader.result || ''));
-                            reader.readAsDataURL(file);
-                          });
-                        }
-                        if (!dataUrl) return;
-                        const prevMap = school.classTeacherSignatures || {};
-                        updateSchoolProfile({
-                          ...school,
-                          classTeacherSignatures: {
-                            ...prevMap,
-                            [transcriptStudent.className]: {
-                              ...(prevMap[transcriptStudent.className] || {}),
-                              name:
-                                transcriptClassTeacherNameDraft.trim() ||
-                                prevMap[transcriptStudent.className]?.name ||
-                                '',
-                              signatureUrl: dataUrl,
-                            },
-                          },
-                        });
+        const targetClassStudentsAll = students
+          .filter((s) => s.className === transcriptStudent.className && s.status === 'active')
+          .sort(compareStudentsByRoll);
+
+        const targetClassSubjects = subjects.filter((s) => s.className === transcriptStudent.className);
+
+        const meritMap = computeClassExamMeritMap({
+          classStudents: targetClassStudentsAll.length > 0 ? targetClassStudentsAll : [transcriptStudent],
+          classSubjects: targetClassSubjects,
+          getSubjectsForStudent: (std, subs) => getSubjectsForStudent(std, subs, academicClasses),
+          getStudentMarkForSubject,
+        });
+
+        const studentsToRender = marksheetBulkMode && activeRole !== 'student' ? bulkStudentsPool : [transcriptStudent];
+
+        const handleDownloadMarksheetsHtml = () => {
+          const htmlDoc = buildMarksheetsPrintableHtml({
+            studentsToRender,
+            school,
+            defaultLogoUrl: DEFAULT_SCHOOL_LOGO,
+            exam: currentExam,
+            classSubjects: targetClassSubjects,
+            staffList,
+            langMode: marksheetLangMode,
+            getSubjectsForStudent: (std, subs) => getSubjectsForStudent(std, subs, academicClasses),
+            getStudentMarkForSubject,
+            meritMap,
+            title: marksheetBulkMode
+              ? `${transcriptStudent.className} - All Marksheets`
+              : `${transcriptStudent.nameEn} - Marksheet`,
+          });
+
+          const blob = new Blob([htmlDoc], { type: 'text/html;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = marksheetBulkMode
+            ? `Marksheets_${transcriptStudent.className.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.html`
+            : `Marksheet_${transcriptStudent.studentId || transcriptStudent.roll}.html`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          setMarksheetPrintNotice(
+            language === 'bn'
+              ? '✓ প্রিন্টেবল মার্কশিট ফাইল ডাউনলোড হয়েছে — ওপেন করে সরাসরি Print বা Save as PDF করতে পারবেন!'
+              : '✓ Printable marksheet file downloaded! Open it to Print or Save as PDF.'
+          );
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto print:static print:inset-auto print:block print:p-0 print:bg-white print:overflow-visible">
+            <style>{`
+              @media print {
+                @page { size: A4 portrait; margin: 8mm; }
+                body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; background: #fff !important; }
+                .marksheet-page-break { page-break-after: always !important; break-after: page !important; }
+                .marksheet-page-break:last-child { page-break-after: auto !important; break-after: auto !important; }
+              }
+            `}</style>
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-4xl w-full p-3.5 md:p-5 my-4 max-h-[96vh] overflow-y-auto print:p-0 print:m-0 print:border-none print:shadow-none print:max-h-none print:max-w-none print:w-full print:rounded-none print:overflow-visible">
+              {/* Modal Top Toolbar (Hidden on Print) */}
+              <div className="space-y-2.5 pb-3 mb-3 border-b border-slate-200 print:hidden">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Award className="w-4 h-4 text-amber-500 shrink-0" />
+                    <h3 className="font-bold text-slate-900 text-xs sm:text-sm">
+                      {marksheetBulkMode
+                        ? language === 'bn'
+                          ? `পুরো শ্রেণির মার্কশিট (${transcriptStudent.className} — মোট ${studentsToRender.length} জন)`
+                          : `Whole Class Marksheets (${transcriptStudent.className} — ${studentsToRender.length} Students)`
+                        : language === 'bn'
+                        ? 'অফিসিয়াল মার্কশিট ও গ্রেড ট্রান্সক্রিপ্ট'
+                        : 'Official Academic Transcript'}
+                    </h3>
+                    {!marksheetBulkMode && transcriptStudent.group && (
+                      <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded-full text-[10px] font-bold">
+                        {language === 'bn' ? 'গ্রুপ' : 'Group'}: {transcriptStudent.group}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {canManage && !marksheetBulkMode && (
+                      <button
+                        type="button"
+                        onClick={() => setShowTranscriptSigEditor((v) => !v)}
+                        className={`flex items-center space-x-1 px-2.5 py-1 text-xs font-semibold rounded-lg border transition-colors ${
+                          showTranscriptSigEditor
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                            : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                        }`}
+                      >
+                        <PenTool className="w-3.5 h-3.5" />
+                        <span>{language === 'bn' ? 'শ্রেণি শিক্ষক স্বাক্ষর' : 'Class Teacher Sign'}</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleDownloadMarksheetsHtml}
+                      className="flex items-center space-x-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-xs"
+                      title={
+                        language === 'bn'
+                          ? 'মোবাইল বা PDF প্রিন্টের জন্য ডাউনলোড করুন'
+                          : 'Download printable file for PDF / Mobile'
+                      }
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>{language === 'bn' ? 'PDF / HTML' : 'Download HTML/PDF'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="flex items-center space-x-1 px-3 py-1 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 shadow-xs"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>
+                        {marksheetBulkMode
+                          ? language === 'bn'
+                            ? `সব প্রিন্ট (${studentsToRender.length})`
+                            : `Print All (${studentsToRender.length})`
+                          : language === 'bn'
+                          ? 'প্রিন্ট'
+                          : 'Print'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowTranscriptSigEditor(false);
+                        setShowTranscriptModal(false);
+                        setMarksheetPrintNotice(null);
                       }}
+                      className="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Language Toggle + Single/Bulk Toggle Row */}
+                <div className="flex flex-wrap items-center justify-between gap-2 p-2 rounded-xl bg-slate-50 border border-slate-200 text-[11px]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold text-slate-600">
+                      {language === 'bn' ? 'মার্কশিটের ভাষা:' : 'Language:'}
+                    </span>
+                    <div className="inline-flex rounded-lg border border-slate-200 p-0.5 bg-white">
+                      {(
+                        [
+                          { id: 'bilingual', label: 'বাংলা + English' },
+                          { id: 'bn', label: 'শুধু বাংলা' },
+                          { id: 'en', label: 'English Only' },
+                        ] as { id: MarksheetLanguageMode; label: string }[]
+                      ).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setMarksheetLangMode(opt.id)}
+                          className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${
+                            marksheetLangMode === opt.id
+                              ? 'bg-blue-600 text-white shadow-2xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {activeRole !== 'student' && bulkStudentsPool.length > 1 && (
+                    <div className="inline-flex rounded-lg border border-slate-200 p-0.5 bg-white">
+                      <button
+                        type="button"
+                        onClick={() => setMarksheetBulkMode(false)}
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${
+                          !marksheetBulkMode
+                            ? 'bg-slate-900 text-white'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {language === 'bn' ? '১ জন শিক্ষার্থী' : 'Single Student'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowTranscriptSigEditor(false);
+                          setMarksheetBulkMode(true);
+                        }}
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors flex items-center gap-1 ${
+                          marksheetBulkMode
+                            ? 'bg-emerald-600 text-white'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        <Users className="w-3 h-3" />
+                        <span>
+                          {language === 'bn'
+                            ? `পুরো শ্রেণি একসাথে (${bulkStudentsPool.length} জন)`
+                            : `Whole Class (${bulkStudentsPool.length})`}
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {marksheetPrintNotice && (
+                  <div className="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold">
+                    {marksheetPrintNotice}
+                  </div>
+                )}
+              </div>
+
+              {/* Inline Quick Class Teacher Signature Setup (Screen Only, Single Mode) */}
+              {canManage && showTranscriptSigEditor && !marksheetBulkMode && (
+                <div className="mb-3 p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl print:hidden text-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-emerald-950">
+                      {language === 'bn'
+                        ? `${transcriptStudent.className} — শ্রেণি শিক্ষকের স্বাক্ষর সেট করুন`
+                        : `${transcriptStudent.className} — Set Class Teacher Signature`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowTranscriptSigEditor(false)}
+                      className="text-slate-500 hover:text-slate-800 text-[11px] font-semibold"
+                    >
+                      {language === 'bn' ? 'বন্ধ করুন' : 'Close'}
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={transcriptClassTeacherNameDraft}
+                      onChange={(e) => setTranscriptClassTeacherNameDraft(e.target.value)}
+                      placeholder={language === 'bn' ? 'শ্রেণি শিক্ষকের নাম লিখুন' : 'Class teacher name'}
+                      className="flex-1 min-w-[180px] px-2.5 py-1.5 bg-white border border-emerald-200 rounded-lg text-xs"
                     />
-                  </label>
-                  {school.classTeacherSignatures?.[transcriptStudent.className]?.signatureUrl && (
                     <button
                       type="button"
                       onClick={() => {
@@ -4813,388 +5056,133 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                             ...prevMap,
                             [transcriptStudent.className]: {
                               ...(prevMap[transcriptStudent.className] || {}),
-                              signatureUrl: '',
+                              name: transcriptClassTeacherNameDraft.trim(),
                             },
                           },
                         });
                       }}
-                      className="px-2.5 py-1.5 bg-white hover:bg-rose-50 border border-rose-200 text-rose-600 rounded-lg text-xs font-semibold"
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs"
                     >
-                      {language === 'bn' ? 'স্বাক্ষর মুছুন' : 'Remove'}
+                      {language === 'bn' ? 'নাম সেভ' : 'Save Name'}
                     </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Official Marksheet Document (NCTB Bangladesh Standard Format) */}
-            <div className="p-4 md:p-5 border-2 border-slate-800 rounded-xl bg-white text-[11px] text-slate-900 font-sans print:border-2 print:p-3">
-              {/* Institutional Header */}
-              <div className="text-center pb-2.5 border-b-2 border-slate-800">
-                <div className="flex items-center justify-center space-x-3 mb-1">
-                  <img
-                    src={school.logoUrl || DEFAULT_SCHOOL_LOGO}
-                    alt="School Logo"
-                    className="w-12 h-12 object-contain shrink-0"
-                  />
-                  <div className="text-left">
-                    <h1 className="text-lg font-black text-slate-900 tracking-wide leading-tight">
-                      {school.nameBn}
-                    </h1>
-                    <h2 className="text-xs font-bold text-slate-700 tracking-wider">
-                      {school.nameEn.toUpperCase()}
-                    </h2>
-                  </div>
-                </div>
-                <p className="text-[10px] text-slate-600">
-                  {school.addressBn} • EIIN: {school.eiin} • স্থাপিত: {school.establishedYear}
-                </p>
-                <div className="inline-block mt-1.5 px-3 py-0.5 bg-slate-900 text-white rounded text-[10px] font-black uppercase tracking-widest">
-                  ACADEMIC TRANSCRIPT • {currentExam?.nameEn || 'Term Examination'} 2026
-                </div>
-              </div>
-
-              {/* Student Bio & Photo & Grading Key Grid */}
-              <div className="flex flex-col sm:flex-row items-center sm:items-stretch gap-3 my-2.5 py-1.5 border-b border-slate-300">
-                {/* Official Student Passport Photo */}
-                <div className="shrink-0 flex flex-col items-center justify-center">
-                  <div className="w-20 h-24 sm:w-22 sm:h-26 bg-slate-100 border-2 border-slate-400 rounded-md overflow-hidden shadow-xs flex flex-col items-center justify-center relative bg-white">
-                    {transcriptStudent.photoUrl ? (
-                      <img
-                        src={transcriptStudent.photoUrl}
-                        alt={transcriptStudent.nameEn}
-                        className="w-full h-full object-cover"
+                    <label className="flex items-center space-x-1 px-3 py-1.5 bg-white hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-lg text-xs font-semibold cursor-pointer">
+                      <PenTool className="w-3.5 h-3.5" />
+                      <span>{language === 'bn' ? 'স্বাক্ষর ছবি আপলোড' : 'Upload Signature'}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          if (!file) return;
+                          let dataUrl = '';
+                          try {
+                            dataUrl = await compressSignatureImage(file, {
+                              maxWidth: 420,
+                              maxHeight: 140,
+                              autoTransparentBg: true,
+                            });
+                          } catch {
+                            dataUrl = await new Promise<string>((resolve) => {
+                              const reader = new FileReader();
+                              reader.onload = () => resolve(String(reader.result || ''));
+                              reader.readAsDataURL(file);
+                            });
+                          }
+                          if (!dataUrl) return;
+                          const prevMap = school.classTeacherSignatures || {};
+                          updateSchoolProfile({
+                            ...school,
+                            classTeacherSignatures: {
+                              ...prevMap,
+                              [transcriptStudent.className]: {
+                                ...(prevMap[transcriptStudent.className] || {}),
+                                name:
+                                  transcriptClassTeacherNameDraft.trim() ||
+                                  prevMap[transcriptStudent.className]?.name ||
+                                  '',
+                                signatureUrl: dataUrl,
+                              },
+                            },
+                          });
+                        }}
                       />
-                    ) : (
-                      <div className="w-full h-full flex flex-col items-center justify-center bg-slate-50 text-slate-400 p-1 text-center">
-                        <User className="w-8 h-8 text-slate-400 mb-0.5" />
-                        <span className="text-[7.5px] font-bold text-slate-500 uppercase tracking-tighter">PHOTO</span>
-                      </div>
+                    </label>
+                    {school.classTeacherSignatures?.[transcriptStudent.className]?.signatureUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const prevMap = school.classTeacherSignatures || {};
+                          updateSchoolProfile({
+                            ...school,
+                            classTeacherSignatures: {
+                              ...prevMap,
+                              [transcriptStudent.className]: {
+                                ...(prevMap[transcriptStudent.className] || {}),
+                                signatureUrl: '',
+                              },
+                            },
+                          });
+                        }}
+                        className="px-2.5 py-1.5 bg-white hover:bg-rose-50 border border-rose-200 text-rose-600 rounded-lg text-xs font-semibold"
+                      >
+                        {language === 'bn' ? 'স্বাক্ষর মুছুন' : 'Remove'}
+                      </button>
                     )}
                   </div>
-                  <span className="text-[8px] text-slate-500 font-bold mt-0.5 tracking-tight">শিক্ষার্থীর ছবি</span>
                 </div>
+              )}
 
-                {/* Student Bio Details */}
-                <div className="flex-1 grid grid-cols-2 gap-x-2.5 gap-y-1 text-[11px] leading-tight">
-                  <div>
-                    <span className="text-slate-500">শিক্ষার্থীর নাম: </span>
-                    <strong className="text-slate-900">{transcriptStudent.nameBn || transcriptStudent.nameEn}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">Student Name: </span>
-                    <strong className="text-slate-900">{transcriptStudent.nameEn}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">আইডি (ID): </span>
-                    <strong className="text-blue-700 font-mono font-bold">{transcriptStudent.studentId}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">রোল নং (Roll): </span>
-                    <strong className="text-slate-900">{transcriptStudent.roll}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">শ্রেণি ও শাখা: </span>
-                    <strong>{transcriptStudent.className} ({transcriptStudent.section})</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">বিভাগ/গ্রুপ: </span>
-                    <strong className={transcriptStudent.group ? 'text-indigo-800 font-bold' : 'text-slate-600'}>
-                      {transcriptStudent.group || 'সাধারণ (General)'}
-                    </strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">পিতা: </span>
-                    <span>{transcriptStudent.fatherNameBn || transcriptStudent.fatherNameEn || '—'}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">মাতা: </span>
-                    <span>{transcriptStudent.motherNameBn || transcriptStudent.motherNameEn || '—'}</span>
-                  </div>
-                </div>
-
-                {/* Compact NCTB Grade Reference */}
-                <div className="w-full sm:w-44 shrink-0 border border-slate-300 rounded p-1 text-[9px] bg-slate-50 flex flex-col justify-between">
-                  <div className="font-bold text-center border-b border-slate-200 pb-0.5 text-slate-800">
-                    NCTB গ্রেডিং স্কেল
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-1 text-center py-0.5 leading-tight">
-                    <div>80-100% : <strong>A+ (5.0)</strong></div>
-                    <div>50-59% : <strong>B (3.0)</strong></div>
-                    <div>70-79% : <strong>A (4.0)</strong></div>
-                    <div>40-49% : <strong>C (2.0)</strong></div>
-                    <div>60-69% : <strong>A- (3.5)</strong></div>
-                    <div>33-39% : <strong>D (1.0)</strong></div>
-                    <div className="col-span-2 text-rose-700 font-bold">00-32% : F (0.0) ফেল</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Subject Marks Breakdown Table (Only evaluates subjects with entered marks so partial entry matches PASSED/GPA) */}
-              {(() => {
-                const studentSubjects = getSubjectsForStudent(transcriptStudent, classSubjects);
-                const enteredSubjectEntries = studentSubjects
-                  .map((sub) => ({ sub, mark: getStudentMarkForSubject(transcriptStudent.id, sub.id) }))
-                  .filter((item): item is { sub: Subject; mark: MarksEntry } => Boolean(item.mark));
-
-                let grandTotal = 0;
-                let totalFullMarks = 0;
-                const gpas: number[] = [];
-                let hasFail = false;
-
-                const rows = enteredSubjectEntries.length > 0
-                  ? enteredSubjectEntries.map(({ sub, mark: m }) => {
-                      const breakdown = getMarksheetRowBreakdown(m, sub);
-                      grandTotal += breakdown.total;
-                      totalFullMarks += breakdown.fullMarks;
-                      gpas.push(m.gpa);
-                      if (m.grade === 'F') hasFail = true;
-
-                      return (
-                        <tr key={sub.id} className="border-b border-slate-300 hover:bg-slate-50/50">
-                          <td className="py-1 px-2 border-r border-slate-300 font-medium">
-                            <span className="font-mono text-slate-500 mr-1">{sub.code}</span>
-                            {sub.nameBn || sub.nameEn}
-                            {sub.group && (
-                              <span className="ml-1.5 px-1 py-0.2 bg-slate-100 text-slate-600 rounded text-[9px]">
-                                {sub.group}
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-1 px-1.5 border-r border-slate-300 text-center text-slate-700">{breakdown.fullMarks}</td>
-                          <td className="py-1 px-1.5 border-r border-slate-300 text-center">
-                            {breakdown.hasWritten ? breakdown.written : '—'}
-                          </td>
-                          <td className="py-1 px-1.5 border-r border-slate-300 text-center">
-                            {breakdown.hasMcq ? breakdown.mcq : '—'}
-                          </td>
-                          <td className="py-1 px-1.5 border-r border-slate-300 text-center">
-                            {breakdown.hasPractical ? breakdown.practical : '—'}
-                          </td>
-                          <td className="py-1 px-1.5 border-r border-slate-300 text-center font-bold text-slate-900">{breakdown.total}</td>
-                          <td
-                            className={`py-1 px-1.5 border-r border-slate-300 text-center font-black ${
-                              m.grade === 'F' ? 'text-rose-600' : 'text-emerald-700'
-                            }`}
-                          >
-                            {m.grade}
-                          </td>
-                          <td className={`py-1 px-1.5 text-center font-bold ${m.grade === 'F' ? 'text-rose-600' : 'text-slate-800'}`}>
-                            {m.gpa.toFixed(2)}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  : studentSubjects.map((sub) => (
-                      <tr key={sub.id} className="border-b border-slate-300 text-slate-400">
-                        <td className="py-1 px-2 border-r border-slate-300 font-medium">
-                          <span className="font-mono mr-1">{sub.code}</span>
-                          {sub.nameBn || sub.nameEn}
-                        </td>
-                        <td className="py-1 px-1.5 border-r border-slate-300 text-center">{sub.fullMarks}</td>
-                        <td className="py-1 px-1.5 border-r border-slate-300 text-center">—</td>
-                        <td className="py-1 px-1.5 border-r border-slate-300 text-center">—</td>
-                        <td className="py-1 px-1.5 border-r border-slate-300 text-center">—</td>
-                        <td className="py-1 px-1.5 border-r border-slate-300 text-center">—</td>
-                        <td className="py-1 px-1.5 border-r border-slate-300 text-center">—</td>
-                        <td className="py-1 px-1.5 text-center">—</td>
-                      </tr>
-                    ));
-
-                const totalResult = calculateTotalGPA(gpas, hasFail);
-                const percentage = totalFullMarks > 0 ? ((grandTotal / totalFullMarks) * 100).toFixed(1) : '0';
-                const hasEnteredMarks = enteredSubjectEntries.length > 0;
-                const isPassed = hasEnteredMarks && !hasFail && totalResult.status === 'PASSED' && totalResult.overallGrade !== 'F';
-
-                const transcriptClassStudents = students.filter(
-                  (s) => s.className === transcriptStudent.className && s.status === 'active'
-                );
-                const transcriptClassSubjects = subjects.filter(
-                  (s) => s.className === transcriptStudent.className
-                );
-                const singleExamMerit = computeSingleExamStudentMeritRank({
-                  targetStudent: transcriptStudent,
-                  classStudents: transcriptClassStudents,
-                  classSubjects: transcriptClassSubjects,
-                  getSubjectsForStudent,
-                  getStudentMarkForSubject,
-                });
-
-                return (
-                  <>
-                    <div className="my-2 overflow-x-auto">
-                      <table className="w-full min-w-[560px] text-left border-collapse border border-slate-400 text-[11px]">
-                        <thead>
-                          <tr className="bg-slate-100 border-b border-slate-400 font-bold text-slate-800 text-[10px] uppercase">
-                            <th className="py-1 px-2 border-r border-slate-400">বিষয় (Subject)</th>
-                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-13 whitespace-nowrap">পূর্ণমান</th>
-                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-14 whitespace-nowrap">সৃজনশীল</th>
-                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-16 whitespace-nowrap">
-                              নৈর্ব্যক্তিক
-                              <span className="block text-[8px] font-semibold text-slate-500">(MCQ)</span>
-                            </th>
-                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-16 whitespace-nowrap">
-                              ব্যবহারিক
-                              <span className="block text-[8px] font-semibold text-slate-500">(Practical)</span>
-                            </th>
-                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-16 whitespace-nowrap">মোট প্রাপ্ত</th>
-                            <th className="py-1 px-1.5 border-r border-slate-400 text-center w-14">লেটার গ্রেড</th>
-                            <th className="py-1 px-1.5 text-center w-14">গ্রেড পয়েন্ট</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-300">
-                          {rows}
-                          <tr className="bg-slate-100 font-bold border-t-2 border-slate-800 text-[11px]">
-                            <td colSpan={5} className="py-1.5 px-2 border-r border-slate-400 text-right">
-                              সর্বমোট নম্বর ({totalFullMarks}) ও সার্বিক ফলাফল:
-                            </td>
-                            <td className="py-1.5 px-1.5 border-r border-slate-400 text-center text-xs font-black text-slate-900 tabular-nums">
-                              {hasEnteredMarks ? (
-                                <>
-                                  {grandTotal} <span className="text-[9px] text-slate-500 block">({percentage}%)</span>
-                                </>
-                              ) : (
-                                '—'
-                              )}
-                            </td>
-                            <td
-                              className={`py-1.5 px-1.5 border-r border-slate-400 text-center text-xs font-black ${
-                                !hasEnteredMarks ? 'text-slate-500' : isPassed ? 'text-blue-700' : 'text-rose-600'
-                              }`}
-                            >
-                              {hasEnteredMarks ? totalResult.overallGrade : '—'}
-                            </td>
-                            <td
-                              className={`py-1.5 px-1.5 text-center text-xs font-black tabular-nums ${
-                                !hasEnteredMarks ? 'text-slate-500' : isPassed ? 'text-blue-700' : 'text-rose-600'
-                              }`}
-                            >
-                              {hasEnteredMarks ? totalResult.totalGPA.toFixed(2) : '—'}
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* Overall Summary & Single-Exam Student Merit Position */}
-                    <div className="my-2 p-2 bg-slate-50 rounded-lg border border-slate-300 space-y-1.5 text-[11px]">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <span className="text-slate-600">ফলাফল মূল্যায়ন: </span>
-                          {!hasEnteredMarks ? (
-                            <strong className="text-amber-600 font-bold">নম্বর এন্ট্রি হয়নি (Pending)</strong>
-                          ) : isPassed ? (
-                            <strong className="text-emerald-700 font-bold">উত্তীর্ণ (PASSED)</strong>
-                          ) : (
-                            <strong className="text-rose-600 font-bold">অনুত্তীর্ণ (FAILED)</strong>
-                          )}
-                        </div>
-                        <div>
-                          <span className="text-slate-600">উপস্থিতি: </span>
-                          <strong className="tabular-nums">{(transcriptStudent as any).attendanceSummary?.percentage || '94'}%</strong>
-                        </div>
-                        <div>
-                          <span className="text-slate-600">আচরণ ও শৃঙ্খলা: </span>
-                          {!hasEnteredMarks ? (
-                            <strong className="text-slate-600">মূল্যায়ন চলমান</strong>
-                          ) : isPassed ? (
-                            <strong className="text-blue-700">চমৎকার (Excellent)</strong>
-                          ) : (
-                            <strong className="text-rose-600">মনোযোগ ও পুনঃপরীক্ষা প্রয়োজন</strong>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Single-Exam Personal Merit Position Strip */}
-                      <div className="pt-1.5 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                        <div className="flex items-center gap-1.5">
-                          <Trophy className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                          <span className="text-slate-600 font-semibold">
-                            একক পরীক্ষার মেধা স্থান ({currentExam?.nameBn || currentExam?.nameEn}):
-                          </span>
-                          {singleExamMerit.status === 'passed' && singleExamMerit.classRank !== null ? (
-                            <strong className="text-slate-900 font-black tabular-nums">
-                              {language === 'bn'
-                                ? `${formatBnOrdinal(singleExamMerit.classRank)} স্থান (শ্রেণিতে)`
-                                : `${formatEnOrdinal(singleExamMerit.classRank)} in Class`}
-                            </strong>
-                          ) : singleExamMerit.status === 'failed' ? (
-                            <strong className="text-rose-600 font-bold">
-                              {language === 'bn'
-                                ? `অপ্রযোজ্য / অনুত্তীর্ণ (${toBnNumber(singleExamMerit.failedCount)} বিষয়ে অকৃতকার্য)`
-                                : `Unranked (${singleExamMerit.failedCount} failed)`}
-                            </strong>
-                          ) : (
-                            <strong className="text-amber-700 font-semibold">
-                              {language === 'bn' ? 'অপেক্ষমাণ (ফলাফল এন্ট্রি চলছে)' : 'Pending marks entry'}
-                            </strong>
-                          )}
-                        </div>
-
-                        <div className="text-[10.5px] text-slate-600 tabular-nums flex flex-wrap items-center gap-2">
-                          {singleExamMerit.status === 'passed' && singleExamMerit.sectionRank !== null && (
-                            <span>
-                              {language === 'bn' ? 'শাখায় অবস্থান' : 'Section Rank'}:{' '}
-                              <strong className="text-slate-900">
-                                {language === 'bn'
-                                  ? `${formatBnOrdinal(singleExamMerit.sectionRank)} (Sec ${transcriptStudent.section})`
-                                  : `${formatEnOrdinal(singleExamMerit.sectionRank)} (Sec ${transcriptStudent.section})`}
-                              </strong>
-                            </span>
-                          )}
-                          <span aria-hidden="true" className="text-slate-400">·</span>
+              {/* Rendered Official Marksheet(s) — Single or Whole-Class (1 per A4 Page) */}
+              <div className={marksheetBulkMode ? 'space-y-6 print:space-y-0' : ''}>
+                {studentsToRender.map((std, idx) => {
+                  const meritRes = meritMap.get(std.id) || {
+                    status: 'pending' as const,
+                    classRank: null,
+                    classPassedCount: 0,
+                    classTotalStudents: studentsToRender.length,
+                    sectionRank: null,
+                    sectionPassedCount: 0,
+                    sectionTotalStudents: 0,
+                    totalObtained: 0,
+                    totalFullMarks: 0,
+                    gpa: 0,
+                    overallGrade: '—',
+                    failedCount: 0,
+                  };
+                  return (
+                    <React.Fragment key={std.id}>
+                      {marksheetBulkMode && (
+                        <div className="flex items-center justify-between px-3 py-1 bg-slate-100 rounded-lg text-[10px] font-bold text-slate-600 print:hidden">
                           <span>
                             {language === 'bn'
-                              ? `উত্তীর্ণ: ${toBnNumber(singleExamMerit.classPassedCount)} জন / মোট পরীক্ষার্থী: ${toBnNumber(singleExamMerit.classTotalStudents)} জন`
-                              : `Passed: ${singleExamMerit.classPassedCount} / Examinees: ${singleExamMerit.classTotalStudents}`}
+                              ? `পাতা ${idx + 1} / ${studentsToRender.length} • রোল ${std.roll} — ${std.nameBn || std.nameEn}`
+                              : `Page ${idx + 1} of ${studentsToRender.length} • Roll ${std.roll} — ${std.nameEn}`}
                           </span>
+                          <span className="font-mono text-slate-500">{std.studentId}</span>
                         </div>
-                      </div>
-                    </div>
-                  </>
-                );
-              })()}
-
-              {/* Remarks and Signatures */}
-              <div className="mt-6 pt-4 border-t border-slate-300 grid grid-cols-3 items-start gap-2 text-center text-[10px] text-slate-700">
-                <div>
-                  <ClassTeacherSignatureDisplay
-                    school={school}
-                    className={transcriptStudent.className}
-                    section={transcriptStudent.section}
-                    staffList={staffList}
-                    fallbackText=""
-                    heightClass="h-9"
-                    imgClassName="max-h-full max-w-[140px] object-contain mx-auto"
-                    textClassName="font-serif italic font-bold text-xs text-slate-900"
-                  />
-                  <div className="border-t border-slate-500 pt-1 font-semibold mx-2 sm:mx-4">
-                    শ্রেণি শিক্ষকের স্বাক্ষর
-                  </div>
-                </div>
-                <div>
-                  <div className="h-9 mb-0.5" />
-                  <div className="border-t border-slate-500 pt-1 font-semibold mx-2 sm:mx-4">
-                    পরীক্ষা নিয়ন্ত্রকের স্বাক্ষর
-                  </div>
-                </div>
-                <div>
-                  <PrincipalSignatureDisplay
-                    school={school}
-                    fallbackText=""
-                    heightClass="h-9"
-                    imgClassName="max-h-full max-w-[140px] object-contain mx-auto"
-                    textClassName="font-serif italic font-bold text-xs text-slate-900"
-                  />
-                  <div className="border-t border-slate-500 pt-1 font-bold text-slate-900 mx-2 sm:mx-4">
-                    প্রধান শিক্ষকের স্বাক্ষর ও সিল
-                  </div>
-                </div>
+                      )}
+                      <OfficialMarksheetSheet
+                        student={std}
+                        school={school}
+                        exam={currentExam}
+                        classSubjects={targetClassSubjects}
+                        staffList={staffList}
+                        langMode={marksheetLangMode}
+                        getSubjectsForStudent={(s, subs) => getSubjectsForStudent(s, subs, academicClasses)}
+                        getStudentMarkForSubject={getStudentMarkForSubject}
+                        meritResult={meritRes}
+                        isBulkPage={marksheetBulkMode && idx < studentsToRender.length - 1}
+                      />
+                    </React.Fragment>
+                  );
+                })}
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Add / Edit Exam Modal */}
       {showAddExamModal && (
@@ -5569,19 +5557,17 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                     onChange={(e) => setAutoRoutineTargetClass(e.target.value as any)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl bg-white font-semibold text-blue-900"
                   >
-                    <option value="Class 9">Class 9 (৯ম শ্রেণি - ৪ গ্রুপ সমন্বিত)</option>
-                    <option value="Class 10">Class 10 (১০ম শ্রেণি - ৪ গ্রুপ সমন্বিত)</option>
-                    <option value="Class 8">Class 8 (৮ম শ্রেণি)</option>
-                    <option value="Class 7">Class 7 (৭ম শ্রেণি)</option>
-                    <option value="Class 6">Class 6 (৬ষ্ঠ শ্রেণি)</option>
-                    <option value="Class 5">Class 5 (৫ম শ্রেণি)</option>
-                    <option value="Class 4">Class 4 (৪র্থ শ্রেণি)</option>
-                    <option value="Class 3">Class 3 (৩য় শ্রেণি)</option>
-                    <option value="Class 2">Class 2 (২য় শ্রেণি)</option>
-                    <option value="Class 1">Class 1 (১ম শ্রেণি)</option>
-                    <option value="KG">KG (কেজি)</option>
-                    <option value="Nursery">Nursery (নার্সারি)</option>
-                    <option value="all">সকল শ্রেণি (Play থেকে Class 10 - All Classes)</option>
+                    {[...activeClassInfos].reverse().map((cls) => (
+                      <option key={cls.id} value={cls.name}>
+                        {formatClassOptionLabel(cls, language)}
+                        {cls.hasGroups ? (language === 'bn' ? ' - গ্রুপ সমন্বিত' : ' - Multi-Group') : ''}
+                      </option>
+                    ))}
+                    <option value="all">
+                      {language === 'bn'
+                        ? `সকল শ্রেণি (${activeClassInfos[0]?.name || 'Start'} থেকে ${activeClassInfos[activeClassInfos.length - 1]?.name || 'End'} - All Classes)`
+                        : 'All Active Classes'}
+                    </option>
                   </select>
                 </div>
               </div>
@@ -5864,7 +5850,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
 
               {/* Group Filter inside Modal & Print Buttons */}
               <div className="flex items-center space-x-2">
-                {['Class 9', 'Class 10'].includes(selectedClass) && (
+                {classHasGroups(selectedClass, academicClasses) && (
                   <select
                     value={routineGroupFilter}
                     onChange={(e) => setRoutineGroupFilter(e.target.value)}
@@ -5926,7 +5912,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
               {/* Meta Info Bar */}
               <div className="flex flex-wrap items-center justify-between py-2 px-3 bg-slate-100 border-b border-slate-300 text-xs font-bold my-3">
                 <span>শ্রেণি: <strong className="text-blue-900">{selectedClass}</strong></span>
-                {['Class 9', 'Class 10'].includes(selectedClass) && (
+                {classHasGroups(selectedClass, academicClasses) && (
                   <span>বিভাগ: <strong className="text-blue-900">{routineGroupFilter === 'all' ? 'সকল বিভাগ (সম্মিলিত)' : routineGroupFilter}</strong></span>
                 )}
                 <span>সেশন: <strong>২০২৬ (Session 2026)</strong></span>

@@ -59,7 +59,11 @@ export const ClassFeeSetupTab: React.FC<ClassFeeSetupTabProps> = ({ onConfigsUpd
       );
     };
     window.addEventListener('school_cloud_data_synced', handleSync);
-    return () => window.removeEventListener('school_cloud_data_synced', handleSync);
+    window.addEventListener('school_classes_updated', handleSync);
+    return () => {
+      window.removeEventListener('school_cloud_data_synced', handleSync);
+      window.removeEventListener('school_classes_updated', handleSync);
+    };
   }, []);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [activePreset, setActivePreset] = useState<string>('custom');

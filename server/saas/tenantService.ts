@@ -15,6 +15,13 @@ import {
 } from './types';
 import { addDaysUtc, evaluateSubscriptionState } from './subscriptionService';
 import { decryptVaultPassword, encryptVaultPassword } from './credentialVault';
+import {
+  buildSyntheticAuthEmail,
+  isSyntheticAuthEmail,
+  normalizeLoginUsernameKey,
+  normalizePhoneNumber,
+  validateLoginIdentifier,
+} from '../../src/utils/loginIdentifier';
 
 export interface TenantServiceDeps {
   db: DatabaseProviderInterface;
@@ -95,7 +102,7 @@ export function createTenantService(deps: TenantServiceDeps) {
       const email = (input.email || '').trim().toLowerCase();
       const principalName = (input.principalName || '').trim();
       const adminName = (input.adminName || '').trim();
-      const adminEmail = (input.adminEmail || '').trim().toLowerCase();
+      const rawAdminIdentifier = (input.adminEmail || input.adminUsername || '').trim();
       const adminPassword = input.adminPassword || '';
 
       if (
@@ -106,7 +113,7 @@ export function createTenantService(deps: TenantServiceDeps) {
         !email ||
         !principalName ||
         !adminName ||
-        !adminEmail ||
+        !rawAdminIdentifier ||
         !adminPassword
       ) {
         throw new SaaSServiceError(
@@ -115,6 +122,34 @@ export function createTenantService(deps: TenantServiceDeps) {
           'VALIDATION_ERROR'
         );
       }
+
+      const parsedAdminId = validateLoginIdentifier(rawAdminIdentifier);
+      if (!parsedAdminId.valid) {
+        throw new SaaSServiceError(
+          parsedAdminId.error || 'Please provide a valid admin email, mobile number, or username.',
+          400,
+          'INVALID_EMAIL'
+        );
+      }
+
+      let explicitAdminUsername = input.adminUsername !== undefined ? input.adminUsername.trim() : undefined;
+      if (parsedAdminId.kind !== 'email' && !explicitAdminUsername) {
+        explicitAdminUsername = parsedAdminId.displayValue;
+      }
+      if (explicitAdminUsername && parsedAdminId.kind === 'email') {
+        const parsedU = validateLoginIdentifier(explicitAdminUsername);
+        if (!parsedU.valid || parsedU.kind === 'email') {
+          throw new SaaSServiceError(
+            parsedU.error || 'Please provide a valid admin username.',
+            400,
+            'INVALID_USERNAME'
+          );
+        }
+        explicitAdminUsername = parsedU.displayValue;
+      }
+      const adminUsernameNormalized = explicitAdminUsername
+        ? normalizeLoginUsernameKey(explicitAdminUsername)
+        : undefined;
 
       if (adminPassword.length < 6) {
         throw new SaaSServiceError(
@@ -134,15 +169,29 @@ export function createTenantService(deps: TenantServiceDeps) {
         );
       }
 
-      // 2. Prevent duplicate admin email
-      const existingSaasUser = await deps.db.getSaaSUserByEmail(adminEmail);
-      const existingAuthUser = await deps.auth.getUserByEmail(adminEmail);
-      if (existingSaasUser || existingAuthUser) {
-        throw new SaaSServiceError(
-          `Administrator email "${adminEmail}" is already registered.`,
-          409,
-          'DUPLICATE_ADMIN_EMAIL'
-        );
+      // 2. Prevent duplicate admin username or real email
+      if (adminUsernameNormalized) {
+        const existingByUsername = await deps.db.getSaaSUserByUsernameNormalized(adminUsernameNormalized);
+        if (existingByUsername) {
+          throw new SaaSServiceError(
+            `Administrator username "${explicitAdminUsername}" is already registered.`,
+            409,
+            'DUPLICATE_USERNAME'
+          );
+        }
+      }
+
+      if (parsedAdminId.kind === 'email') {
+        const checkEmail = parsedAdminId.displayValue;
+        const existingSaasUser = await deps.db.getSaaSUserByEmail(checkEmail);
+        const existingAuthUser = await deps.auth.getUserByEmail(checkEmail);
+        if (existingSaasUser || existingAuthUser) {
+          throw new SaaSServiceError(
+            `Administrator email "${checkEmail}" is already registered.`,
+            409,
+            'DUPLICATE_ADMIN_EMAIL'
+          );
+        }
       }
 
       // 3. Validate plan
@@ -175,6 +224,24 @@ export function createTenantService(deps: TenantServiceDeps) {
       // 4. Generate unique schoolId (SCH001, SCH002...)
       const schoolId = await deps.db.getNextSchoolId();
 
+      // Resolve final Firebase Auth email (real email or unique synthetic internal email)
+      let adminEmail = parsedAdminId.kind === 'email'
+        ? parsedAdminId.displayValue
+        : buildSyntheticAuthEmail(explicitAdminUsername || rawAdminIdentifier, schoolId);
+
+      if (parsedAdminId.kind !== 'email') {
+        for (let attempt = 1; attempt <= 5; attempt += 1) {
+          const authCollision = await deps.auth.getUserByEmail(adminEmail);
+          const dbCollision = await deps.db.getSaaSUserByEmail(adminEmail);
+          if (!authCollision && !dbCollision) break;
+          adminEmail = buildSyntheticAuthEmail(
+            explicitAdminUsername || rawAdminIdentifier,
+            schoolId,
+            String(attempt + 1)
+          );
+        }
+      }
+
       // 5. Create School Admin Firebase Auth account and assign custom claims
       const createdAuthUser = await deps.auth.createUser({
         email: adminEmail,
@@ -201,6 +268,7 @@ export function createTenantService(deps: TenantServiceDeps) {
         principalName,
         adminName,
         adminEmail,
+        ...(explicitAdminUsername ? { adminUsername: explicitAdminUsername } : {}),
         adminUid: createdAuthUser.uid,
         status: activateNow ? 'active' : 'pending',
         subscription: {
@@ -220,10 +288,17 @@ export function createTenantService(deps: TenantServiceDeps) {
 
       await deps.db.createSchool(schoolRecord);
 
+      const adminPhoneNorm = normalizePhoneNumber(
+        parsedAdminId.normalizedPhone || contactNumber
+      );
+
       // 6. Store school admin profile record (without plaintext password)
       const adminUserRecord: SaaSUserRecord = {
         uid: createdAuthUser.uid,
         email: adminEmail,
+        ...(explicitAdminUsername ? { username: explicitAdminUsername } : {}),
+        ...(adminUsernameNormalized ? { usernameNormalized: adminUsernameNormalized } : {}),
+        ...(adminPhoneNorm.length >= 6 ? { phoneNormalized: adminPhoneNorm } : {}),
         displayName: adminName,
         schoolId,
         schoolRole: 'super_admin',
@@ -506,18 +581,48 @@ export function createTenantService(deps: TenantServiceDeps) {
       input: CreateTenantUserInput,
       actor: AuthPrincipal
     ): Promise<SaaSUserRecord> {
-      const email = (input.email || '').trim().toLowerCase();
+      const rawIdentifierInput = (input.email || input.username || '').trim();
+      const rawExplicitUsername = input.username !== undefined ? input.username.trim() : '';
       const displayName = (input.displayName || '').trim();
       const password = input.password || '';
       const role = input.schoolRole;
 
-      if (!email || !displayName || !password) {
+      if (!rawIdentifierInput || !displayName || !password) {
         throw new SaaSServiceError(
-          'Email, displayName, and password are required.',
+          'Login ID (email, mobile, or username), displayName, and password are required.',
           400,
           'VALIDATION_ERROR'
         );
       }
+
+      const parsedPrimary = validateLoginIdentifier(rawIdentifierInput);
+      if (!parsedPrimary.valid) {
+        throw new SaaSServiceError(
+          parsedPrimary.error || 'Please provide a valid email, mobile number, or username.',
+          400,
+          'INVALID_EMAIL'
+        );
+      }
+
+      let finalUsername: string | undefined;
+      if (rawExplicitUsername) {
+        const parsedU = validateLoginIdentifier(rawExplicitUsername);
+        if (!parsedU.valid) {
+          throw new SaaSServiceError(
+            parsedU.error || 'Please provide a valid username or mobile number.',
+            400,
+            'INVALID_USERNAME'
+          );
+        }
+        finalUsername = parsedU.kind === 'email' ? undefined : parsedU.displayValue;
+      } else if (parsedPrimary.kind !== 'email') {
+        finalUsername = parsedPrimary.displayValue;
+      }
+
+      const usernameNormalized = finalUsername ? normalizeLoginUsernameKey(finalUsername) : undefined;
+      const phoneNormalized = normalizePhoneNumber(
+        input.phone || parsedPrimary.normalizedPhone || ''
+      );
 
       if (password.length < 6) {
         throw new SaaSServiceError(
@@ -574,6 +679,35 @@ export function createTenantService(deps: TenantServiceDeps) {
         }
       }
 
+      if (usernameNormalized) {
+        const existingUsernameUser = await deps.db.getSaaSUserByUsernameNormalized(usernameNormalized);
+        if (existingUsernameUser) {
+          throw new SaaSServiceError(
+            `Username or mobile "${finalUsername}" is already registered to another account.`,
+            409,
+            'DUPLICATE_USERNAME'
+          );
+        }
+      }
+
+      let email =
+        parsedPrimary.kind === 'email'
+          ? parsedPrimary.displayValue
+          : buildSyntheticAuthEmail(finalUsername || rawIdentifierInput, targetSchoolId);
+
+      if (parsedPrimary.kind !== 'email') {
+        for (let attempt = 1; attempt <= 5; attempt += 1) {
+          const authHit = await deps.auth.getUserByEmail(email);
+          const dbHit = await deps.db.getSaaSUserByEmail(email);
+          if (!authHit && !dbHit) break;
+          email = buildSyntheticAuthEmail(
+            finalUsername || rawIdentifierInput,
+            targetSchoolId,
+            String(attempt + 1)
+          );
+        }
+      }
+
       const existingAuth = await deps.auth.getUserByEmail(email);
       const existingRecord = await deps.db.getSaaSUserByEmail(email);
 
@@ -625,16 +759,22 @@ export function createTenantService(deps: TenantServiceDeps) {
         isMasterAdmin: false,
       });
 
+      const resolvedPhone =
+        input.phone?.trim() || (parsedPrimary.kind === 'mobile' ? parsedPrimary.displayValue : undefined);
+
       const nowIso = getNow().toISOString();
       const record: SaaSUserRecord = {
         uid: uidToUse,
         email,
+        ...(finalUsername ? { username: finalUsername } : {}),
+        ...(usernameNormalized ? { usernameNormalized } : {}),
+        ...(phoneNormalized.length >= 6 ? { phoneNormalized } : {}),
         displayName,
         schoolId: targetSchoolId,
         schoolRole: role,
         ...(input.linkedStaffId ? { linkedStaffId: input.linkedStaffId } : {}),
         ...(input.linkedStudentId ? { linkedStudentId: input.linkedStudentId } : {}),
-        ...(input.phone ? { phone: input.phone } : {}),
+        ...(resolvedPhone ? { phone: resolvedPhone } : {}),
         status: 'active',
         createdAt: nowIso,
         createdBy: actor.email || actor.uid,
@@ -691,6 +831,7 @@ export function createTenantService(deps: TenantServiceDeps) {
     ): Promise<{
       uid: string;
       email: string;
+      username?: string;
       displayName: string;
       phone?: string;
       avatarUrl?: string;
@@ -699,7 +840,8 @@ export function createTenantService(deps: TenantServiceDeps) {
       isMasterAdmin: boolean;
     }> {
       const nextDisplayName = input.displayName !== undefined ? input.displayName.trim() : undefined;
-      const nextEmail = input.email !== undefined ? input.email.trim().toLowerCase() : undefined;
+      const rawNextEmail = input.email !== undefined ? input.email.trim() : undefined;
+      const rawExplicitUsername = input.username !== undefined ? input.username.trim() : undefined;
       const nextPassword = input.password !== undefined ? input.password : undefined;
       const nextPhone = input.phone !== undefined ? input.phone.trim() : undefined;
       const nextAvatarUrl = input.avatarUrl !== undefined ? String(input.avatarUrl).trim() : undefined;
@@ -728,25 +870,135 @@ export function createTenantService(deps: TenantServiceDeps) {
         }
       }
 
-      const emailChanged = Boolean(nextEmail && nextEmail !== (actor.email || '').toLowerCase());
-      if (emailChanged && nextEmail) {
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
-          throw new SaaSServiceError('Please provide a valid email address.', 400, 'INVALID_EMAIL');
+      const existingSaasUser = await deps.db.getSaaSUserByUid(actor.uid);
+      const currentEmailLower = (existingSaasUser?.email || actor.email || '').toLowerCase();
+      const currentUsername = existingSaasUser?.username;
+      const currentUsernameNorm =
+        existingSaasUser?.usernameNormalized ||
+        (currentUsername ? normalizeLoginUsernameKey(currentUsername) : undefined);
+
+      let resolvedNextEmail: string | undefined;
+      let resolvedNextUsername: string | undefined = currentUsername;
+      let resolvedNextUsernameNorm: string | undefined = currentUsernameNorm;
+      let shouldClearUsername = false;
+
+      if (rawNextEmail !== undefined && rawNextEmail.length > 0) {
+        const parsedId = validateLoginIdentifier(rawNextEmail);
+        if (!parsedId.valid) {
+          throw new SaaSServiceError(
+            parsedId.error || 'Please provide a valid email, mobile number, or username.',
+            400,
+            'INVALID_EMAIL'
+          );
         }
-        if (actor.isMasterAdmin) {
+
+        if (actor.isMasterAdmin && rawNextEmail.toLowerCase() !== currentEmailLower) {
           throw new SaaSServiceError(
             'Master Admin primary email is bound to platform configuration. You can update your display name, phone, or password.',
             400,
             'MASTER_EMAIL_IMMUTABLE'
           );
         }
-        const existingAuth = await deps.auth.getUserByEmail(nextEmail);
-        if (existingAuth && existingAuth.uid !== actor.uid) {
-          throw new SaaSServiceError(`Email "${nextEmail}" is already in use by another account.`, 409, 'DUPLICATE_EMAIL');
+
+        if (parsedId.kind === 'email') {
+          if (parsedId.displayValue !== currentEmailLower) {
+            resolvedNextEmail = parsedId.displayValue;
+            if (rawExplicitUsername === undefined && isSyntheticAuthEmail(currentEmailLower)) {
+              resolvedNextUsername = undefined;
+              resolvedNextUsernameNorm = undefined;
+              shouldClearUsername = true;
+            }
+          }
+        } else {
+          const usernameChanged =
+            parsedId.normalizedKey !== currentUsernameNorm ||
+            parsedId.displayValue !== currentUsername;
+          if (usernameChanged || !isSyntheticAuthEmail(currentEmailLower)) {
+            if (parsedId.normalizedKey !== currentUsernameNorm) {
+              const dupUser = await deps.db.getSaaSUserByUsernameNormalized(parsedId.normalizedKey);
+              if (dupUser && dupUser.uid !== actor.uid) {
+                throw new SaaSServiceError(
+                  `Username or mobile "${parsedId.displayValue}" is already in use by another account.`,
+                  409,
+                  'DUPLICATE_USERNAME'
+                );
+              }
+            }
+            resolvedNextUsername = parsedId.displayValue;
+            resolvedNextUsernameNorm = parsedId.normalizedKey;
+
+            if (!isSyntheticAuthEmail(currentEmailLower) || parsedId.normalizedKey !== currentUsernameNorm) {
+              let synth = buildSyntheticAuthEmail(parsedId.displayValue, actor.schoolId || 'sch');
+              for (let attempt = 1; attempt <= 5; attempt += 1) {
+                const authHit = await deps.auth.getUserByEmail(synth);
+                const dbHit = await deps.db.getSaaSUserByEmail(synth);
+                if ((!authHit || authHit.uid === actor.uid) && (!dbHit || dbHit.uid === actor.uid)) {
+                  break;
+                }
+                synth = buildSyntheticAuthEmail(parsedId.displayValue, actor.schoolId || 'sch', String(attempt + 1));
+              }
+              if (synth !== currentEmailLower) {
+                resolvedNextEmail = synth;
+              }
+            }
+          }
         }
-        const existingRecord = await deps.db.getSaaSUserByEmail(nextEmail);
+      }
+
+      if (rawExplicitUsername !== undefined) {
+        if (actor.isMasterAdmin && rawExplicitUsername.length > 0 && rawExplicitUsername.toLowerCase() !== (currentUsername || '').toLowerCase()) {
+          throw new SaaSServiceError(
+            'Master Admin login identifier is bound to platform configuration.',
+            400,
+            'MASTER_EMAIL_IMMUTABLE'
+          );
+        }
+        if (rawExplicitUsername === '') {
+          resolvedNextUsername = undefined;
+          resolvedNextUsernameNorm = undefined;
+          shouldClearUsername = true;
+        } else {
+          const parsedU = validateLoginIdentifier(rawExplicitUsername);
+          if (!parsedU.valid || parsedU.kind === 'email') {
+            throw new SaaSServiceError(
+              parsedU.error || 'Please provide a valid username or mobile number.',
+              400,
+              'INVALID_USERNAME'
+            );
+          }
+          if (parsedU.normalizedKey !== currentUsernameNorm) {
+            const dupU = await deps.db.getSaaSUserByUsernameNormalized(parsedU.normalizedKey);
+            if (dupU && dupU.uid !== actor.uid) {
+              throw new SaaSServiceError(
+                `Username or mobile "${parsedU.displayValue}" is already registered.`,
+                409,
+                'DUPLICATE_USERNAME'
+              );
+            }
+          }
+          resolvedNextUsername = parsedU.displayValue;
+          resolvedNextUsernameNorm = parsedU.normalizedKey;
+          shouldClearUsername = false;
+        }
+      }
+
+      const emailChanged = Boolean(resolvedNextEmail && resolvedNextEmail !== currentEmailLower);
+      if (emailChanged && resolvedNextEmail) {
+        const existingAuth = await deps.auth.getUserByEmail(resolvedNextEmail);
+        if (existingAuth && existingAuth.uid !== actor.uid) {
+          throw new SaaSServiceError(
+            `Email "${resolvedNextEmail}" is already in use by another account.`,
+            409,
+            'DUPLICATE_EMAIL'
+          );
+        }
+        const existingRecord = await deps.db.getSaaSUserByEmail(resolvedNextEmail);
         if (existingRecord && existingRecord.uid !== actor.uid) {
-          throw new SaaSServiceError(`Email "${nextEmail}" is already registered.`, 409, 'DUPLICATE_EMAIL');
+          throw new SaaSServiceError(
+            `Email "${resolvedNextEmail}" is already registered.`,
+            409,
+            'DUPLICATE_EMAIL'
+          );
         }
       }
 
@@ -756,8 +1008,8 @@ export function createTenantService(deps: TenantServiceDeps) {
         password?: string;
         displayName?: string;
       } = {};
-      if (emailChanged && nextEmail) {
-        authUpdates.email = nextEmail;
+      if (emailChanged && resolvedNextEmail) {
+        authUpdates.email = resolvedNextEmail;
         authUpdates.emailVerified = true;
       }
       if (nextDisplayName !== undefined) {
@@ -775,23 +1027,46 @@ export function createTenantService(deps: TenantServiceDeps) {
         }
       }
 
-      const finalEmail = (emailChanged && nextEmail ? nextEmail : actor.email).toLowerCase();
+      const finalEmail = (emailChanged && resolvedNextEmail ? resolvedNextEmail : currentEmailLower).toLowerCase();
       const finalName = nextDisplayName !== undefined ? nextDisplayName : actor.displayName || finalEmail;
       const nowIso = getNow().toISOString();
+      const resolvedPhoneNorm =
+        nextPhone !== undefined
+          ? normalizePhoneNumber(nextPhone)
+          : existingSaasUser?.phoneNormalized;
 
-      const existingSaasUser = await deps.db.getSaaSUserByUid(actor.uid);
       if (existingSaasUser) {
-        await deps.db.updateSaaSUserRecord(actor.uid, {
+        const nextRecord: SaaSUserRecord = {
+          ...existingSaasUser,
           email: finalEmail,
           displayName: finalName,
           ...(nextPhone !== undefined ? { phone: nextPhone } : {}),
+          ...(resolvedPhoneNorm && resolvedPhoneNorm.length >= 6
+            ? { phoneNormalized: resolvedPhoneNorm }
+            : {}),
           ...(nextAvatarUrl !== undefined ? { avatarUrl: nextAvatarUrl } : {}),
           updatedAt: nowIso,
-        });
+        };
+        if (shouldClearUsername) {
+          delete nextRecord.username;
+          delete nextRecord.usernameNormalized;
+        } else if (resolvedNextUsername) {
+          nextRecord.username = resolvedNextUsername;
+          nextRecord.usernameNormalized = resolvedNextUsernameNorm;
+        }
+        if (nextPhone !== undefined && (!resolvedPhoneNorm || resolvedPhoneNorm.length < 6)) {
+          delete nextRecord.phoneNormalized;
+        }
+        await deps.db.updateSaaSUserRecord(actor.uid, nextRecord);
       } else if (actor.schoolId) {
         await deps.db.createSaaSUserRecord({
           uid: actor.uid,
           email: finalEmail,
+          ...(resolvedNextUsername ? { username: resolvedNextUsername } : {}),
+          ...(resolvedNextUsernameNorm ? { usernameNormalized: resolvedNextUsernameNorm } : {}),
+          ...(resolvedPhoneNorm && resolvedPhoneNorm.length >= 6
+            ? { phoneNormalized: resolvedPhoneNorm }
+            : {}),
           displayName: finalName,
           schoolId: actor.schoolId,
           schoolRole: actor.schoolRole || 'teacher',
@@ -806,9 +1081,14 @@ export function createTenantService(deps: TenantServiceDeps) {
 
       if (actor.schoolId) {
         const school = await deps.db.getSchoolById(actor.schoolId);
-        if (school && school.adminUid === actor.uid && (emailChanged || nextDisplayName !== undefined)) {
+        if (
+          school &&
+          school.adminUid === actor.uid &&
+          (emailChanged || nextDisplayName !== undefined || resolvedNextUsername !== currentUsername)
+        ) {
           await deps.db.updateSchool(actor.schoolId, {
             adminEmail: finalEmail,
+            ...(resolvedNextUsername ? { adminUsername: resolvedNextUsername } : { adminUsername: '' }),
             adminName: finalName,
             updatedAt: nowIso,
           });
@@ -841,6 +1121,7 @@ export function createTenantService(deps: TenantServiceDeps) {
       return {
         uid: actor.uid,
         email: finalEmail,
+        ...(resolvedNextUsername ? { username: resolvedNextUsername } : {}),
         displayName: finalName,
         phone: nextPhone !== undefined ? nextPhone : existingSaasUser?.phone,
         avatarUrl: nextAvatarUrl !== undefined ? nextAvatarUrl : existingSaasUser?.avatarUrl,
@@ -875,7 +1156,8 @@ export function createTenantService(deps: TenantServiceDeps) {
       }
 
       const nextDisplayName = input.displayName !== undefined ? input.displayName.trim() : undefined;
-      const nextEmail = input.email !== undefined ? input.email.trim().toLowerCase() : undefined;
+      const rawNextEmail = input.email !== undefined ? input.email.trim() : undefined;
+      const rawExplicitUsername = input.username !== undefined ? input.username.trim() : undefined;
       const nextPassword = input.password !== undefined ? input.password : undefined;
       const nextPhone = input.phone !== undefined ? input.phone.trim() : undefined;
       const nextRole = input.schoolRole;
@@ -894,18 +1176,117 @@ export function createTenantService(deps: TenantServiceDeps) {
         throw new SaaSServiceError(`Invalid school role "${nextRole}".`, 403, 'FORBIDDEN_ROLE');
       }
 
-      const emailChanged = Boolean(nextEmail && nextEmail !== user.email.toLowerCase());
-      if (emailChanged && nextEmail) {
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
-          throw new SaaSServiceError('Please provide a valid email address.', 400, 'INVALID_EMAIL');
+      const currentEmailLower = user.email.toLowerCase();
+      const currentUsernameNorm =
+        user.usernameNormalized || (user.username ? normalizeLoginUsernameKey(user.username) : undefined);
+
+      let resolvedNextEmail: string | undefined;
+      let resolvedNextUsername: string | undefined = user.username;
+      let resolvedNextUsernameNorm: string | undefined = currentUsernameNorm;
+      let shouldClearUsername = false;
+
+      if (rawNextEmail !== undefined && rawNextEmail.length > 0) {
+        const parsedId = validateLoginIdentifier(rawNextEmail);
+        if (!parsedId.valid) {
+          throw new SaaSServiceError(
+            parsedId.error || 'Please provide a valid email, mobile number, or username.',
+            400,
+            'INVALID_EMAIL'
+          );
         }
-        const existingAuth = await deps.auth.getUserByEmail(nextEmail);
+
+        if (parsedId.kind === 'email') {
+          if (parsedId.displayValue !== currentEmailLower) {
+            resolvedNextEmail = parsedId.displayValue;
+            if (rawExplicitUsername === undefined && isSyntheticAuthEmail(currentEmailLower)) {
+              resolvedNextUsername = undefined;
+              resolvedNextUsernameNorm = undefined;
+              shouldClearUsername = true;
+            }
+          }
+        } else {
+          const usernameChanged =
+            parsedId.normalizedKey !== currentUsernameNorm ||
+            parsedId.displayValue !== user.username;
+          if (usernameChanged || !isSyntheticAuthEmail(currentEmailLower)) {
+            if (parsedId.normalizedKey !== currentUsernameNorm) {
+              const dupUser = await deps.db.getSaaSUserByUsernameNormalized(parsedId.normalizedKey);
+              if (dupUser && dupUser.uid !== targetUid) {
+                throw new SaaSServiceError(
+                  `Username or mobile "${parsedId.displayValue}" is already in use by another account.`,
+                  409,
+                  'DUPLICATE_USERNAME'
+                );
+              }
+            }
+            resolvedNextUsername = parsedId.displayValue;
+            resolvedNextUsernameNorm = parsedId.normalizedKey;
+
+            if (!isSyntheticAuthEmail(currentEmailLower) || parsedId.normalizedKey !== currentUsernameNorm) {
+              let synth = buildSyntheticAuthEmail(parsedId.displayValue, user.schoolId);
+              for (let attempt = 1; attempt <= 5; attempt += 1) {
+                const authHit = await deps.auth.getUserByEmail(synth);
+                const dbHit = await deps.db.getSaaSUserByEmail(synth);
+                if ((!authHit || authHit.uid === targetUid) && (!dbHit || dbHit.uid === targetUid)) {
+                  break;
+                }
+                synth = buildSyntheticAuthEmail(parsedId.displayValue, user.schoolId, String(attempt + 1));
+              }
+              if (synth !== currentEmailLower) {
+                resolvedNextEmail = synth;
+              }
+            }
+          }
+        }
+      }
+
+      if (rawExplicitUsername !== undefined) {
+        if (rawExplicitUsername === '') {
+          resolvedNextUsername = undefined;
+          resolvedNextUsernameNorm = undefined;
+          shouldClearUsername = true;
+        } else {
+          const parsedU = validateLoginIdentifier(rawExplicitUsername);
+          if (!parsedU.valid || parsedU.kind === 'email') {
+            throw new SaaSServiceError(
+              parsedU.error || 'Please provide a valid username or mobile number.',
+              400,
+              'INVALID_USERNAME'
+            );
+          }
+          if (parsedU.normalizedKey !== currentUsernameNorm) {
+            const dupU = await deps.db.getSaaSUserByUsernameNormalized(parsedU.normalizedKey);
+            if (dupU && dupU.uid !== targetUid) {
+              throw new SaaSServiceError(
+                `Username or mobile "${parsedU.displayValue}" is already registered.`,
+                409,
+                'DUPLICATE_USERNAME'
+              );
+            }
+          }
+          resolvedNextUsername = parsedU.displayValue;
+          resolvedNextUsernameNorm = parsedU.normalizedKey;
+          shouldClearUsername = false;
+        }
+      }
+
+      const emailChanged = Boolean(resolvedNextEmail && resolvedNextEmail !== currentEmailLower);
+      if (emailChanged && resolvedNextEmail) {
+        const existingAuth = await deps.auth.getUserByEmail(resolvedNextEmail);
         if (existingAuth && existingAuth.uid !== targetUid) {
-          throw new SaaSServiceError(`Email "${nextEmail}" is already in use by another account.`, 409, 'DUPLICATE_EMAIL');
+          throw new SaaSServiceError(
+            `Email "${resolvedNextEmail}" is already in use by another account.`,
+            409,
+            'DUPLICATE_EMAIL'
+          );
         }
-        const existingRecord = await deps.db.getSaaSUserByEmail(nextEmail);
+        const existingRecord = await deps.db.getSaaSUserByEmail(resolvedNextEmail);
         if (existingRecord && existingRecord.uid !== targetUid) {
-          throw new SaaSServiceError(`Email "${nextEmail}" is already registered.`, 409, 'DUPLICATE_EMAIL');
+          throw new SaaSServiceError(
+            `Email "${resolvedNextEmail}" is already registered.`,
+            409,
+            'DUPLICATE_EMAIL'
+          );
         }
       }
 
@@ -915,8 +1296,8 @@ export function createTenantService(deps: TenantServiceDeps) {
         password?: string;
         displayName?: string;
       } = {};
-      if (emailChanged && nextEmail) {
-        authUpdates.email = nextEmail;
+      if (emailChanged && resolvedNextEmail) {
+        authUpdates.email = resolvedNextEmail;
         authUpdates.emailVerified = true;
       }
       if (nextDisplayName !== undefined) {
@@ -943,20 +1324,45 @@ export function createTenantService(deps: TenantServiceDeps) {
       }
 
       const nowIso = getNow().toISOString();
-      const updatedUser = await deps.db.updateSaaSUserRecord(targetUid, {
-        ...(emailChanged && nextEmail ? { email: nextEmail } : {}),
+      const resolvedPhoneNorm =
+        nextPhone !== undefined
+          ? normalizePhoneNumber(nextPhone)
+          : user.phoneNormalized;
+
+      const updatedPayload: SaaSUserRecord = {
+        ...user,
+        ...(emailChanged && resolvedNextEmail ? { email: resolvedNextEmail } : {}),
         ...(nextDisplayName !== undefined ? { displayName: nextDisplayName } : {}),
         ...(nextPhone !== undefined ? { phone: nextPhone } : {}),
         ...(nextRole ? { schoolRole: nextRole } : {}),
         ...(nextLinkedStudentId !== undefined ? { linkedStudentId: nextLinkedStudentId } : {}),
         ...(nextLinkedStaffId !== undefined ? { linkedStaffId: nextLinkedStaffId } : {}),
         updatedAt: nowIso,
-      });
+      };
+      if (shouldClearUsername) {
+        delete updatedPayload.username;
+        delete updatedPayload.usernameNormalized;
+      } else if (resolvedNextUsername) {
+        updatedPayload.username = resolvedNextUsername;
+        updatedPayload.usernameNormalized = resolvedNextUsernameNorm;
+      }
+      if (resolvedPhoneNorm && resolvedPhoneNorm.length >= 6) {
+        updatedPayload.phoneNormalized = resolvedPhoneNorm;
+      } else if (nextPhone !== undefined) {
+        delete updatedPayload.phoneNormalized;
+      }
+
+      const updatedUser = await deps.db.updateSaaSUserRecord(targetUid, updatedPayload);
 
       const school = await deps.db.getSchoolById(user.schoolId);
-      if (school && school.adminUid === targetUid && (emailChanged || nextDisplayName !== undefined)) {
+      if (
+        school &&
+        school.adminUid === targetUid &&
+        (emailChanged || nextDisplayName !== undefined || resolvedNextUsername !== user.username)
+      ) {
         await deps.db.updateSchool(user.schoolId, {
           adminEmail: updatedUser.email,
+          ...(updatedUser.username ? { adminUsername: updatedUser.username } : { adminUsername: '' }),
           adminName: updatedUser.displayName,
           updatedAt: nowIso,
         });
@@ -988,6 +1394,96 @@ export function createTenantService(deps: TenantServiceDeps) {
       }
 
       return updatedUser;
+    },
+
+    async resolveLoginIdentifier(rawIdentifier: string): Promise<{
+      resolvedEmail: string;
+      method: 'email' | 'username' | 'phone';
+      isSyntheticEmail: boolean;
+    }> {
+      const parsed = validateLoginIdentifier(rawIdentifier);
+      if (!parsed.valid) {
+        throw new SaaSServiceError(
+          parsed.error || 'Please provide a valid email, mobile number, or username.',
+          400,
+          'INVALID_IDENTIFIER'
+        );
+      }
+
+      if (parsed.kind === 'email') {
+        return {
+          resolvedEmail: parsed.displayValue,
+          method: 'email',
+          isSyntheticEmail: isSyntheticAuthEmail(parsed.displayValue),
+        };
+      }
+
+      const candidates = await deps.db.findSaaSUsersByLoginIdentifier(
+        parsed.normalizedKey,
+        parsed.normalizedPhone
+      );
+
+      // Deduplicate by uid
+      const byUid = new Map<string, SaaSUserRecord>();
+      for (const c of candidates) {
+        if (c?.uid && !byUid.has(c.uid)) {
+          byUid.set(c.uid, c);
+        }
+      }
+      const uniqueCandidates = Array.from(byUid.values());
+
+      // Exact usernameNormalized match has top priority
+      const directMatches = uniqueCandidates.filter((u) => {
+        const key = u.usernameNormalized || (u.username ? normalizeLoginUsernameKey(u.username) : '');
+        return key === parsed.normalizedKey;
+      });
+
+      let matched: SaaSUserRecord | null = null;
+      let method: 'username' | 'phone' = parsed.kind === 'mobile' ? 'phone' : 'username';
+
+      if (directMatches.length === 1) {
+        matched = directMatches[0];
+      } else if (directMatches.length > 1) {
+        throw new SaaSServiceError(
+          'Multiple accounts matched this login identifier. Please contact your School Admin.',
+          409,
+          'AMBIGUOUS_IDENTIFIER'
+        );
+      } else if (parsed.kind === 'mobile' && parsed.normalizedPhone) {
+        if (uniqueCandidates.length > 1) {
+          throw new SaaSServiceError(
+            'Multiple accounts share this mobile number. Please log in with your unique Username or Email.',
+            409,
+            'AMBIGUOUS_IDENTIFIER'
+          );
+        }
+        if (uniqueCandidates.length === 1) {
+          matched = uniqueCandidates[0];
+          method = 'phone';
+        }
+      }
+
+      if (!matched) {
+        throw new SaaSServiceError(
+          'No active account matched this username or mobile number.',
+          404,
+          'USER_NOT_FOUND'
+        );
+      }
+
+      if (matched.status === 'disabled') {
+        throw new SaaSServiceError(
+          'This account has been disabled by your administrator.',
+          403,
+          'ACCOUNT_DISABLED'
+        );
+      }
+
+      return {
+        resolvedEmail: matched.email,
+        method,
+        isSyntheticEmail: isSyntheticAuthEmail(matched.email),
+      };
     },
 
     async deleteTenantUser(

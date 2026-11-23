@@ -19,6 +19,8 @@ import {
   computeClientSubscriptionState,
   getEffectivePlanPriceBdt,
   isSaaSBackendUnavailableError,
+  isSaaSIamPermissionError,
+  isNetlifyHostingEnvironment,
 } from '../../services/saasApi';
 import { db, handleFirestoreError, OperationType } from '../../services/firebase';
 import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
@@ -67,6 +69,7 @@ import {
 import { DigitInput } from '../common/DigitInput';
 import { parseLocaleNumber } from '../../utils/i18n';
 import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
+import { formatDisplayLoginId, isSyntheticAuthEmail } from '../../utils/loginIdentifier';
 
 type SubTab = 'schools' | 'payments' | 'plans' | 'payment_channels' | 'support';
 
@@ -157,6 +160,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
     schoolName: string;
     adminName: string;
     adminEmail: string;
+    adminUsername?: string;
     adminPassword: string;
   } | null>(null);
   const [showLastCreatedPass, setShowLastCreatedPass] = useState(true);
@@ -370,17 +374,28 @@ export const MasterAdminSaaSPanel: React.FC = () => {
   }, []);
 
   const formatMasterWriteError = (err: any, fallbackMsg: string): string => {
+    if (isSaaSIamPermissionError(err)) {
+      refreshServerDiagnostics();
+      return language === 'bn'
+        ? 'Firebase প্রজেক্টে সার্ভারের IAM অনুমোদন (Cloud Datastore User, Firebase Authentication Admin, Service Usage Consumer) এখনো যুক্ত বা সক্রিয় হয়নি। Google Cloud IAM-এ অনুমোদন দেওয়ার পর আবার চেষ্টা করুন।'
+        : 'Server Firebase Admin IAM permissions (Cloud Datastore User, Firebase Authentication Admin, Service Usage Consumer) are not yet granted on this Firebase project.';
+    }
     if (isSaaSBackendUnavailableError(err)) {
       refreshServerDiagnostics();
       if (serverDiagnostics?.initStatus === 'invalid_json') {
         return language === 'bn'
-          ? 'সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON পাওয়া গেছে, কিন্তু এর JSON ফরম্যাটে ত্রুটি রয়েছে (invalid_json)। Netlify Environment Variables-এ সঠিক JSON অথবা আলাদা করে FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL এবং FIREBASE_PRIVATE_KEY সেট করে Clear cache and deploy site করুন।'
-          : 'FIREBASE_SERVICE_ACCOUNT_JSON was detected on the server but could not be parsed (invalid_json). Set valid JSON or split env vars and trigger a fresh Netlify deploy.';
+          ? 'সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON পাওয়া গেছে, কিন্তু এর JSON ফরম্যাটে ত্রুটি রয়েছে (invalid_json)। সঠিক JSON অথবা আলাদা করে FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL এবং FIREBASE_PRIVATE_KEY সেট করুন।'
+          : 'FIREBASE_SERVICE_ACCOUNT_JSON was detected on the server but could not be parsed (invalid_json).';
       }
       if (serverDiagnostics?.initStatus === 'missing_fields') {
         return language === 'bn'
           ? 'সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON-এ client_email বা private_key পাওয়া যাচ্ছে না। সম্পূর্ণ Service Account JSON পেস্ট করুন।'
           : 'FIREBASE_SERVICE_ACCOUNT_JSON is missing client_email or private_key.';
+      }
+      if (!isNetlifyHostingEnvironment(serverDiagnostics)) {
+        return language === 'bn'
+          ? 'ব্যাকএন্ড সার্ভার সাময়িকভাবে পাওয়া যাচ্ছে না বা Firebase Admin অনুমোদন প্রস্তুত নয়। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।'
+          : 'Backend server is temporarily unavailable or Firebase Admin credentials/IAM are not ready yet. Please retry in a moment.';
       }
       return language === 'bn'
         ? 'সার্ভারে Firebase Admin কী (FIREBASE_SERVICE_ACCOUNT_JSON) কনফিগার করা নেই বলে নতুন স্কুল বা Auth ইউজার তৈরি করা যাচ্ছে না। Netlify Site configuration → Environment variables-এ এই কী যোগ করে (Scope: All scopes / Functions) Clear cache and deploy site দিন।'
@@ -462,6 +477,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
         s.schoolName.toLowerCase().includes(q) ||
         s.schoolCode.toLowerCase().includes(q) ||
         s.adminEmail.toLowerCase().includes(q) ||
+        (s.adminUsername && s.adminUsername.toLowerCase().includes(q)) ||
         s.email.toLowerCase().includes(q)
       );
     });
@@ -517,12 +533,17 @@ export const MasterAdminSaaSPanel: React.FC = () => {
           ? new Date(`${newSchool.expiryDate}T23:59:59.000Z`).toISOString()
           : undefined,
       });
+      const createdAdminLoginDisplay = formatDisplayLoginId({
+        username: res.school.adminUsername,
+        email: res.school.adminEmail,
+      });
       setShowCreateModal(false);
       setLastCreatedCreds({
         schoolId: res.school.schoolId,
         schoolName: res.school.schoolName,
         adminName: res.school.adminName,
         adminEmail: res.school.adminEmail,
+        adminUsername: res.school.adminUsername,
         adminPassword: createdPassword,
       });
       setShowLastCreatedPass(true);
@@ -543,7 +564,7 @@ export const MasterAdminSaaSPanel: React.FC = () => {
       });
       setFeedback({
         type: 'success',
-        message: `School ${res.school.schoolName} (${res.school.schoolId}) created with School Admin auth account (${res.school.adminEmail}).`,
+        message: `School ${res.school.schoolName} (${res.school.schoolId}) created with School Admin auth account (${createdAdminLoginDisplay}).`,
       });
       await loadAll();
     } catch (err: any) {
@@ -1382,14 +1403,23 @@ export const MasterAdminSaaSPanel: React.FC = () => {
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <div className="font-extrabold">
-                  {serverDiagnostics?.adminSdkReady
+                  {fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
+                    ? language === 'bn'
+                      ? 'Firebase প্রজেক্টে সার্ভারের IAM অনুমোদন এখনো যুক্ত হয়নি'
+                      : 'Firebase Project IAM Permissions Needed for Server Admin SDK'
+                    : serverDiagnostics?.adminSdkReady
                     ? language === 'bn'
                       ? `সার্ভার সংযুক্ত আছে, তবে প্রথম লোডে সময় লেগেছে (${fallbackTriggerCode || 'TIMEOUT'})`
                       : `Backend Admin SDK is ready, but initial data load timed out (${fallbackTriggerCode || 'TIMEOUT'})`
-                    : healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE'
+                    : (healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE') &&
+                      isNetlifyHostingEnvironment(serverDiagnostics)
                     ? language === 'bn'
                       ? 'Netlify Functions (/api/saas/*) পাওয়া যাচ্ছে না — সাইটটি শুধু স্ট্যাটিক ফোল্ডার হিসেবে ডিপ্লয় হয়েছে'
                       : 'Netlify Functions (/api/saas/*) returned HTML instead of API JSON'
+                    : healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE'
+                    ? language === 'bn'
+                      ? 'ব্যাকএন্ড API সাময়িকভাবে সাড়া দিচ্ছে না বা রিস্টার্ট হচ্ছে'
+                      : 'Backend API temporarily returned non-JSON (server restarting)'
                     : serverDiagnostics?.initStatus === 'invalid_json'
                     ? language === 'bn'
                       ? 'সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON ফরম্যাটে ত্রুটি (invalid_json)'
@@ -1403,14 +1433,23 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                     : 'Server Firebase Admin SDK Unavailable — Creating Schools & Provisioning Users Disabled'}
                 </div>
                 <p className="text-[11px] text-amber-900 leading-relaxed">
-                  {serverDiagnostics?.adminSdkReady
+                  {fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
+                    ? language === 'bn'
+                      ? 'স্কুল ও পেমেন্ট তথ্য সরাসরি Firestore থেকে লোড হয়েছে। নতুন স্কুল/ইউজার তৈরি চালু করতে আপনার Google Cloud প্রজেক্টের IAM-এ সার্ভার সার্ভিস একাউন্টকে Cloud Datastore User, Firebase Authentication Admin এবং Service Usage Consumer রোল দিয়ে "পুনরায় সংযোগ করুন" চাপুন।'
+                      : 'School records loaded via client Firestore fallback. Grant Cloud Datastore User, Firebase Authentication Admin, and Service Usage Consumer in Google Cloud IAM, then click Retry.'
+                    : serverDiagnostics?.adminSdkReady
                     ? language === 'bn'
                       ? 'ডাটা সাময়িকভাবে Firestore থেকে লোড হয়েছে। সার্ভার কাজ করছে — নিচের "পুনরায় সংযোগ করুন" বাটনে চাপ দিন।'
                       : 'Records loaded via Firestore fallback due to a slow cold start or temporary network timeout. Click Retry below to reconnect.'
-                    : healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE'
+                    : (healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE') &&
+                      isNetlifyHostingEnvironment(serverDiagnostics)
                     ? language === 'bn'
                       ? 'আপনি যদি শুধু build/dist ফোল্ডার Netlify-তে Drop করে থাকেন, তাহলে সার্ভার ফাংশন (netlify/functions/api.ts) ডিপ্লয় হয়নি। পুরো প্রোজেক্ট GitHub বা Netlify CLI থেকে ডিপ্লয় করুন।'
                       : 'If you deployed only the static dist folder, serverless functions (netlify/functions/api.ts) were not deployed. Deploy the full repository via GitHub or Netlify CLI.'
+                    : healthProbeError === 'NON_JSON_RESPONSE' || fallbackTriggerCode === 'NON_JSON_RESPONSE'
+                    ? language === 'bn'
+                      ? 'সার্ভার রিস্টার্ট হওয়ার কারণে এমন হতে পারে। কয়েক সেকেন্ড পর "পুনরায় সংযোগ করুন" বাটনে চাপ দিন।'
+                      : 'The server may be restarting. Click Retry below in a few seconds.'
                     : language === 'bn'
                     ? 'স্কুল ও পেমেন্ট তথ্য সরাসরি Firestore থেকে লোড হয়েছে। কিন্তু নতুন স্কুল তৈরি, সুপার অ্যাডমিনের পাসওয়ার্ড রিসেট বা নতুন ইউজার তৈরি করতে সার্ভার এনভায়রনমেন্টে Firebase Admin Credential থাকা বাধ্যতামূলক।'
                     : 'Live school records are shown via Firestore fallback, but creating new schools, provisioning user logins, or resetting passwords requires Firebase Admin credentials on the backend server.'}
@@ -1435,8 +1474,10 @@ export const MasterAdminSaaSPanel: React.FC = () => {
             </div>
           </div>
           {!serverDiagnostics?.adminSdkReady &&
+            fallbackTriggerCode !== 'ADMIN_IAM_PERMISSION_DENIED' &&
             healthProbeError !== 'NON_JSON_RESPONSE' &&
-            fallbackTriggerCode !== 'NON_JSON_RESPONSE' && (
+            fallbackTriggerCode !== 'NON_JSON_RESPONSE' &&
+            isNetlifyHostingEnvironment(serverDiagnostics) && (
               <div className="p-2.5 rounded-xl bg-white/80 border border-amber-200 text-[11px] text-slate-800 space-y-1">
                 <div className="font-bold text-slate-900">
                   {language === 'bn' ? 'Netlify-এ সমাধান করার সহজ ৩টি ধাপ:' : '3-Step Fix on Netlify:'}
@@ -1488,8 +1529,13 @@ export const MasterAdminSaaSPanel: React.FC = () => {
               <div className="font-bold text-slate-900">{lastCreatedCreds.adminName}</div>
             </div>
             <div>
-              <div className="text-[10px] text-slate-500 font-semibold">Login Email</div>
-              <div className="font-mono font-bold text-slate-900">{lastCreatedCreds.adminEmail}</div>
+              <div className="text-[10px] text-slate-500 font-semibold">Login ID</div>
+              <div className="font-mono font-bold text-slate-900">
+                {formatDisplayLoginId({
+                  username: lastCreatedCreds.adminUsername,
+                  email: lastCreatedCreds.adminEmail,
+                })}
+              </div>
             </div>
             <div>
               <div className="text-[10px] text-slate-500 font-semibold">Initial Password</div>
@@ -1510,7 +1556,10 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                   onClick={() =>
                     copyTextToClipboard(
                       'new_school',
-                      `School ID: ${lastCreatedCreds.schoolId}\nSchool: ${lastCreatedCreds.schoolName}\nLogin Email: ${lastCreatedCreds.adminEmail}\nPassword: ${lastCreatedCreds.adminPassword}`
+                      `School ID: ${lastCreatedCreds.schoolId}\nSchool: ${lastCreatedCreds.schoolName}\nLogin ID: ${formatDisplayLoginId({
+                        username: lastCreatedCreds.adminUsername,
+                        email: lastCreatedCreds.adminEmail,
+                      })}\nPassword: ${lastCreatedCreds.adminPassword}`
                     )
                   }
                   className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold inline-flex items-center gap-1"
@@ -1833,7 +1882,9 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                         </td>
                         <td className="py-3.5 px-4">
                           <div className="font-semibold text-slate-800">{s.adminName}</div>
-                          <div className="text-[11px] text-slate-500 font-mono">{s.adminEmail}</div>
+                          <div className="text-[11px] text-slate-500 font-mono">
+                            {formatDisplayLoginId({ username: s.adminUsername, email: s.adminEmail })}
+                          </div>
                           <div className="text-[10px] text-slate-400">Principal: {s.principalName}</div>
                         </td>
                         <td className="py-3.5 px-4">
@@ -2584,9 +2635,17 @@ export const MasterAdminSaaSPanel: React.FC = () => {
               <div className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-[11px] flex items-start gap-2 leading-relaxed">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <span>
-                  {language === 'bn'
-                    ? 'সতর্কতা: সার্ভারে Firebase Admin কী (FIREBASE_SERVICE_ACCOUNT_JSON) এখনো সংযুক্ত নয়। নতুন স্কুল ও Auth লগইন তৈরি করতে Netlify Environment variables-এ (Scope: All scopes) কী যোগ করে "Clear cache and deploy site" দিন।'
-                    : 'Note: Server Firebase Admin credentials are missing. Configure FIREBASE_SERVICE_ACCOUNT_JSON in Netlify (Scope: All scopes) and redeploy to enable creating schools.'}
+                  {fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
+                    ? language === 'bn'
+                      ? 'সতর্কতা: Firebase প্রজেক্টে সার্ভারের IAM অনুমোদন (Cloud Datastore User, Firebase Authentication Admin, Service Usage Consumer) এখনো যুক্ত হয়নি।'
+                      : 'Note: Server Firebase Admin IAM permissions are not yet granted on the Firebase project.'
+                    : isNetlifyHostingEnvironment(serverDiagnostics)
+                    ? language === 'bn'
+                      ? 'সতর্কতা: সার্ভারে Firebase Admin কী (FIREBASE_SERVICE_ACCOUNT_JSON) এখনো সংযুক্ত নয়। নতুন স্কুল ও Auth লগইন তৈরি করতে Netlify Environment variables-এ (Scope: All scopes) কী যোগ করে "Clear cache and deploy site" দিন।'
+                      : 'Note: Server Firebase Admin credentials are missing. Configure FIREBASE_SERVICE_ACCOUNT_JSON in Netlify (Scope: All scopes) and redeploy to enable creating schools.'
+                    : language === 'bn'
+                    ? 'সতর্কতা: ব্যাকএন্ড সার্ভারের সাথে সংযোগ বা Firebase Admin অনুমোদন এখনো প্রস্তুত হয়নি। কিছুক্ষণ পর পুনরায় চেষ্টা করুন।'
+                    : 'Note: Backend server or Firebase Admin permissions are not ready yet.'}
                 </span>
               </div>
             )}
@@ -2671,14 +2730,16 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Admin Login Email *</label>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    Admin Login ID (Email, Mobile, or Username) *
+                  </label>
                   <input
-                    type="email"
+                    type="text"
                     required
                     value={newSchool.adminEmail}
                     onChange={(e) => setNewSchool({ ...newSchool, adminEmail: e.target.value })}
-                    placeholder="admin@school.edu.bd"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl"
+                    placeholder="admin@school.edu.bd, 017..., or admin01"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono"
                   />
                 </div>
                 <div>
@@ -3048,8 +3109,18 @@ export const MasterAdminSaaSPanel: React.FC = () => {
               {detailsData.adminCredentials.length === 0 ? (
                 <div className="p-3 rounded-xl bg-white border border-indigo-100 text-[11px] text-slate-600">
                   {language === 'bn'
-                    ? `প্রাথমিক সুপার অ্যাডমিন ইমেইল: ${detailsData.school.adminEmail || 'N/A'}`
-                    : `Primary Super Admin email: ${detailsData.school.adminEmail || 'N/A'}`}
+                    ? `প্রাথমিক সুপার অ্যাডমিন লগইন: ${
+                        formatDisplayLoginId({
+                          username: detailsData.school.adminUsername,
+                          email: detailsData.school.adminEmail,
+                        }) || 'N/A'
+                      }`
+                    : `Primary Super Admin login: ${
+                        formatDisplayLoginId({
+                          username: detailsData.school.adminUsername,
+                          email: detailsData.school.adminEmail,
+                        }) || 'N/A'
+                      }`}
                 </div>
               ) : (
                 <div className="space-y-2.5">
@@ -3237,7 +3308,10 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                     {detailsData.users.map((u) => (
                       <tr key={u.uid}>
                         <td className="py-2 px-3 font-semibold">{u.displayName}</td>
-                        <td className="py-2 px-3 font-mono">{u.email}</td>
+                        <td className="py-2 px-3 font-mono">
+                          {formatDisplayLoginId(u)}
+                          {u.username && !isSyntheticAuthEmail(u.email) && u.email ? ` (${u.email})` : ''}
+                        </td>
                         <td className="py-2 px-3">{u.schoolRole}</td>
                         <td className="py-2 px-3 uppercase font-bold">{u.status}</td>
                       </tr>
