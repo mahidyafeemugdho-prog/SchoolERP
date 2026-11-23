@@ -34,9 +34,11 @@ import {
   Smile,
   Search,
   Image as ImageIcon,
+  ExternalLink,
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { useAuth } from '../../context/AuthContext';
+import { isEmbeddedIframe } from '../../services/firebase';
 import { safeGetLocalStorage, compressImageToPassportSize } from '../../utils/storageHelper';
 import { CloudSyncService } from '../../services/cloudSync';
 import { LiveCameraModal } from '../common/LiveCameraModal';
@@ -47,6 +49,11 @@ import {
   matchFaceDescriptor,
 } from '../../utils/faceRecognitionHelper';
 import { QrVoiceController } from '../../utils/qrVoiceAnnouncement';
+import {
+  CameraPermissionState,
+  formatCameraStartupErrorMessage,
+  isCameraPermissionError,
+} from '../../utils/cameraPermissionHelper';
 
 interface SmartQRScannerTabProps {
   onAttendanceUpdated: () => void;
@@ -553,11 +560,38 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
     }
   };
 
+  const queryCameraPermissionState = async (): Promise<CameraPermissionState> => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.permissions?.query) {
+        const res = await navigator.permissions.query({ name: 'camera' as PermissionName });
+        if (res?.state === 'granted' || res?.state === 'prompt' || res?.state === 'denied') {
+          return res.state;
+        }
+      }
+    } catch {}
+    return 'unknown';
+  };
+
   // Start camera once on mount without racing concurrent Html5Qrcode.getCameras() calls
   useEffect(() => {
     if (!autoStartAttemptedRef.current) {
       autoStartAttemptedRef.current = true;
-      startCamera();
+      (async () => {
+        const perm = await queryCameraPermissionState();
+        if (!isMountedRef.current) return;
+        if (perm === 'denied') {
+          const formatted = formatCameraStartupErrorMessage({
+            error: new Error('NotAllowedError'),
+            language: language === 'bn' ? 'bn' : 'en',
+            inIframe: isEmbeddedIframe(),
+            permissionState: 'denied',
+            hasMediaDevices: Boolean(typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia),
+          });
+          setCameraError(formatted.message);
+          return;
+        }
+        startCamera();
+      })();
     }
     return () => {
       stopCamera();
@@ -580,6 +614,26 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
     setIsStartingCamera(true);
     setCameraError(null);
     isScanLockedRef.current = false;
+
+    const hasMediaDevices = Boolean(
+      typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia
+    );
+    if (!hasMediaDevices) {
+      if (isMountedRef.current && cameraOpIdRef.current === opId) {
+        setIsStartingCamera(false);
+        setScanning(false);
+        setCameraError(
+          formatCameraStartupErrorMessage({
+            error: new Error('NotSupportedError'),
+            language: language === 'bn' ? 'bn' : 'en',
+            inIframe: isEmbeddedIframe(),
+            permissionState: 'unknown',
+            hasMediaDevices: false,
+          }).message
+        );
+      }
+      return;
+    }
 
     const hadActiveScanner = Boolean(scannerRef.current || document.querySelector('#qr-reader-container video'));
 
@@ -646,6 +700,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
     }
 
     let lastErr: any = null;
+    let permissionBlockedAbort = false;
     for (const cfg of attempts) {
       if (!isMountedRef.current || cameraOpIdRef.current !== opId) return;
       try {
@@ -680,12 +735,19 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       } catch (err: any) {
         lastErr = err;
         await stopCamera();
+        if (isCameraPermissionError(err)) {
+          permissionBlockedAbort = true;
+          break;
+        }
         await new Promise((r) => setTimeout(r, 80));
       }
     }
 
     // Fallback: enumerate all video devices and match by label (front vs back) or pick alternate device
     try {
+      if (permissionBlockedAbort) {
+        throw lastErr;
+      }
       if (!isMountedRef.current || cameraOpIdRef.current !== opId) return;
       const devices = await Html5Qrcode.getCameras();
       if (devices && devices.length > 0) {
@@ -731,21 +793,25 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
           } catch (devErr: any) {
             lastErr = devErr;
             await stopCamera();
+            if (isCameraPermissionError(devErr)) {
+              throw devErr;
+            }
             await new Promise((r) => setTimeout(r, 80));
           }
         }
       }
 
-      // Final fallback on laptops/single-camera devices when environment wasn't available
-      if (desiredFacing === 'environment' && isMountedRef.current && cameraOpIdRef.current === opId) {
+      // Final fallback on single-camera / desktop devices when requested facing wasn't available
+      const alternateFacing: 'user' | 'environment' = desiredFacing === 'environment' ? 'user' : 'environment';
+      if (isMountedRef.current && cameraOpIdRef.current === opId) {
         try {
-          await tryStartWith({ facingMode: 'user' });
+          await tryStartWith({ facingMode: alternateFacing });
           if (!isMountedRef.current || cameraOpIdRef.current !== opId) {
             await stopCamera();
             return;
           }
-          cameraFacingRef.current = 'user';
-          setCameraFacing('user');
+          cameraFacingRef.current = alternateFacing;
+          setCameraFacing(alternateFacing);
           setScanning(true);
           setIsStartingCamera(false);
           return;
@@ -760,15 +826,18 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       if (!isMountedRef.current || cameraOpIdRef.current !== opId) return;
       console.warn('Camera could not be started in current environment:', finalErr);
       await stopCamera();
+      const permState = await queryCameraPermissionState();
+      if (!isMountedRef.current || cameraOpIdRef.current !== opId) return;
       setIsStartingCamera(false);
       setScanning(false);
-      const raw = String(finalErr || '');
-      const isPermissionDenied = raw.toLowerCase().includes('permission') || raw.toLowerCase().includes('notallowed');
-      setCameraError(
-        isPermissionDenied
-          ? (language === 'bn' ? 'ব্রাউজারে ক্যামেরা পারমিশন দেওয়া হয়নি বা আইফ্রেম কর্তৃক ব্লক রয়েছে।' : 'Camera permission denied or restricted by browser iframe.')
-          : (finalErr?.message || String(finalErr))
-      );
+      const formatted = formatCameraStartupErrorMessage({
+        error: finalErr,
+        language: language === 'bn' ? 'bn' : 'en',
+        inIframe: isEmbeddedIframe(),
+        permissionState: permState,
+        hasMediaDevices,
+      });
+      setCameraError(formatted.message);
     }
   };
 
@@ -1835,7 +1904,10 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
         }`}
       >
         {/* TOP FLOATING OVERLAY: LIVE CLOCK & DIRECTION SELECTOR */}
-        <div className="relative z-20 w-full p-3 sm:p-4 bg-gradient-to-b from-slate-950/95 via-slate-950/60 to-transparent flex flex-wrap items-center justify-between gap-2.5">
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="relative z-20 w-full p-3 sm:p-4 bg-gradient-to-b from-slate-950/95 via-slate-950/60 to-transparent flex flex-wrap items-center justify-between gap-2.5"
+        >
           {/* Live Digital Clock Badge */}
           <div className="flex items-center space-x-2 px-3 py-1.5 rounded-2xl bg-black/60 backdrop-blur-md border border-white/15 text-white shadow-lg">
             <Clock className="w-4 h-4 text-amber-400" />
@@ -2127,11 +2199,42 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
                     )}
                     <span>{isStartingCamera ? 'ক্যামেরা সক্রিয় হচ্ছে...' : '📹 ক্যামেরা চালু করুন (Start Camera)'}</span>
                   </button>
+
+                  {isEmbeddedIframe() && typeof window !== 'undefined' && (
+                    <a
+                      href={window.location.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="px-5 py-3 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs sm:text-sm rounded-2xl shadow-lg flex items-center gap-2 transition-colors"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      <span>নতুন ট্যাবে খুলুন</span>
+                    </a>
+                  )}
+
+                  <label
+                    onClick={(e) => e.stopPropagation()}
+                    className="px-5 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-100 font-bold text-xs sm:text-sm rounded-2xl shadow-lg flex items-center gap-2 cursor-pointer transition-colors"
+                  >
+                    <Camera className="w-4 h-4 text-cyan-300" />
+                    <span>ছবি তুলে স্ক্যান করুন</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handlePhotoScan}
+                      className="hidden"
+                    />
+                  </label>
                 </div>
                 {cameraError && (
-                  <p className="mt-4 text-xs text-rose-400 max-w-sm">
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className="mt-4 px-4 py-2.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-200 max-w-md leading-relaxed"
+                  >
                     {cameraError}
-                  </p>
+                  </div>
                 )}
               </div>
             ) : (

@@ -3,10 +3,15 @@ import request from 'supertest';
 import express from 'express';
 import { createApiApp } from '../../apiApp';
 import { handler } from '../../../netlify/functions/api';
-import { parseServiceAccountFromEnv } from '../providers/firebaseProvider';
+import {
+  parseServiceAccountFromEnv,
+  toFirebaseAdminServiceError,
+} from '../providers/firebaseProvider';
 import { createSaaSMiddleware } from '../middleware';
+import { createSaasRouter } from '../router';
 import { InMemoryDatabaseProvider } from '../providers/inMemoryProvider';
 import { SaaSServiceError } from '../types';
+import { isSaaSBackendUnavailableError } from '../../../src/services/saasApi';
 
 describe('Netlify Functions & Shared API App', () => {
   it('serves /api/saas/health with safe diagnostics via createApiApp', async () => {
@@ -129,5 +134,71 @@ describe('Netlify Functions & Shared API App', () => {
       .set('Authorization', 'Bearer school-admin-token');
     expect(res.status).toBe(503);
     expect(res.body.code).toBe('ADMIN_SDK_UNAVAILABLE');
+  });
+
+  it('maps gRPC 16 UNAUTHENTICATED (revoked/deleted service account key) to 503 ADMIN_CREDENTIAL_INVALID while keeping client token errors 401', () => {
+    const grpcErr = Object.assign(
+      new Error(
+        '16 UNAUTHENTICATED: Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.'
+      ),
+      { code: 16 }
+    );
+    const mapped = toFirebaseAdminServiceError(grpcErr);
+    expect(mapped).toBeInstanceOf(SaaSServiceError);
+    expect(mapped?.statusCode).toBe(503);
+    expect(mapped?.code).toBe('ADMIN_CREDENTIAL_INVALID');
+
+    const oauthGrantErr = new Error('invalid_grant: Invalid JWT Signature.');
+    const mappedGrant = toFirebaseAdminServiceError(oauthGrantErr);
+    expect(mappedGrant?.statusCode).toBe(503);
+    expect(mappedGrant?.code).toBe('ADMIN_CREDENTIAL_INVALID');
+
+    const expiredUserTokenErr = Object.assign(new Error('Firebase ID token has expired'), {
+      code: 'auth/id-token-expired',
+    });
+    expect(toFirebaseAdminServiceError(expiredUserTokenErr)).toBeNull();
+  });
+
+  it('returns 503 ADMIN_CREDENTIAL_INVALID from /me on revoked Admin key so frontend falls back cleanly', async () => {
+    const grpcUnauthError = Object.assign(
+      new Error('16 UNAUTHENTICATED: Request had invalid authentication credentials.'),
+      { code: 16 }
+    );
+    const auth = {
+      providerName: 'mock-auth',
+      verifyIdToken: async () => ({
+        uid: 'u1',
+        email: 'admin@school.com',
+        emailVerified: true,
+        schoolId: 'SCH003',
+        schoolRole: 'super_admin' as const,
+        isMasterAdmin: false,
+      }),
+    } as any;
+    const db = new InMemoryDatabaseProvider();
+    db.getSaaSUserByUid = async () => {
+      throw grpcUnauthError;
+    };
+    db.getSchoolById = async () => {
+      throw grpcUnauthError;
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/saas', createSaasRouter({ auth, db }));
+
+    const res = await request(app)
+      .get('/api/saas/me')
+      .set('Authorization', 'Bearer valid-user-token');
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('ADMIN_CREDENTIAL_INVALID');
+
+    expect(isSaaSBackendUnavailableError({ code: res.body.code, status: res.status })).toBe(true);
+    expect(
+      isSaaSBackendUnavailableError({
+        status: 500,
+        message: '16 UNAUTHENTICATED: Request had invalid authentication credentials.',
+      })
+    ).toBe(true);
   });
 });

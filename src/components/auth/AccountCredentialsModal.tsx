@@ -1516,7 +1516,12 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                       <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                       <div className="space-y-1">
                         <div className="font-extrabold">
-                          {fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
+                          {fallbackTriggerCode === 'ADMIN_CREDENTIAL_INVALID' ||
+                          serverDiagnostics?.initStatus === 'invalid_credentials'
+                            ? language === 'bn'
+                              ? 'সার্ভারের Firebase সার্ভিস অ্যাকাউন্ট Key-টি বাতিল/ডিলিট করা হয়েছে বা অকার্যকর'
+                              : 'Server Firebase Service Account Key Is Invalid or Revoked'
+                            : fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
                             ? language === 'bn'
                               ? 'Firebase প্রজেক্টে সার্ভারের IAM অনুমোদন এখনো সেট করা হয়নি'
                               : 'Firebase Project IAM Permissions Needed for Server User Provisioning'
@@ -1542,7 +1547,12 @@ export const AccountCredentialsModal: React.FC<AccountCredentialsModalProps> = (
                             : 'Server Firebase Admin SDK is not configured yet — creating users, changing another user’s password, or toggling logins is currently unavailable.'}
                         </div>
                         <p className="text-amber-900">
-                          {fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
+                          {fallbackTriggerCode === 'ADMIN_CREDENTIAL_INVALID' ||
+                          serverDiagnostics?.initStatus === 'invalid_credentials'
+                            ? language === 'bn'
+                              ? 'Netlify/সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON-এ থাকা পুরনো Key-টি ডিলিট বা রিভোক করা হয়েছে। Firebase Console → Project settings → Service accounts থেকে নতুন JSON Key তৈরি করে Netlify-এর Environment Variables-এ আপডেট করুন এবং Clear cache and deploy site দিন।'
+                              : 'The Service Account JSON key in FIREBASE_SERVICE_ACCOUNT_JSON was deleted or revoked. Generate a new JSON key in Firebase Console → Service accounts, update Netlify Environment Variables, and redeploy.'
+                            : fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
                             ? language === 'bn'
                               ? 'নতুন শিক্ষক/স্টাফ/শিক্ষার্থী লগইন তৈরি করতে Google Cloud IAM-এ সার্ভার সার্ভিস একাউন্টকে Cloud Datastore User, Firebase Authentication Admin এবং Service Usage Consumer রোল দিয়ে "আবার চেষ্টা" বাটনে চাপ দিন। শুধু নিজের পাসওয়ার্ড প্রথম ট্যাব ("আমার একাউন্ট ও পাসওয়ার্ড") থেকে বদলানো যাবে।'
                               : 'Grant Cloud Datastore User, Firebase Authentication Admin, and Service Usage Consumer to the server service account in Google Cloud IAM, then click Retry. You can still update your own password in the first tab.'

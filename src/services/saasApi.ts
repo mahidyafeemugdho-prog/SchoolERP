@@ -194,7 +194,7 @@ export interface SaaSMasterAnalytics {
 
 export interface SaaSHealthDiagnostics {
   adminSdkReady: boolean;
-  initStatus: 'ok' | 'missing_credentials' | 'invalid_json' | 'missing_fields' | 'init_error';
+  initStatus: 'ok' | 'missing_credentials' | 'invalid_json' | 'missing_fields' | 'invalid_credentials' | 'init_error';
   authMode?: 'service_account' | 'adc' | 'none';
   hasServiceAccountJson: boolean;
   hasSplitCredentials: boolean;
@@ -372,14 +372,19 @@ export function isNetlifyHostingEnvironment(diagnostics?: Pick<SaaSHealthDiagnos
 export function isSaaSBackendUnavailableError(err: any): boolean {
   const code = err?.code;
   const status = err?.status;
+  const msg = String(err?.message || '');
   if (
     code === 'NON_JSON_RESPONSE' ||
     code === 'EMPTY_RESPONSE' ||
     code === 'INVALID_ME_RESPONSE' ||
     code === 'ADMIN_SDK_UNAVAILABLE' ||
     code === 'ADMIN_IAM_PERMISSION_DENIED' ||
+    code === 'ADMIN_CREDENTIAL_INVALID' ||
     code === 'AUTH_VERIFIER_UNAVAILABLE'
   ) {
+    return true;
+  }
+  if (/16 UNAUTHENTICATED|Request had invalid authentication credentials|ADMIN_CREDENTIAL_INVALID/i.test(msg)) {
     return true;
   }
   if (status === 502 || status === 503 || status === 504) {

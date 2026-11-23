@@ -156,28 +156,7 @@ function mapClaimsRoleToUserRole(rawRole: string | null | undefined, isMasterAdm
 }
 
 function shouldUseClientSaaSFallback(err: any): boolean {
-  const code = err?.code;
-  const status = err?.status;
-  if (
-    code === 'NON_JSON_RESPONSE' ||
-    code === 'EMPTY_RESPONSE' ||
-    code === 'INVALID_ME_RESPONSE' ||
-    code === 'ADMIN_SDK_UNAVAILABLE' ||
-    code === 'ADMIN_IAM_PERMISSION_DENIED' ||
-    code === 'AUTH_VERIFIER_UNAVAILABLE'
-  ) {
-    return true;
-  }
-  if (status === 502 || status === 503 || status === 504) {
-    return true;
-  }
-  if (status === 404 && code !== 'SCHOOL_NOT_FOUND') {
-    return true;
-  }
-  if (err instanceof TypeError || err?.name === 'AbortError' || code === 'TIMEOUT') {
-    return true;
-  }
-  return false;
+  return isSaaSBackendUnavailableError(err);
 }
 
 function computeClientSubscriptionState(school: any, nowMs: number): SaaSComputedSubscription {
@@ -1066,18 +1045,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           await SaaSApi.updateMyCredentials({ avatarUrl: cleanUrl });
         } catch (err: any) {
-          const code = err?.code;
-          const status = err?.status;
-          const isBackendMissing =
-            code === 'NON_JSON_RESPONSE' ||
-            code === 'EMPTY_RESPONSE' ||
-            code === 'ADMIN_SDK_UNAVAILABLE' ||
-            code === 'ADMIN_IAM_PERMISSION_DENIED' ||
-            code === 'AUTH_VERIFIER_UNAVAILABLE' ||
-            status === 502 ||
-            status === 503 ||
-            status === 504;
-          if (!isBackendMissing) {
+          if (!isSaaSBackendUnavailableError(err)) {
             throw err;
           }
         }

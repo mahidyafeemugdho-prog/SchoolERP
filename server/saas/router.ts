@@ -84,7 +84,11 @@ export function createSaasRouter(deps: SaasRouterDeps) {
 
   const isAdminUnavailableOrDenied = (err: unknown): boolean => {
     if (err instanceof SaaSServiceError) {
-      return err.code === 'ADMIN_SDK_UNAVAILABLE' || err.code === 'ADMIN_IAM_PERMISSION_DENIED';
+      return (
+        err.code === 'ADMIN_SDK_UNAVAILABLE' ||
+        err.code === 'ADMIN_IAM_PERMISSION_DENIED' ||
+        err.code === 'ADMIN_CREDENTIAL_INVALID'
+      );
     }
     return Boolean(toFirebaseAdminServiceError(err));
   };

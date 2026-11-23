@@ -76,7 +76,7 @@ function loadAppletConfig(): FirebaseAppletConfig {
 
 let cachedApp: App | null = null;
 let adminInitError: string | null = null;
-let adminInitStatus: 'ok' | 'missing_credentials' | 'invalid_json' | 'missing_fields' | 'init_error' = 'missing_credentials';
+let adminInitStatus: 'ok' | 'missing_credentials' | 'invalid_json' | 'missing_fields' | 'invalid_credentials' | 'init_error' = 'missing_credentials';
 let adminAuthMode: 'service_account' | 'adc' | 'none' = 'none';
 
 function stripWrappingQuotesAndFences(raw: string): string {
@@ -320,9 +320,12 @@ function getAdminApp(): { app: App | null; config: FirebaseAppletConfig; hasCred
       'Firebase Admin credentials are not configured on this server.';
     return { app: null, config, hasCredentials: false };
   } catch (err: any) {
-    adminInitStatus = 'init_error';
+    const msg = String(err?.message || '');
+    adminInitStatus = /private key|pem|credential|decoder|unsupported/i.test(msg)
+      ? 'invalid_credentials'
+      : 'init_error';
     adminAuthMode = 'none';
-    adminInitError = err?.message || 'Failed to initialize Firebase Admin SDK';
+    adminInitError = msg || 'Failed to initialize Firebase Admin SDK';
     return { app: null, config, hasCredentials: false };
   }
 }
@@ -444,6 +447,10 @@ export class FirebaseAuthProvider implements AuthProviderInterface {
           displayName: decoded.name || email,
         };
       } catch (err: any) {
+        const adminErr = toFirebaseAdminServiceError(err);
+        if (adminErr) {
+          throw adminErr;
+        }
         throw new SaaSServiceError(
           `Invalid or expired authentication token: ${err?.message || 'unauthorized'}`,
           401,
@@ -1376,6 +1383,33 @@ export function toFirebaseAdminServiceError(err: unknown): SaaSServiceError | nu
       'ADMIN_IAM_PERMISSION_DENIED'
     );
   }
+
+  const isClientTokenError =
+    typeof code === 'string' &&
+    (code === 'auth/id-token-expired' ||
+      code === 'auth/id-token-revoked' ||
+      code === 'auth/argument-error' ||
+      code === 'auth/invalid-id-token');
+
+  const isAdminCredentialInvalid =
+    !isClientTokenError &&
+    (code === 16 ||
+      code === '16' ||
+      code === 'unauthenticated' ||
+      code === 'UNAUTHENTICATED' ||
+      httpStatusText === 'UNAUTHENTICATED' ||
+      /16 UNAUTHENTICATED|Request had invalid authentication credentials|invalid_grant|Invalid JWT Signature|DECODER routines|private key/i.test(
+        message
+      ));
+
+  if (isAdminCredentialInvalid) {
+    return new SaaSServiceError(
+      'Server Firebase Admin credentials (service account key) are invalid, deleted, or revoked. Generate a fresh Service Account JSON key and update FIREBASE_SERVICE_ACCOUNT_JSON.',
+      503,
+      'ADMIN_CREDENTIAL_INVALID'
+    );
+  }
+
   return null;
 }
 

@@ -48,7 +48,12 @@ export function createSaaSMiddleware(
         const [isDbMaster, userRecord] = await Promise.all([
           db.isMasterAdminUidOrEmail(principal.uid, principal.email),
           db.getSaaSUserByUid(principal.uid).catch((dbErr: any) => {
-            if (dbErr instanceof SaaSServiceError && (dbErr.code === 'ADMIN_SDK_UNAVAILABLE' || dbErr.code === 'ADMIN_IAM_PERMISSION_DENIED')) {
+            if (
+              dbErr instanceof SaaSServiceError &&
+              (dbErr.code === 'ADMIN_SDK_UNAVAILABLE' ||
+                dbErr.code === 'ADMIN_IAM_PERMISSION_DENIED' ||
+                dbErr.code === 'ADMIN_CREDENTIAL_INVALID')
+            ) {
               return null;
             }
             if (toFirebaseAdminServiceError(dbErr)) {
@@ -91,11 +96,12 @@ export function createSaaSMiddleware(
       req.principal = principal;
       return next();
     } catch (err: any) {
-      const status = err instanceof SaaSServiceError ? err.statusCode : 401;
+      const mapped = err instanceof SaaSServiceError ? err : toFirebaseAdminServiceError(err);
+      const status = mapped ? mapped.statusCode : 401;
       return res.status(status).json({
         success: false,
-        code: err?.code || 'UNAUTHORIZED',
-        error: err?.message || 'Unauthorized',
+        code: mapped?.code || err?.code || 'UNAUTHORIZED',
+        error: mapped?.message || err?.message || 'Unauthorized',
       });
     }
   };

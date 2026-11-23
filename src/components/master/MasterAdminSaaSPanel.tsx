@@ -380,8 +380,19 @@ export const MasterAdminSaaSPanel: React.FC = () => {
         ? 'Firebase প্রজেক্টে সার্ভারের IAM অনুমোদন (Cloud Datastore User, Firebase Authentication Admin, Service Usage Consumer) এখনো যুক্ত বা সক্রিয় হয়নি। Google Cloud IAM-এ অনুমোদন দেওয়ার পর আবার চেষ্টা করুন।'
         : 'Server Firebase Admin IAM permissions (Cloud Datastore User, Firebase Authentication Admin, Service Usage Consumer) are not yet granted on this Firebase project.';
     }
+    if (err?.code === 'ADMIN_CREDENTIAL_INVALID' || /16 UNAUTHENTICATED|Request had invalid authentication credentials/i.test(String(err?.message || ''))) {
+      refreshServerDiagnostics();
+      return language === 'bn'
+        ? 'সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON Key-টি Google Cloud থেকে ডিলিট বা বাতিল করা হয়েছে (ADMIN_CREDENTIAL_INVALID)। Firebase Console → Service accounts থেকে নতুন JSON Key ডাউনলোড করে Netlify Environment Variables-এ আপডেট করুন।'
+        : 'Server Firebase Service Account key in FIREBASE_SERVICE_ACCOUNT_JSON was deleted or revoked (ADMIN_CREDENTIAL_INVALID). Generate a fresh JSON key in Firebase Console and update Netlify Environment Variables.';
+    }
     if (isSaaSBackendUnavailableError(err)) {
       refreshServerDiagnostics();
+      if (serverDiagnostics?.initStatus === 'invalid_credentials') {
+        return language === 'bn'
+          ? 'সার্ভারের Firebase সার্ভিস অ্যাকাউন্ট Key-টি অকার্যকর বা ডিলিট করা হয়েছে। নতুন Service Account JSON দিন।'
+          : 'Server Firebase Service Account key is invalid or revoked. Provide a fresh Service Account JSON.';
+      }
       if (serverDiagnostics?.initStatus === 'invalid_json') {
         return language === 'bn'
           ? 'সার্ভারে FIREBASE_SERVICE_ACCOUNT_JSON পাওয়া গেছে, কিন্তু এর JSON ফরম্যাটে ত্রুটি রয়েছে (invalid_json)। সঠিক JSON অথবা আলাদা করে FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL এবং FIREBASE_PRIVATE_KEY সেট করুন।'
@@ -1403,7 +1414,12 @@ export const MasterAdminSaaSPanel: React.FC = () => {
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <div className="font-extrabold">
-                  {fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
+                  {fallbackTriggerCode === 'ADMIN_CREDENTIAL_INVALID' ||
+                  serverDiagnostics?.initStatus === 'invalid_credentials'
+                    ? language === 'bn'
+                      ? 'সার্ভারের Firebase সার্ভিস অ্যাকাউন্ট Key-টি বাতিল/ডিলিট করা হয়েছে বা অকার্যকর (ADMIN_CREDENTIAL_INVALID)'
+                      : 'Server Firebase Service Account Key Is Invalid or Revoked'
+                    : fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
                     ? language === 'bn'
                       ? 'Firebase প্রজেক্টে সার্ভারের IAM অনুমোদন এখনো যুক্ত হয়নি'
                       : 'Firebase Project IAM Permissions Needed for Server Admin SDK'
@@ -1433,7 +1449,12 @@ export const MasterAdminSaaSPanel: React.FC = () => {
                     : 'Server Firebase Admin SDK Unavailable — Creating Schools & Provisioning Users Disabled'}
                 </div>
                 <p className="text-[11px] text-amber-900 leading-relaxed">
-                  {fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
+                  {fallbackTriggerCode === 'ADMIN_CREDENTIAL_INVALID' ||
+                  serverDiagnostics?.initStatus === 'invalid_credentials'
+                    ? language === 'bn'
+                      ? 'Netlify বা সার্ভারের FIREBASE_SERVICE_ACCOUNT_JSON-এ থাকা পুরনো Key-টি ডিলিট বা রিভোক করা হয়েছে। Firebase Console → Project settings → Service accounts থেকে নতুন JSON Key ডাউনলোড করে Netlify Environment Variables-এ FIREBASE_SERVICE_ACCOUNT_JSON আপডেট করুন এবং "Clear cache and deploy site" দিন।'
+                      : 'The service account key in FIREBASE_SERVICE_ACCOUNT_JSON was deleted or revoked. Download a fresh JSON key from Firebase Console → Service accounts, update FIREBASE_SERVICE_ACCOUNT_JSON on Netlify, and trigger "Clear cache and deploy site".'
+                    : fallbackTriggerCode === 'ADMIN_IAM_PERMISSION_DENIED'
                     ? language === 'bn'
                       ? 'স্কুল ও পেমেন্ট তথ্য সরাসরি Firestore থেকে লোড হয়েছে। নতুন স্কুল/ইউজার তৈরি চালু করতে আপনার Google Cloud প্রজেক্টের IAM-এ সার্ভার সার্ভিস একাউন্টকে Cloud Datastore User, Firebase Authentication Admin এবং Service Usage Consumer রোল দিয়ে "পুনরায় সংযোগ করুন" চাপুন।'
                       : 'School records loaded via client Firestore fallback. Grant Cloud Datastore User, Firebase Authentication Admin, and Service Usage Consumer in Google Cloud IAM, then click Retry.'
