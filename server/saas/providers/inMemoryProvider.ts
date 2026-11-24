@@ -15,6 +15,7 @@ import {
   SubscriptionPlanId,
   SupportMessageRecord,
   SupportTicketRecord,
+  SupportVideoRecord,
   TransactionContext,
   getDefaultPlatformPaymentChannels,
 } from '../types';
@@ -199,6 +200,7 @@ export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
   public paymentChannels: PlatformPaymentChannels = getDefaultPlatformPaymentChannels();
   public supportTickets = new Map<string, SupportTicketRecord>();
   public supportMessages = new Map<string, SupportMessageRecord[]>();
+  public supportVideos = new Map<string, SupportVideoRecord>();
   public masterVault = new Map<string, MasterAdminVaultRecord>();
   private schoolSeq = 1;
 
@@ -500,6 +502,42 @@ export class InMemoryDatabaseProvider implements DatabaseProviderInterface {
     const merged = structuredClone({ ...existing, ...updates });
     this.supportTickets.set(ticketId, merged);
     return structuredClone(merged);
+  }
+
+  async listSupportVideos(): Promise<SupportVideoRecord[]> {
+    return Array.from(this.supportVideos.values())
+      .map((v) => structuredClone(v))
+      .sort((a, b) => {
+        if ((a.sortOrder ?? 0) !== (b.sortOrder ?? 0)) {
+          return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+        }
+        return (b.createdAt || '').localeCompare(a.createdAt || '');
+      });
+  }
+
+  async getSupportVideoById(videoDocId: string): Promise<SupportVideoRecord | null> {
+    const found = this.supportVideos.get(videoDocId);
+    return found ? structuredClone(found) : null;
+  }
+
+  async upsertSupportVideo(video: SupportVideoRecord): Promise<SupportVideoRecord> {
+    const clone = structuredClone(video);
+    this.supportVideos.set(clone.id, clone);
+    return structuredClone(clone);
+  }
+
+  async upsertSupportVideosBatch(videos: SupportVideoRecord[]): Promise<SupportVideoRecord[]> {
+    const saved: SupportVideoRecord[] = [];
+    for (const v of videos) {
+      const clone = structuredClone(v);
+      this.supportVideos.set(clone.id, clone);
+      saved.push(structuredClone(clone));
+    }
+    return saved;
+  }
+
+  async deleteSupportVideo(videoDocId: string): Promise<void> {
+    this.supportVideos.delete(videoDocId);
   }
 
   async runInTransaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {

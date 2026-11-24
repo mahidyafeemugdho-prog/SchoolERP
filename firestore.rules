@@ -363,6 +363,7 @@ service cloud.firestore {
           (
             (resource.data.createdByUid == request.auth.uid || hasSchoolClaim(resource.data.schoolId))
             && (request.resource.data.lastSenderRole == resource.data.lastSenderRole || request.resource.data.lastSenderRole == 'school')
+            && (request.resource.data.status == resource.data.status || request.resource.data.status in ['open', 'resolved'])
           )
         );
       allow delete: if isValidId(ticketId) && isMasterAdmin();
@@ -405,6 +406,73 @@ service cloud.firestore {
           );
         allow update, delete: if false;
       }
+    }
+
+    // -------------------------------------------------------------------------
+    // Support Video Tutorials (Master Admin writes, Signed-in School Admins read)
+    // -------------------------------------------------------------------------
+    function isValidSupportVideo(data, docId) {
+      return data.keys().hasAll([
+          'id', 'title', 'category', 'videoId', 'embedUrl', 'watchUrl',
+          'thumbnailUrl', 'audience', 'sortOrder', 'isActive',
+          'createdByUid', 'createdByName', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'title', 'description', 'category', 'videoId', 'embedUrl',
+          'watchUrl', 'thumbnailUrl', 'audience', 'sortOrder', 'isActive',
+          'createdByUid', 'createdByName', 'createdAt', 'updatedAt'
+        ])
+        && data.id == docId
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 180
+        && (!('description' in data) || (data.description is string && data.description.size() <= 1000))
+        && data.category in ['getting_started', 'fees', 'attendance', 'exams', 'students', 'settings', 'other']
+        && data.videoId is string && data.videoId.matches('^[a-zA-Z0-9_\\-]{11}$')
+        && data.embedUrl is string && data.embedUrl.size() <= 300
+        && data.embedUrl.matches('^https://www\\.youtube(-nocookie)?\\.com/embed/[a-zA-Z0-9_\\-]{11}(\\?.*)?$')
+        && data.watchUrl is string && data.watchUrl.size() <= 300
+        && data.watchUrl.matches('^https://www\\.youtube\\.com/watch\\?v=[a-zA-Z0-9_\\-]{11}.*$')
+        && data.thumbnailUrl is string && data.thumbnailUrl.size() <= 300
+        && data.thumbnailUrl.matches('^https://i\\.ytimg\\.com/vi/[a-zA-Z0-9_\\-]+/.*$')
+        && data.audience in ['admins', 'all']
+        && data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 10000
+        && data.isActive is bool
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 150
+        && data.createdAt is string && data.createdAt.size() <= 64
+        && data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    match /support_videos/{docId} {
+      allow get: if isValidId(docId) && (
+        isMasterAdmin() ||
+        (
+          isSignedIn()
+          && resource.data.isActive == true
+          && (
+            resource.data.audience == 'all' ||
+            request.auth.token.schoolRole in ['super_admin', 'admin']
+          )
+        )
+      );
+      allow list: if isMasterAdmin() || (
+        isSignedIn()
+        && resource.data.isActive == true
+        && (
+          resource.data.audience == 'all' ||
+          request.auth.token.schoolRole in ['super_admin', 'admin']
+        )
+      );
+      allow create: if isValidId(docId)
+        && isMasterAdmin()
+        && isValidSupportVideo(request.resource.data, docId)
+        && request.resource.data.createdByUid == request.auth.uid;
+      allow update: if isValidId(docId)
+        && isMasterAdmin()
+        && isValidSupportVideo(request.resource.data, docId)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isValidId(docId) && isMasterAdmin();
     }
 
     match /test/{docId} {

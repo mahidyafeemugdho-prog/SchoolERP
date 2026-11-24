@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   doc,
   onSnapshot,
   orderBy,
@@ -21,8 +22,12 @@ import {
   SupportMessageDTO,
   SupportTicketDTO,
   SupportTicketStatus,
+  SupportVideoAudience,
+  SupportVideoCategory,
+  SupportVideoDTO,
   isSaaSBackendUnavailableError,
 } from './saasApi';
+import { parseYouTubeEmbedInput } from '../utils/youtubeEmbed';
 
 export const SUPPORT_UPDATED_EVENT = 'support_tickets_updated';
 
@@ -487,6 +492,294 @@ export async function markSupportTicketReadClient(
       emitSupportUpdated();
     } catch {
       // ignore non-critical read receipt failures
+    }
+  }
+}
+
+export const SUPPORT_VIDEOS_UPDATED_EVENT = 'support_videos_updated';
+
+export function emitSupportVideosUpdated(videos?: SupportVideoDTO[]) {
+  try {
+    window.dispatchEvent(
+      new CustomEvent(SUPPORT_VIDEOS_UPDATED_EVENT, { detail: { videos } })
+    );
+  } catch {
+    // ignore outside browser window
+  }
+}
+
+export function sortSupportVideos(videos: SupportVideoDTO[]): SupportVideoDTO[] {
+  return [...videos].sort((a, b) => {
+    const orderDiff = (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0);
+    if (orderDiff !== 0) return orderDiff;
+    return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+  });
+}
+
+export interface SubscribeSupportVideosParams {
+  isMasterAdmin: boolean;
+  schoolRole?: string | null;
+  onVideos: (videos: SupportVideoDTO[]) => void;
+  onError?: (err: Error) => void;
+}
+
+export function subscribeToSupportVideos({
+  isMasterAdmin,
+  schoolRole,
+  onVideos,
+  onError,
+}: SubscribeSupportVideosParams): Unsubscribe {
+  let cancelled = false;
+  let unsubSnapshot: Unsubscribe | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  const isAdminRole = schoolRole === 'super_admin' || schoolRole === 'admin';
+
+  const filterVisible = (list: SupportVideoDTO[]): SupportVideoDTO[] => {
+    if (isMasterAdmin) return sortSupportVideos(list);
+    return sortSupportVideos(
+      list.filter(
+        (v) =>
+          v?.isActive &&
+          (v.audience === 'all' || (v.audience === 'admins' && isAdminRole))
+      )
+    );
+  };
+
+  const deliver = (list: SupportVideoDTO[]) => {
+    if (cancelled) return;
+    const filtered = filterVisible(list);
+    onVideos(filtered);
+    emitSupportVideosUpdated(filtered);
+  };
+
+  const fetchViaApi = async () => {
+    if (cancelled || !auth.currentUser) return;
+    try {
+      const res = await SaaSApi.listSupportVideos();
+      if (!cancelled && Array.isArray(res.videos)) {
+        deliver(res.videos);
+      }
+    } catch (err: any) {
+      if (!isSaaSBackendUnavailableError(err) && onError && !cancelled) {
+        onError(err instanceof Error ? err : new Error(String(err)));
+      }
+    }
+  };
+
+  const startApiPollingFallback = () => {
+    if (cancelled || pollTimer) return;
+    pollTimer = setInterval(() => {
+      void fetchViaApi();
+    }, 15000);
+  };
+
+  void fetchViaApi();
+
+  if (auth.currentUser) {
+    try {
+      const colRef = collection(db, 'support_videos');
+      const q = isMasterAdmin
+        ? query(colRef)
+        : isAdminRole
+        ? query(colRef, where('isActive', '==', true))
+        : query(
+            colRef,
+            where('isActive', '==', true),
+            where('audience', '==', 'all')
+          );
+
+      unsubSnapshot = onSnapshot(
+        q,
+        (snap) => {
+          if (cancelled) return;
+          const list = snap.docs
+            .map((d) => d.data() as SupportVideoDTO)
+            .filter((v) => Boolean(v?.id && v?.embedUrl));
+          deliver(list);
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'support_videos');
+          startApiPollingFallback();
+        }
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, 'support_videos');
+      startApiPollingFallback();
+    }
+  }
+
+  return () => {
+    cancelled = true;
+    if (unsubSnapshot) unsubSnapshot();
+    if (pollTimer) clearInterval(pollTimer);
+  };
+}
+
+export interface CreateSupportVideoItemInput {
+  title: string;
+  description?: string;
+  category?: SupportVideoCategory;
+  rawInput: string;
+  audience?: SupportVideoAudience;
+  sortOrder?: number;
+}
+
+export async function createSupportVideosClient(
+  items: CreateSupportVideoItemInput[],
+  meta: { createdByName: string; existingMaxOrder?: number }
+): Promise<SupportVideoDTO[]> {
+  try {
+    const res = await SaaSApi.createSupportVideos({ videos: items });
+    emitSupportVideosUpdated();
+    return res.videos;
+  } catch (err: any) {
+    if (!isSaaSBackendUnavailableError(err)) {
+      throw err;
+    }
+
+    const user = auth.currentUser;
+    if (!user) {
+      throw new Error('Authentication required to upload support videos.');
+    }
+
+    const nowIso = new Date().toISOString();
+    const baseOrder = meta.existingMaxOrder ?? 0;
+    const batch = writeBatch(db);
+    const created: SupportVideoDTO[] = [];
+
+    items.forEach((item, idx) => {
+      const parsed = parseYouTubeEmbedInput(item.rawInput);
+      if (!parsed) {
+        throw new Error(
+          `ভিডিও #${idx + 1}: সঠিক YouTube এম্বেড কোড (<iframe>) বা লিংক দিন।`
+        );
+      }
+      const title = String(item.title || parsed.extractedTitle || '').trim().slice(0, 180);
+      if (!title) {
+        throw new Error(`ভিডিও #${idx + 1}: শিরোনাম লিখুন।`);
+      }
+      const rand = Math.random().toString(36).slice(2, 7);
+      const id = `vid_${Date.now()}_${idx}_${rand}`;
+      const record: SupportVideoDTO = {
+        id,
+        title,
+        ...(item.description?.trim() ? { description: item.description.trim().slice(0, 1000) } : {}),
+        category: item.category || 'getting_started',
+        videoId: parsed.videoId,
+        embedUrl: parsed.embedUrl,
+        watchUrl: parsed.watchUrl,
+        thumbnailUrl: parsed.thumbnailUrl,
+        audience: item.audience === 'all' ? 'all' : 'admins',
+        sortOrder:
+          typeof item.sortOrder === 'number' && Number.isFinite(item.sortOrder)
+            ? Math.max(0, Math.floor(item.sortOrder))
+            : baseOrder + idx + 1,
+        isActive: true,
+        createdByUid: user.uid,
+        createdByName: meta.createdByName || 'Master Admin',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      batch.set(doc(db, 'support_videos', id), record);
+      created.push(record);
+    });
+
+    try {
+      await batch.commit();
+      emitSupportVideosUpdated();
+      return created;
+    } catch (fsErr) {
+      handleFirestoreError(fsErr, OperationType.CREATE, 'support_videos');
+      throw fsErr;
+    }
+  }
+}
+
+export async function updateSupportVideoClient(
+  existing: SupportVideoDTO,
+  updates: {
+    title?: string;
+    description?: string;
+    category?: SupportVideoCategory;
+    rawInput?: string;
+    audience?: SupportVideoAudience;
+    sortOrder?: number;
+    isActive?: boolean;
+  }
+): Promise<SupportVideoDTO> {
+  try {
+    const res = await SaaSApi.updateSupportVideo(existing.id, updates);
+    emitSupportVideosUpdated();
+    return res.video;
+  } catch (err: any) {
+    if (!isSaaSBackendUnavailableError(err)) {
+      throw err;
+    }
+
+    let videoId = existing.videoId;
+    let embedUrl = existing.embedUrl;
+    let watchUrl = existing.watchUrl;
+    let thumbnailUrl = existing.thumbnailUrl;
+
+    if (updates.rawInput?.trim()) {
+      const parsed = parseYouTubeEmbedInput(updates.rawInput.trim());
+      if (!parsed) {
+        throw new Error('সঠিক YouTube এম্বেড কোড (<iframe>) বা লিংক দিন।');
+      }
+      videoId = parsed.videoId;
+      embedUrl = parsed.embedUrl;
+      watchUrl = parsed.watchUrl;
+      thumbnailUrl = parsed.thumbnailUrl;
+    }
+
+    const updated: SupportVideoDTO = {
+      ...existing,
+      title: updates.title !== undefined ? updates.title.trim().slice(0, 180) : existing.title,
+      ...(updates.description !== undefined
+        ? updates.description.trim()
+          ? { description: updates.description.trim().slice(0, 1000) }
+          : {}
+        : existing.description
+        ? { description: existing.description }
+        : {}),
+      category: updates.category ?? existing.category,
+      videoId,
+      embedUrl,
+      watchUrl,
+      thumbnailUrl,
+      audience: updates.audience ?? existing.audience,
+      sortOrder:
+        updates.sortOrder !== undefined ? Math.max(0, Math.floor(updates.sortOrder)) : existing.sortOrder,
+      isActive: updates.isActive !== undefined ? updates.isActive : existing.isActive,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await setDoc(doc(db, 'support_videos', existing.id), updated);
+      emitSupportVideosUpdated();
+      return updated;
+    } catch (fsErr) {
+      handleFirestoreError(fsErr, OperationType.UPDATE, `support_videos/${existing.id}`);
+      throw fsErr;
+    }
+  }
+}
+
+export async function deleteSupportVideoClient(docId: string): Promise<void> {
+  try {
+    await SaaSApi.deleteSupportVideo(docId);
+    emitSupportVideosUpdated();
+  } catch (err: any) {
+    if (!isSaaSBackendUnavailableError(err)) {
+      throw err;
+    }
+    try {
+      await deleteDoc(doc(db, 'support_videos', docId));
+      emitSupportVideosUpdated();
+    } catch (fsErr) {
+      handleFirestoreError(fsErr, OperationType.DELETE, `support_videos/${docId}`);
+      throw fsErr;
     }
   }
 }

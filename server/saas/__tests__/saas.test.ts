@@ -1536,5 +1536,127 @@ describe('SmartSchoolBD Multi-Tenant SaaS Platform API & Security Tests', () => 
     expect(switchBackToEmail.body.user.email).toBe('tariq.new@mob.edu.bd');
     expect(switchBackToEmail.body.user.username).toBeUndefined();
   });
+
+  it('31. Master Admin can batch-upload 12 YouTube embed tutorial videos while Super Admin & Admin watch and non-Master cannot modify', async () => {
+    await createTestSchool(); // SCH001 with super_admin admin@dmhs.edu.bd
+    const superAdminToken = ctx.auth.issueTestTokenForEmail('admin@dmhs.edu.bd');
+
+    // Create regular admin and teacher
+    const adminRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .send({
+        email: 'subadmin@dmhs.edu.bd',
+        password: 'Password@123',
+        displayName: 'Sub Admin',
+        schoolRole: 'admin',
+      });
+    expect(adminRes.status).toBe(201);
+    const adminToken = ctx.auth.issueTestTokenForEmail('subadmin@dmhs.edu.bd');
+
+    const teacherRes = await request(ctx.app)
+      .post('/api/saas/users')
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .send({
+        email: 'staff@dmhs.edu.bd',
+        password: 'Password@123',
+        displayName: 'School Teacher',
+        schoolRole: 'teacher',
+      });
+    expect(teacherRes.status).toBe(201);
+    const teacherToken = ctx.auth.issueTestTokenForEmail('staff@dmhs.edu.bd');
+
+    // Non-Master Admin CANNOT upload videos
+    const forbiddenUpload = await request(ctx.app)
+      .post('/api/saas/support/videos')
+      .set('Authorization', `Bearer ${superAdminToken}`)
+      .send({
+        videos: [
+          {
+            title: 'Unauthorized Video',
+            rawInput: 'https://youtu.be/dQw4w9WgXcQ',
+          },
+        ],
+      });
+    expect(forbiddenUpload.status).toBe(403);
+
+    // Master Admin rejects invalid/XSS embed payload
+    const xssRes = await request(ctx.app)
+      .post('/api/saas/support/videos')
+      .set('Authorization', `Bearer ${ctx.masterToken}`)
+      .send({
+        videos: [
+          {
+            title: 'Bad Embed',
+            rawInput: '<iframe src="https://evil.example.com/embed/12345678901"></iframe>',
+          },
+        ],
+      });
+    expect(xssRes.status).toBe(400);
+    expect(xssRes.body.code).toBe('INVALID_YOUTUBE_EMBED');
+
+    // Master Admin batch-uploads 12 YouTube tutorials (11 for admins, 1 for all staff)
+    const batchPayload = Array.from({ length: 12 }, (_, idx) => {
+      const id = `Vid_${String(idx + 1).padStart(2, '0')}AbCdE`.slice(0, 11);
+      return {
+        title: `সাপোর্ট টিউটোরিয়াল #${idx + 1}`,
+        category: idx % 2 === 0 ? 'fees' : 'attendance',
+        audience: idx === 0 ? 'all' : 'admins',
+        rawInput:
+          idx % 2 === 0
+            ? `<iframe width="560" height="315" src="https://www.youtube.com/embed/${id}?si=share" title="YouTube video player" allowfullscreen></iframe>`
+            : `https://youtu.be/${id}`,
+      };
+    });
+
+    const uploadRes = await request(ctx.app)
+      .post('/api/saas/support/videos')
+      .set('Authorization', `Bearer ${ctx.masterToken}`)
+      .send({ videos: batchPayload });
+    expect(uploadRes.status).toBe(201);
+    expect(uploadRes.body.videos).toHaveLength(12);
+    expect(uploadRes.body.videos[0].embedUrl).toContain('https://www.youtube.com/embed/');
+
+    // Super Admin & Admin see all 12 active videos
+    const superRead = await request(ctx.app)
+      .get('/api/saas/support/videos')
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(superRead.status).toBe(200);
+    expect(superRead.body.videos).toHaveLength(12);
+
+    const adminRead = await request(ctx.app)
+      .get('/api/saas/support/videos')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(adminRead.status).toBe(200);
+    expect(adminRead.body.videos).toHaveLength(12);
+
+    // Teacher only sees the 1 video marked audience='all'
+    const teacherRead = await request(ctx.app)
+      .get('/api/saas/support/videos')
+      .set('Authorization', `Bearer ${teacherToken}`);
+    expect(teacherRead.status).toBe(200);
+    expect(teacherRead.body.videos).toHaveLength(1);
+
+    // Master Admin can edit and delete a video
+    const firstId = uploadRes.body.videos[0].id;
+    const patchRes = await request(ctx.app)
+      .patch(`/api/saas/support/videos/${firstId}`)
+      .set('Authorization', `Bearer ${ctx.masterToken}`)
+      .send({ title: 'আপডেটেড ফি গাইড', isActive: false });
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body.video.title).toBe('আপডেটেড ফি গাইড');
+    expect(patchRes.body.video.isActive).toBe(false);
+
+    // Hidden video no longer appears for Super Admin
+    const afterHide = await request(ctx.app)
+      .get('/api/saas/support/videos')
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(afterHide.body.videos).toHaveLength(11);
+
+    const delRes = await request(ctx.app)
+      .delete(`/api/saas/support/videos/${firstId}`)
+      .set('Authorization', `Bearer ${ctx.masterToken}`);
+    expect(delRes.status).toBe(200);
+  });
 });
 

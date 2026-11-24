@@ -1,14 +1,8 @@
 import { SchoolProfile, Staff } from '../types';
+import { sanitizeSafeMediaUrl } from './htmlSanitizer';
 
 export function isValidSignatureSrc(src?: string | null): boolean {
-  if (!src) return false;
-  const trimmed = src.trim();
-  return (
-    trimmed.startsWith('data:image/') ||
-    trimmed.startsWith('https://') ||
-    trimmed.startsWith('http://') ||
-    trimmed.startsWith('/')
-  );
+  return sanitizeSafeMediaUrl(src).length > 0;
 }
 
 function escapeHtmlAttr(str: string): string {

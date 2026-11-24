@@ -1,4 +1,18 @@
 import { AIEvaluationResult, Homework, Student } from '../types';
+import { getFreshIdToken } from './firebase';
+
+async function buildAiHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  try {
+    const token = await getFreshIdToken(false);
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  } catch {
+    // Offline or non-Firebase preview mode falls back cleanly
+  }
+  return headers;
+}
 
 export interface AIStatusResponse {
   status: string;
@@ -49,9 +63,10 @@ export const AIService = {
         images: params.images || [],
       };
 
+      const headers = await buildAiHeaders();
       const res = await fetch('/api/ai/evaluate-homework', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
       });
 
@@ -94,9 +109,10 @@ export const AIService = {
     attendanceWarning: boolean;
   }): Promise<{ success: boolean; analytics?: { aiSummary: string; aiRecommendations: string[]; predictedGrowth?: string }; message?: string }> {
     try {
+      const headers = await buildAiHeaders();
       const res = await fetch('/api/ai/student-analytics', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(params),
       });
 
@@ -140,9 +156,10 @@ export const AIService = {
     message?: string;
   }> {
     try {
+      const headers = await buildAiHeaders();
       const res = await fetch('/api/ai/agent-chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(params),
       });
 

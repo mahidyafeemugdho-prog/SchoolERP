@@ -42,6 +42,7 @@ import {
   IDCardTheme,
 } from '../common/ModernIDCardFronts';
 import { formatDisplayLoginId, isSyntheticAuthEmail, validateLoginIdentifier } from '../../utils/loginIdentifier';
+import { printStaffJoiningRecord } from '../../utils/admissionPrintHelper';
 
 const DEFAULT_PERMISSIONS: Record<string, StaffRBACPermissions> = {
   admin: {
@@ -102,7 +103,7 @@ const DEFAULT_PERMISSIONS: Record<string, StaffRBACPermissions> = {
 };
 
 export const SuperAdminStaffRBAC: React.FC = () => {
-  const { language, toBnNumber } = useLanguage();
+  const { language, toBnNumber, formatDate } = useLanguage();
   const { saasSession, currentUser } = useAuth();
 
   const [staffList, setStaffList] = useState<Staff[]>(() => {
@@ -139,6 +140,7 @@ export const SuperAdminStaffRBAC: React.FC = () => {
   const [photoUrl, setPhotoUrl] = useState<string>('');
   const [bloodGroup, setBloodGroup] = useState<string>('B+');
   const [emergencyContact, setEmergencyContact] = useState<string>('+880 1800-998877');
+  const [joiningDate, setJoiningDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [permissions, setPermissions] = useState<StaffRBACPermissions>(DEFAULT_PERMISSIONS['teacher']);
 
   // ID Card Modal states
@@ -192,6 +194,7 @@ export const SuperAdminStaffRBAC: React.FC = () => {
     setPhotoUrl('');
     setBloodGroup('B+');
     setEmergencyContact('+880 1800-998877');
+    setJoiningDate(new Date().toISOString().split('T')[0]);
     setPermissions(DEFAULT_PERMISSIONS['teacher']);
     setShowModal(true);
   };
@@ -211,6 +214,7 @@ export const SuperAdminStaffRBAC: React.FC = () => {
     setPhotoUrl(st.photoUrl || '');
     setBloodGroup(st.bloodGroup || 'B+');
     setEmergencyContact(st.emergencyContact || '');
+    setJoiningDate(st.joiningDate || new Date().toISOString().split('T')[0]);
     setPermissions(st.permissions || DEFAULT_PERMISSIONS[st.role] || DEFAULT_PERMISSIONS['teacher']);
     setShowModal(true);
   };
@@ -335,6 +339,7 @@ export const SuperAdminStaffRBAC: React.FC = () => {
           photoUrl,
           bloodGroup,
           emergencyContact,
+          joiningDate: joiningDate.trim() || editingStaff.joiningDate || new Date().toISOString().split('T')[0],
           permissions,
           authUid: provisionedUid,
           schoolId: targetSchoolId || editingStaff.schoolId,
@@ -356,7 +361,7 @@ export const SuperAdminStaffRBAC: React.FC = () => {
           email: provisionedEmail,
           phone,
           qualification: 'B.Sc / M.A',
-          joiningDate: new Date().toISOString().split('T')[0],
+          joiningDate: joiningDate.trim() || new Date().toISOString().split('T')[0],
           basicSalary: 28000,
           houseRentAllowance: 12000,
           medicalAllowance: 2500,
@@ -590,6 +595,10 @@ export const SuperAdminStaffRBAC: React.FC = () => {
                       <div className="text-[11px] text-slate-400">
                         {st.designation} • {st.employeeId}
                       </div>
+                      <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">
+                        {language === 'bn' ? 'যোগদান:' : 'Joined:'}{' '}
+                        {st.joiningDate ? formatDate(st.joiningDate) : language === 'bn' ? 'উল্লেখ নেই' : 'N/A'}
+                      </div>
                     </td>
 
                     <td className="py-3 px-4">
@@ -681,6 +690,22 @@ export const SuperAdminStaffRBAC: React.FC = () => {
                     </td>
 
                     <td className="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          printStaffJoiningRecord({
+                            staff: st,
+                            school: schoolProfile,
+                            schoolCode: resolveSchoolCode(saasSession?.school?.schoolId, schoolProfile),
+                            language,
+                          })
+                        }
+                        className="p-1.5 px-2 rounded-lg border border-teal-200 bg-teal-50/70 hover:bg-teal-100 text-teal-800 inline-flex items-center space-x-1 transition-colors"
+                        title={language === 'bn' ? 'যোগদান ও প্রোফাইল প্রিন্ট করুন' : 'Print Staff Joining Record'}
+                      >
+                        <Printer className="w-3.5 h-3.5 text-teal-700" />
+                        <span className="font-bold text-[10px]">{language === 'bn' ? 'যোগদান প্রিন্ট' : 'Print'}</span>
+                      </button>
                       <button
                         onClick={() => handleViewIdCard(st)}
                         className="p-1.5 px-2 rounded-lg border border-blue-200 bg-blue-50/50 hover:bg-blue-100 text-blue-700 inline-flex items-center space-x-1 transition-colors"
@@ -929,6 +954,19 @@ export const SuperAdminStaffRBAC: React.FC = () => {
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-emerald-800">
+                  {language === 'bn' ? 'যোগদানের তারিখ (Joining Date) *' : 'Joining Date *'}
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={joiningDate}
+                  onChange={(e) => setJoiningDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-emerald-300 bg-emerald-50/40 rounded-lg font-semibold text-slate-900 text-xs"
+                />
               </div>
 
               {/* Permissions Checklist */}

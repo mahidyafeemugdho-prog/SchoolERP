@@ -12,6 +12,9 @@ import {
   SupportMessageRecord,
   SupportTicketRecord,
   SupportTicketStatus,
+  SupportVideoAudience,
+  SupportVideoCategory,
+  SupportVideoRecord,
   getDefaultPlatformPaymentChannels,
 } from './types';
 import { createSaaSMiddleware, AuthenticatedRequest } from './middleware';
@@ -19,6 +22,7 @@ import { evaluateSubscriptionState } from './subscriptionService';
 import { createTenantService } from './tenantService';
 import { createPaymentService } from './paymentService';
 import { toFirebaseAdminServiceError } from './providers/firebaseProvider';
+import { parseYouTubeEmbedInput } from '../../src/utils/youtubeEmbed';
 
 export interface SaasRouterDeps {
   db: DatabaseProviderInterface;
@@ -45,12 +49,11 @@ function handleRouteError(res: Response, err: unknown) {
       error: iamMapped.message,
     });
   }
-  const message = err instanceof Error ? err.message : 'Internal server error';
   console.error('[SaaS API Error]:', err);
   return res.status(500).json({
     success: false,
     code: 'INTERNAL_ERROR',
-    error: message,
+    error: 'An unexpected internal server error occurred.',
   });
 }
 
@@ -926,6 +929,16 @@ export function createSaasRouter(deps: SaasRouterDeps) {
     '/tenant/slices/:sliceName',
     mw.requireAuth,
     mw.requireActiveTenantSubscription,
+    mw.requireRole([
+      'super_admin',
+      'admin',
+      'teacher',
+      'accountant',
+      'librarian',
+      'receptionist',
+      'gatekeeper',
+      'staff',
+    ]),
     async (req: AuthenticatedRequest, res) => {
       try {
         const principal = req.principal!;
@@ -936,8 +949,17 @@ export function createSaasRouter(deps: SaasRouterDeps) {
         if (!principal.schoolId && !principal.isMasterAdmin) {
           return res.status(403).json({ success: false, code: 'NO_TENANT_CONTEXT', error: 'No tenant context.' });
         }
+        const body = req.body;
+        if (
+          !body ||
+          typeof body !== 'object' ||
+          Array.isArray(body) ||
+          Object.keys(body).some((k) => k === '__proto__' || k === 'constructor' || k === 'prototype')
+        ) {
+          return res.status(400).json({ success: false, code: 'INVALID_PAYLOAD', error: 'Invalid slice payload.' });
+        }
         const targetSchoolId = principal.isMasterAdmin
-          ? String(req.body?.schoolId || principal.schoolId || '')
+          ? String(body.schoolId || principal.schoolId || '')
           : principal.schoolId!;
 
         if (!targetSchoolId) {
@@ -945,7 +967,7 @@ export function createSaasRouter(deps: SaasRouterDeps) {
         }
 
         // Prevent cross-school overwrite via body payload
-        if (!principal.isMasterAdmin && req.body?.schoolId && req.body.schoolId !== principal.schoolId) {
+        if (!principal.isMasterAdmin && body.schoolId && body.schoolId !== principal.schoolId) {
           return res.status(403).json({
             success: false,
             code: 'CROSS_TENANT_FORBIDDEN',
@@ -953,7 +975,7 @@ export function createSaasRouter(deps: SaasRouterDeps) {
           });
         }
 
-        await deps.db.saveTenantSlice(targetSchoolId, sliceName, req.body || {});
+        await deps.db.saveTenantSlice(targetSchoolId, sliceName, body);
         res.json({ success: true, schoolId: targetSchoolId, sliceName });
       } catch (err) {
         handleRouteError(res, err);
@@ -1048,19 +1070,30 @@ export function createSaasRouter(deps: SaasRouterDeps) {
         }
 
         const amount = Number(body.amount);
-        if (!Number.isFinite(amount) || amount <= 0) {
+        if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) {
           return res.status(400).json({
             success: false,
             code: 'INVALID_AMOUNT',
-            error: 'Payment amount must be a positive number.',
+            error: 'Payment amount must be a valid positive number.',
           });
         }
 
-        const senderPhone = String(body.senderPhone || '').trim();
-        const cleanTrx = String(body.transactionId || '').trim().toUpperCase();
-        const studentId = String(body.studentId || '').trim();
-        const studentName = String(body.studentName || '').trim();
-        const feeTitle = String(body.feeTitle || '').trim();
+        const senderPhone = String(body.senderPhone || '').trim().slice(0, 30);
+        const cleanTrx = String(body.transactionId || '').trim().toUpperCase().slice(0, 64);
+        const studentId = String(body.studentId || '').trim().slice(0, 80);
+        const studentName = String(body.studentName || '').trim().slice(0, 150);
+        const feeTitle = String(body.feeTitle || '').trim().slice(0, 200);
+
+        const isStaffOrAdmin =
+          principal.isMasterAdmin ||
+          ['super_admin', 'admin', 'accountant', 'teacher', 'staff'].includes(principal.schoolRole || '');
+        if (!isStaffOrAdmin && principal.linkedStudentId && studentId !== principal.linkedStudentId) {
+          return res.status(403).json({
+            success: false,
+            code: 'CROSS_STUDENT_FORBIDDEN',
+            error: 'আপনি শুধুমাত্র আপনার নিজের/সংযুক্ত শিক্ষার্থীর জন্য পেমেন্ট রিকোয়েস্ট পাঠাতে পারবেন।',
+          });
+        }
 
         if (!senderPhone || !cleanTrx || !studentId || !studentName || !feeTitle) {
           return res.status(400).json({
@@ -1244,10 +1277,10 @@ export function createSaasRouter(deps: SaasRouterDeps) {
         }
 
         const body = req.body || {};
-        const homeworkId = String(body.homeworkId || '').trim();
-        const studentId = String(body.studentId || '').trim();
-        const studentName = String(body.studentName || '').trim();
-        const className = String(body.className || '').trim();
+        const homeworkId = String(body.homeworkId || '').trim().slice(0, 120);
+        const studentId = String(body.studentId || '').trim().slice(0, 120);
+        const studentName = String(body.studentName || '').trim().slice(0, 150);
+        const className = String(body.className || '').trim().slice(0, 60);
 
         if (!homeworkId || !studentId || !studentName || !className) {
           return res.status(400).json({
@@ -1257,13 +1290,37 @@ export function createSaasRouter(deps: SaasRouterDeps) {
           });
         }
 
+        const isHomeworkStaff =
+          principal.isMasterAdmin ||
+          ['super_admin', 'admin', 'teacher', 'staff'].includes(principal.schoolRole || '');
+
+        if (!isHomeworkStaff && principal.linkedStudentId && studentId !== principal.linkedStudentId) {
+          return res.status(403).json({
+            success: false,
+            code: 'CROSS_STUDENT_FORBIDDEN',
+            error: 'আপনি অন্য শিক্ষার্থীর নামে হোমওয়ার্ক জমা দিতে বা পরিবর্তন করতে পারবেন না।',
+          });
+        }
+
+        const sanitizedImageUrls = Array.isArray(body.imageUrls)
+          ? body.imageUrls
+              .filter(
+                (u: unknown): u is string =>
+                  typeof u === 'string' &&
+                  u.trim().length > 0 &&
+                  (/^data:image\/(png|jpeg|jpg|webp|gif);base64,/i.test(u.trim()) ||
+                    /^https?:\/\//i.test(u.trim()))
+              )
+              .slice(0, 8)
+          : [];
+
         const hasText = typeof body.textAnswer === 'string' && body.textAnswer.trim().length > 0;
-        const hasImages = Array.isArray(body.imageUrls) && body.imageUrls.length > 0;
+        const hasImages = sanitizedImageUrls.length > 0;
         if (!hasText && !hasImages) {
           return res.status(400).json({
             success: false,
             code: 'EMPTY_SUBMISSION',
-            error: 'Either textAnswer or at least one image is required.',
+            error: 'Either textAnswer or at least one valid image is required.',
           });
         }
 
@@ -1290,6 +1347,18 @@ export function createSaasRouter(deps: SaasRouterDeps) {
         const dedupKey = `${homeworkId}::${studentId}`;
         const existing = mergedMap.get(dedupKey) || Array.from(mergedMap.values()).find((s) => s.id === body.id);
 
+        if (
+          !isHomeworkStaff &&
+          existing?.reviewedBy &&
+          !String(existing.reviewedBy).startsWith('Gemini AI Evaluator')
+        ) {
+          return res.status(403).json({
+            success: false,
+            code: 'SUBMISSION_LOCKED',
+            error: 'শিক্ষক কর্তৃক মূল্যায়িত হোমওয়ার্ক পরিবর্তন করা যাবে না।',
+          });
+        }
+
         const submissionId =
           existing?.id ||
           (typeof body.id === 'string' && body.id.trim() ? body.id.trim() : `sub_${Date.now()}_${studentId}`);
@@ -1308,46 +1377,109 @@ export function createSaasRouter(deps: SaasRouterDeps) {
           'review_required',
           'pending',
         ]);
-        const status =
+        const requestedStatus =
           typeof body.status === 'string' && allowedStatuses.has(body.status) ? body.status : 'submitted';
+
+        let finalStatus = requestedStatus;
+        let finalTeacherMarks: number | undefined =
+          body.teacherMarks !== undefined && body.teacherMarks !== null && Number.isFinite(Number(body.teacherMarks))
+            ? Number(body.teacherMarks)
+            : undefined;
+        let finalTeacherFeedback = typeof body.teacherFeedback === 'string' ? body.teacherFeedback.slice(0, 4000) : undefined;
+        let finalReviewedBy = typeof body.reviewedBy === 'string' ? body.reviewedBy.slice(0, 150) : undefined;
+        let finalReviewedAt = typeof body.reviewedAt === 'string' ? body.reviewedAt.slice(0, 64) : undefined;
+
+        if (!isHomeworkStaff) {
+          if (requestedStatus === 'rejected' || requestedStatus === 'resubmission_requested') {
+            return res.status(403).json({
+              success: false,
+              code: 'GRADE_TAMPERING_FORBIDDEN',
+              error: 'শিক্ষার্থী নিজে হোমওয়ার্ক স্ট্যাটাস পরিবর্তন করতে পারবেন না।',
+            });
+          }
+
+          const hasAutoApprovedAiEval =
+            body.aiEvaluation &&
+            typeof body.aiEvaluation === 'object' &&
+            body.aiEvaluation.status === 'evaluated' &&
+            body.aiEvaluation.requiresTeacherReview === false;
+
+          if (hasAutoApprovedAiEval) {
+            const evalFullMarks = Math.min(1000, Math.max(1, Number(body.aiEvaluation.fullMarks || 100)));
+            const aiSuggestedMarks = Number(body.aiEvaluation.suggestedMarks);
+            if (!Number.isFinite(aiSuggestedMarks) || aiSuggestedMarks < 0 || aiSuggestedMarks > evalFullMarks) {
+              return res.status(400).json({
+                success: false,
+                code: 'INVALID_AI_MARKS',
+                error: 'Invalid AI evaluation score range.',
+              });
+            }
+            if (
+              body.teacherMarks !== undefined &&
+              body.teacherMarks !== null &&
+              Number(body.teacherMarks) !== aiSuggestedMarks
+            ) {
+              return res.status(403).json({
+                success: false,
+                code: 'GRADE_TAMPERING_FORBIDDEN',
+                error: 'শিক্ষকের নম্বর পরিবর্তন করা অনুমোদিত নয়।',
+              });
+            }
+            finalStatus = requestedStatus === 'ai_evaluated' ? 'ai_evaluated' : 'approved';
+            finalTeacherMarks = aiSuggestedMarks;
+            finalReviewedBy = 'Gemini AI Evaluator (স্বয়ংক্রিয়)';
+            finalReviewedAt = nowIso;
+          } else {
+            if (
+              (body.teacherMarks !== undefined && body.teacherMarks !== null) ||
+              requestedStatus === 'approved'
+            ) {
+              return res.status(403).json({
+                success: false,
+                code: 'GRADE_TAMPERING_FORBIDDEN',
+                error: 'শিক্ষক অনুমোদন ছাড়া নম্বর বা অনুমোদিত স্ট্যাটাস নির্ধারণ করা যাবে না।',
+              });
+            }
+            finalStatus = requestedStatus === 'review_required' || requestedStatus === 'pending' ? requestedStatus : 'submitted';
+            finalTeacherMarks = undefined;
+            finalReviewedBy = undefined;
+            finalReviewedAt = undefined;
+          }
+        }
 
         const savedSubmission: Record<string, any> = {
           id: submissionId,
           homeworkId,
           studentId,
           ...(typeof body.studentCode === 'string' && body.studentCode.trim()
-            ? { studentCode: body.studentCode.trim() }
+            ? { studentCode: body.studentCode.trim().slice(0, 80) }
             : {}),
           studentName,
-          studentRoll: String(body.studentRoll || '').trim(),
+          studentRoll: String(body.studentRoll || '').trim().slice(0, 30),
           className,
-          section: String(body.section || '').trim(),
+          section: String(body.section || '').trim().slice(0, 30),
           submissionDate:
             typeof body.submissionDate === 'string' && body.submissionDate.trim()
-              ? body.submissionDate.trim()
+              ? body.submissionDate.trim().slice(0, 64)
               : nowIso.replace('T', ' ').slice(0, 16),
           submissionType:
             typeof body.submissionType === 'string' && body.submissionType.trim()
-              ? body.submissionType.trim()
+              ? body.submissionType.trim().slice(0, 40)
               : hasImages
               ? 'handwritten_image'
               : 'text',
-          imageUrls: Array.isArray(body.imageUrls)
-            ? body.imageUrls.filter((u: unknown) => typeof u === 'string' && u.length > 0).slice(0, 8)
-            : [],
-          textAnswer: typeof body.textAnswer === 'string' ? body.textAnswer : '',
+          imageUrls: sanitizedImageUrls,
+          textAnswer: typeof body.textAnswer === 'string' ? body.textAnswer.slice(0, 15000) : '',
           ...(typeof body.attachmentName === 'string' && body.attachmentName.trim()
-            ? { attachmentName: body.attachmentName.trim() }
+            ? { attachmentName: body.attachmentName.trim().slice(0, 180) }
             : {}),
-          status,
+          status: finalStatus,
           version: nextVersion,
           ...(body.aiEvaluation && typeof body.aiEvaluation === 'object' ? { aiEvaluation: body.aiEvaluation } : {}),
-          ...(body.teacherMarks !== undefined && body.teacherMarks !== null
-            ? { teacherMarks: Number(body.teacherMarks) }
-            : {}),
-          ...(typeof body.teacherFeedback === 'string' ? { teacherFeedback: body.teacherFeedback } : {}),
-          ...(typeof body.reviewedBy === 'string' ? { reviewedBy: body.reviewedBy } : {}),
-          ...(typeof body.reviewedAt === 'string' ? { reviewedAt: body.reviewedAt } : {}),
+          ...(finalTeacherMarks !== undefined ? { teacherMarks: finalTeacherMarks } : {}),
+          ...(finalTeacherFeedback !== undefined ? { teacherFeedback: finalTeacherFeedback } : {}),
+          ...(finalReviewedBy !== undefined ? { reviewedBy: finalReviewedBy } : {}),
+          ...(finalReviewedAt !== undefined ? { reviewedAt: finalReviewedAt } : {}),
           submittedByUid: principal.uid,
           submittedByRole: principal.schoolRole || 'student',
           updatedAt: nowIso,
@@ -1474,11 +1606,11 @@ export function createSaasRouter(deps: SaasRouterDeps) {
 
       const schoolName =
         school?.schoolName ||
-        (typeof body.schoolName === 'string' && body.schoolName.trim()) ||
+        (!principal.schoolId && typeof body.schoolName === 'string' && body.schoolName.trim().slice(0, 180)) ||
         (targetSchoolId === 'PLATFORM' ? 'Platform Direct' : targetSchoolId);
       const schoolCode =
         school?.schoolCode ||
-        (typeof body.schoolCode === 'string' && body.schoolCode.trim()) ||
+        (!principal.schoolId && typeof body.schoolCode === 'string' && body.schoolCode.trim().slice(0, 40)) ||
         undefined;
 
       const nowIso = nowProvider().toISOString();
@@ -1714,6 +1846,278 @@ export function createSaasRouter(deps: SaasRouterDeps) {
 
         const updated = await deps.db.updateSupportTicket(ticketId, updates);
         return res.json({ success: true, ticket: updated });
+      } catch (err) {
+        handleRouteError(res, err);
+      }
+    }
+  );
+
+  // =========================================================================
+  // SUPPORT VIDEO TUTORIALS (YouTube Embeds uploaded by Master Admin)
+  // =========================================================================
+  const VALID_VIDEO_CATEGORIES = new Set<SupportVideoCategory>([
+    'getting_started',
+    'fees',
+    'attendance',
+    'exams',
+    'students',
+    'settings',
+    'other',
+  ]);
+
+  const normalizeVideoCategory = (raw: unknown): SupportVideoCategory => {
+    const str = String(raw || '').trim() as SupportVideoCategory;
+    return VALID_VIDEO_CATEGORIES.has(str) ? str : 'getting_started';
+  };
+
+  const normalizeVideoAudience = (raw: unknown): SupportVideoAudience => {
+    return raw === 'all' ? 'all' : 'admins';
+  };
+
+  router.get('/support/videos', mw.requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const principal = req.principal!;
+      const all = await deps.db.listSupportVideos();
+      const isSchoolAdminRole =
+        principal.schoolRole === 'super_admin' || principal.schoolRole === 'admin';
+
+      const visible = principal.isMasterAdmin
+        ? all
+        : all.filter(
+            (v) =>
+              v.isActive &&
+              (v.audience === 'all' || (v.audience === 'admins' && isSchoolAdminRole))
+          );
+
+      return res.json({ success: true, videos: visible });
+    } catch (err) {
+      handleRouteError(res, err);
+    }
+  });
+
+  router.post(
+    '/support/videos',
+    mw.requireAuth,
+    mw.requireMasterAdmin,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const principal = req.principal!;
+        const body = req.body || {};
+        const rawItems = Array.isArray(body.videos)
+          ? body.videos
+          : [
+              {
+                title: body.title,
+                description: body.description,
+                category: body.category,
+                rawInput: body.rawInput ?? body.embedCode ?? body.url,
+                audience: body.audience,
+                sortOrder: body.sortOrder,
+              },
+            ];
+
+        if (rawItems.length === 0) {
+          return res.status(400).json({
+            success: false,
+            code: 'EMPTY_VIDEOS',
+            error: 'অন্তত ১টি ভিডিও এম্বেড কোড বা YouTube লিংক দিন।',
+          });
+        }
+        if (rawItems.length > 30) {
+          return res.status(400).json({
+            success: false,
+            code: 'TOO_MANY_VIDEOS',
+            error: 'একবারে সর্বোচ্চ ৩০টি ভিডিও আপলোড করা যাবে।',
+          });
+        }
+
+        const existing = await deps.db.listSupportVideos();
+        const maxOrder = existing.reduce(
+          (max, item) => Math.max(max, Number(item.sortOrder) || 0),
+          0
+        );
+
+        const nowIso = nowProvider().toISOString();
+        const toSave: SupportVideoRecord[] = [];
+
+        for (let i = 0; i < rawItems.length; i++) {
+          const item = rawItems[i] || {};
+          const rawInput = String(item.rawInput ?? item.embedCode ?? item.url ?? '').trim();
+          const parsed = parseYouTubeEmbedInput(rawInput);
+          if (!parsed) {
+            return res.status(400).json({
+              success: false,
+              code: 'INVALID_YOUTUBE_EMBED',
+              error: `ভিডিও #${i + 1}: সঠিক YouTube এম্বেড কোড (<iframe>) অথবা YouTube লিংক দিন।`,
+            });
+          }
+
+          const title = String(item.title || parsed.extractedTitle || '')
+            .trim()
+            .slice(0, 180);
+          if (!title) {
+            return res.status(400).json({
+              success: false,
+              code: 'MISSING_VIDEO_TITLE',
+              error: `ভিডিও #${i + 1}: ভিডিওর শিরোনাম লিখুন।`,
+            });
+          }
+
+          const description =
+            typeof item.description === 'string' && item.description.trim()
+              ? item.description.trim().slice(0, 1000)
+              : undefined;
+
+          const parsedSort = Number(item.sortOrder);
+          const sortOrder =
+            Number.isFinite(parsedSort) && parsedSort >= 0 && parsedSort <= 10000
+              ? Math.floor(parsedSort)
+              : maxOrder + i + 1;
+
+          const rand = Math.random().toString(36).slice(2, 7);
+          const docId = `vid_${Date.now()}_${i}_${rand}`;
+
+          toSave.push({
+            id: docId,
+            title,
+            ...(description ? { description } : {}),
+            category: normalizeVideoCategory(item.category),
+            videoId: parsed.videoId,
+            embedUrl: parsed.embedUrl,
+            watchUrl: parsed.watchUrl,
+            thumbnailUrl: parsed.thumbnailUrl,
+            audience: normalizeVideoAudience(item.audience),
+            sortOrder,
+            isActive: item.isActive !== false,
+            createdByUid: principal.uid,
+            createdByName: principal.displayName || 'Master Admin',
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          });
+        }
+
+        const created = await deps.db.upsertSupportVideosBatch(toSave);
+        return res.status(201).json({ success: true, videos: created });
+      } catch (err) {
+        handleRouteError(res, err);
+      }
+    }
+  );
+
+  router.patch(
+    '/support/videos/:docId',
+    mw.requireAuth,
+    mw.requireMasterAdmin,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const docId = String(req.params.docId || '').trim();
+        const existing = await deps.db.getSupportVideoById(docId);
+        if (!existing) {
+          return res.status(404).json({
+            success: false,
+            code: 'VIDEO_NOT_FOUND',
+            error: 'টিউটোরিয়াল ভিডিওটি পাওয়া যায়নি।',
+          });
+        }
+
+        const body = req.body || {};
+        let videoId = existing.videoId;
+        let embedUrl = existing.embedUrl;
+        let watchUrl = existing.watchUrl;
+        let thumbnailUrl = existing.thumbnailUrl;
+
+        const rawInput = body.rawInput ?? body.embedCode ?? body.url;
+        if (typeof rawInput === 'string' && rawInput.trim()) {
+          const parsed = parseYouTubeEmbedInput(rawInput.trim());
+          if (!parsed) {
+            return res.status(400).json({
+              success: false,
+              code: 'INVALID_YOUTUBE_EMBED',
+              error: 'সঠিক YouTube এম্বেড কোড (<iframe>) অথবা YouTube লিংক দিন।',
+            });
+          }
+          videoId = parsed.videoId;
+          embedUrl = parsed.embedUrl;
+          watchUrl = parsed.watchUrl;
+          thumbnailUrl = parsed.thumbnailUrl;
+        }
+
+        const nextTitle =
+          typeof body.title === 'string' ? body.title.trim().slice(0, 180) : existing.title;
+        if (!nextTitle) {
+          return res.status(400).json({
+            success: false,
+            code: 'MISSING_VIDEO_TITLE',
+            error: 'ভিডিওর শিরোনাম খালি রাখা যাবে না।',
+          });
+        }
+
+        const nextDescription =
+          body.description === ''
+            ? undefined
+            : typeof body.description === 'string'
+            ? body.description.trim().slice(0, 1000)
+            : existing.description;
+
+        const parsedSort = Number(body.sortOrder);
+        const nextSort =
+          body.sortOrder !== undefined &&
+          Number.isFinite(parsedSort) &&
+          parsedSort >= 0 &&
+          parsedSort <= 10000
+            ? Math.floor(parsedSort)
+            : existing.sortOrder;
+
+        const updated: SupportVideoRecord = {
+          id: existing.id,
+          title: nextTitle,
+          ...(nextDescription ? { description: nextDescription } : {}),
+          category:
+            body.category !== undefined
+              ? normalizeVideoCategory(body.category)
+              : existing.category,
+          videoId,
+          embedUrl,
+          watchUrl,
+          thumbnailUrl,
+          audience:
+            body.audience !== undefined
+              ? normalizeVideoAudience(body.audience)
+              : existing.audience,
+          sortOrder: nextSort,
+          isActive:
+            typeof body.isActive === 'boolean' ? body.isActive : existing.isActive,
+          createdByUid: existing.createdByUid,
+          createdByName: existing.createdByName,
+          createdAt: existing.createdAt,
+          updatedAt: nowProvider().toISOString(),
+        };
+
+        const saved = await deps.db.upsertSupportVideo(updated);
+        return res.json({ success: true, video: saved });
+      } catch (err) {
+        handleRouteError(res, err);
+      }
+    }
+  );
+
+  router.delete(
+    '/support/videos/:docId',
+    mw.requireAuth,
+    mw.requireMasterAdmin,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const docId = String(req.params.docId || '').trim();
+        const existing = await deps.db.getSupportVideoById(docId);
+        if (!existing) {
+          return res.status(404).json({
+            success: false,
+            code: 'VIDEO_NOT_FOUND',
+            error: 'টিউটোরিয়াল ভিডিওটি পাওয়া যায়নি।',
+          });
+        }
+        await deps.db.deleteSupportVideo(docId);
+        return res.json({ success: true, deletedId: docId });
       } catch (err) {
         handleRouteError(res, err);
       }

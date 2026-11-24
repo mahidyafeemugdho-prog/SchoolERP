@@ -1,9 +1,11 @@
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createSaasRouter } from './saas/router';
+import { AuthenticatedRequest, createSaaSMiddleware } from './saas/middleware';
+import { AuthProviderInterface, DatabaseProviderInterface } from './saas/types';
 import {
   FirebaseAuthProvider,
   FirebaseDatabaseProvider,
@@ -13,6 +15,70 @@ import {
 
 export interface CreateApiAppOptions {
   dataDir?: string;
+  saasAuthProvider?: AuthProviderInterface;
+  saasDbProvider?: DatabaseProviderInterface;
+}
+
+const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const SAFE_DATA_IMAGE_REGEX = /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/i;
+
+function isPlainRecord(value: unknown): value is Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  for (const key of Object.keys(value)) {
+    if (DANGEROUS_OBJECT_KEYS.has(key)) return false;
+  }
+  return true;
+}
+
+function sanitizeText(value: unknown, maxLength: number): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().slice(0, maxLength);
+}
+
+function sanitizeOptionalMediaUrl(value: unknown, maxLength = 2_000_000): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > maxLength) return '';
+  if (/[\u0000-\u001F\u007F"'<>]/.test(trimmed)) return '';
+  if (SAFE_DATA_IMAGE_REGEX.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.toString();
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+function createUserRateLimiter(maxRequests: number, windowMs: number) {
+  const buckets = new Map<string, number[]>();
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    const key = req.principal?.uid || req.ip || 'anonymous';
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const prev = buckets.get(key) || [];
+    const recent = prev.filter((ts) => ts > cutoff);
+    if (recent.length >= maxRequests) {
+      return res.status(429).json({
+        success: false,
+        code: 'RATE_LIMITED',
+        error: 'অনেক দ্রুত অনুরোধ পাঠানো হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।',
+      });
+    }
+    recent.push(now);
+    buckets.set(key, recent);
+    if (buckets.size > 5000) {
+      for (const [bucketKey, timestamps] of buckets.entries()) {
+        if (!timestamps.some((ts) => ts > cutoff)) {
+          buckets.delete(bucketKey);
+        }
+      }
+    }
+    return next();
+  };
 }
 
 function resolveWritableDataDir(explicitDir?: string): string {
@@ -45,6 +111,7 @@ function resolveWritableDataDir(explicitDir?: string): string {
 
 export function createApiApp(options: CreateApiAppOptions = {}): express.Express {
   const app = express();
+  app.disable('x-powered-by');
   const dataDir = resolveWritableDataDir(options.dataDir);
   const schoolProfileFile = path.join(dataDir, 'school-profile.json');
   const mfsSettingsFile = path.join(dataDir, 'mfs-settings.json');
@@ -58,19 +125,25 @@ export function createApiApp(options: CreateApiAppOptions = {}): express.Express
     next();
   });
 
-  // Middleware for parsing JSON with large payload support for images
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  // Middleware for parsing JSON with bounded payload support for homework images
+  app.use(express.json({ limit: '25mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
-  // Allow Firebase OAuth popup opener communication on Chrome / Mobile Chrome
+  // Security headers compatible with Firebase Auth popups and AppCreator24/AI Studio iframes
   app.use((_req, res, next) => {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self)');
     next();
   });
 
   // Mount Multi-Tenant SaaS REST API (Repository/Provider Pattern)
-  const saasAuthProvider = new FirebaseAuthProvider();
-  const saasDbProvider = new FirebaseDatabaseProvider();
+  const saasAuthProvider = options.saasAuthProvider ?? new FirebaseAuthProvider();
+  const saasDbProvider = options.saasDbProvider ?? new FirebaseDatabaseProvider();
+  const saasMw = createSaaSMiddleware(saasAuthProvider, saasDbProvider);
+  app.locals.saasMw = saasMw;
+
   app.use(
     '/api/saas',
     createSaasRouter({
@@ -89,23 +162,49 @@ export function createApiApp(options: CreateApiAppOptions = {}): express.Express
         return res.json({ success: true, profile: data });
       }
       return res.json({ success: true, profile: null });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+    } catch (err) {
+      console.error('Failed to read school profile:', err);
+      return res.status(500).json({ success: false, error: 'Failed to load school profile.' });
     }
   });
 
-  app.post('/api/school-profile', (req: Request, res: Response) => {
-    try {
-      const profile = req.body;
-      if (!profile || typeof profile !== 'object') {
-        return res.status(400).json({ success: false, error: 'Invalid profile data' });
+  app.post(
+    '/api/school-profile',
+    saasMw.requireAuth,
+    saasMw.requireRole(['super_admin', 'admin', 'master_admin']),
+    (req: Request, res: Response) => {
+      try {
+        if (!isPlainRecord(req.body)) {
+          return res.status(400).json({ success: false, error: 'Invalid profile data' });
+        }
+        const raw = req.body;
+        const sanitizedProfile = {
+          nameEn: sanitizeText(raw.nameEn, 200),
+          nameBn: sanitizeText(raw.nameBn, 200),
+          eiin: sanitizeText(raw.eiin, 40),
+          code: sanitizeText(raw.code, 40),
+          addressEn: sanitizeText(raw.addressEn, 300),
+          addressBn: sanitizeText(raw.addressBn, 300),
+          phone: sanitizeText(raw.phone, 40),
+          email: sanitizeText(raw.email, 160),
+          website: sanitizeOptionalMediaUrl(raw.website, 300),
+          establishedYear: sanitizeText(raw.establishedYear, 20),
+          motto: sanitizeText(raw.motto, 300),
+          logoUrl: sanitizeOptionalMediaUrl(raw.logoUrl),
+          principalNameEn: sanitizeText(raw.principalNameEn, 150),
+          principalNameBn: sanitizeText(raw.principalNameBn, 150),
+          principalSignatureUrl: sanitizeOptionalMediaUrl(raw.principalSignatureUrl),
+          classTeacherName: sanitizeText(raw.classTeacherName, 150),
+          classTeacherSignatureUrl: sanitizeOptionalMediaUrl(raw.classTeacherSignatureUrl),
+        };
+        fs.writeFileSync(schoolProfileFile, JSON.stringify(sanitizedProfile, null, 2), 'utf-8');
+        return res.json({ success: true, profile: sanitizedProfile });
+      } catch (err) {
+        console.error('Failed to save school profile:', err);
+        return res.status(500).json({ success: false, error: 'Failed to save school profile.' });
       }
-      fs.writeFileSync(schoolProfileFile, JSON.stringify(profile, null, 2), 'utf-8');
-      return res.json({ success: true, profile });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
     }
-  });
+  );
 
   // API: MFS Payment Settings (bKash, Nagad & Rocket number and type)
   app.get('/api/mfs-settings', (_req: Request, res: Response) => {
@@ -124,26 +223,61 @@ export function createApiApp(options: CreateApiAppOptions = {}): express.Express
       };
       if (fs.existsSync(mfsSettingsFile)) {
         const data = JSON.parse(fs.readFileSync(mfsSettingsFile, 'utf-8'));
-        return res.json({ success: true, settings: { ...defaultMfs, ...data } });
+        if (isPlainRecord(data)) {
+          return res.json({
+            success: true,
+            settings: {
+              bkashNumber: sanitizeText(data.bkashNumber, 30) || defaultMfs.bkashNumber,
+              bkashType: sanitizeText(data.bkashType, 30) || defaultMfs.bkashType,
+              nagadNumber: sanitizeText(data.nagadNumber, 30) || defaultMfs.nagadNumber,
+              nagadType: sanitizeText(data.nagadType, 30) || defaultMfs.nagadType,
+              rocketNumber: sanitizeText(data.rocketNumber, 30) || defaultMfs.rocketNumber,
+              rocketType: sanitizeText(data.rocketType, 30) || defaultMfs.rocketType,
+              instructionsBn: sanitizeText(data.instructionsBn, 600) || defaultMfs.instructionsBn,
+              instructionsEn: sanitizeText(data.instructionsEn, 600) || defaultMfs.instructionsEn,
+            },
+          });
+        }
       }
       return res.json({ success: true, settings: defaultMfs });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+    } catch (err) {
+      console.error('Failed to read MFS settings:', err);
+      return res.status(500).json({ success: false, error: 'Failed to load MFS settings.' });
     }
   });
 
-  app.post('/api/mfs-settings', (req: Request, res: Response) => {
-    try {
-      const settings = req.body;
-      if (!settings || typeof settings !== 'object') {
-        return res.status(400).json({ success: false, error: 'Invalid MFS settings' });
+  app.post(
+    '/api/mfs-settings',
+    saasMw.requireAuth,
+    saasMw.requireRole(['super_admin', 'admin', 'accountant', 'master_admin']),
+    (req: Request, res: Response) => {
+      try {
+        if (!isPlainRecord(req.body)) {
+          return res.status(400).json({ success: false, error: 'Invalid MFS settings' });
+        }
+        const allowedTypes = new Set(['Personal', 'Merchant', 'Agent']);
+        const sanitizeType = (val: unknown) => {
+          const clean = sanitizeText(val, 20);
+          return allowedTypes.has(clean) ? clean : 'Personal';
+        };
+        const sanitizedSettings = {
+          bkashNumber: sanitizeText(req.body.bkashNumber, 30),
+          bkashType: sanitizeType(req.body.bkashType),
+          nagadNumber: sanitizeText(req.body.nagadNumber, 30),
+          nagadType: sanitizeType(req.body.nagadType),
+          rocketNumber: sanitizeText(req.body.rocketNumber, 30),
+          rocketType: sanitizeType(req.body.rocketType),
+          instructionsBn: sanitizeText(req.body.instructionsBn, 600),
+          instructionsEn: sanitizeText(req.body.instructionsEn, 600),
+        };
+        fs.writeFileSync(mfsSettingsFile, JSON.stringify(sanitizedSettings, null, 2), 'utf-8');
+        return res.json({ success: true, settings: sanitizedSettings });
+      } catch (err) {
+        console.error('Failed to save MFS settings:', err);
+        return res.status(500).json({ success: false, error: 'Failed to save MFS settings.' });
       }
-      fs.writeFileSync(mfsSettingsFile, JSON.stringify(settings, null, 2), 'utf-8');
-      return res.json({ success: true, settings });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
     }
-  });
+  );
 
   // Helper to check API Key availability
   const getGeminiClient = () => {
@@ -174,27 +308,39 @@ export function createApiApp(options: CreateApiAppOptions = {}): express.Express
     });
   });
 
-  // API: Multimodal AI Smart Homework Evaluation
-  app.post('/api/ai/evaluate-homework', async (req: Request, res: Response) => {
-    try {
-      const {
-        homeworkTitle,
-        subjectName,
-        description,
-        referenceAnswer,
-        referenceAnswerAttachment,
-        fullMarks = 10,
-        optionalInstructions,
-        questionAttachment,
-        questionImages = [],
-        studentName,
-        className,
-        section,
-        textAnswer,
-        images = [],
-      } = req.body;
+  const aiRateLimiter = createUserRateLimiter(40, 60_000);
 
-      const numericFullMarks = Math.max(1, Number(fullMarks) || 10);
+  // API: Multimodal AI Smart Homework Evaluation
+  app.post('/api/ai/evaluate-homework', saasMw.requireAuth, aiRateLimiter, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      if (!isPlainRecord(req.body)) {
+        return res.status(400).json({ success: false, error: 'Invalid request payload.' });
+      }
+      const homeworkTitle = sanitizeText(req.body.homeworkTitle, 240);
+      const subjectName = sanitizeText(req.body.subjectName, 120);
+      const description = sanitizeText(req.body.description, 6000);
+      const referenceAnswer = sanitizeText(req.body.referenceAnswer, 8000);
+      const referenceAnswerAttachment =
+        typeof req.body.referenceAnswerAttachment === 'string' && SAFE_DATA_IMAGE_REGEX.test(req.body.referenceAnswerAttachment)
+          ? req.body.referenceAnswerAttachment
+          : '';
+      const optionalInstructions = sanitizeText(req.body.optionalInstructions, 2000);
+      const questionAttachment =
+        typeof req.body.questionAttachment === 'string' && SAFE_DATA_IMAGE_REGEX.test(req.body.questionAttachment)
+          ? req.body.questionAttachment
+          : '';
+      const questionImages = Array.isArray(req.body.questionImages)
+        ? req.body.questionImages.filter((q: unknown): q is string => typeof q === 'string' && SAFE_DATA_IMAGE_REGEX.test(q)).slice(0, 5)
+        : [];
+      const studentName = sanitizeText(req.body.studentName, 120);
+      const className = sanitizeText(req.body.className, 60);
+      const section = sanitizeText(req.body.section, 30);
+      const textAnswer = sanitizeText(req.body.textAnswer, 12000);
+      const images = Array.isArray(req.body.images)
+        ? req.body.images.filter((img: unknown): img is string => typeof img === 'string' && SAFE_DATA_IMAGE_REGEX.test(img)).slice(0, 5)
+        : [];
+
+      const numericFullMarks = Math.min(1000, Math.max(1, Number(req.body.fullMarks) || 10));
 
       const ai = getGeminiClient();
       if (!ai) {
@@ -454,27 +600,34 @@ CRITICAL EVALUATION & GRADING RULES (FOLLOW STRICTLY):
       return res.status(500).json({
         success: false,
         error: 'AI_EVALUATION_ERROR',
-        message: error?.message || 'Error occurred during AI homework evaluation.',
+        message: 'Error occurred during AI homework evaluation.',
       });
     }
   });
 
   // API: AI Student Performance Analytics
-  app.post('/api/ai/student-analytics', async (req: Request, res: Response) => {
+  app.post('/api/ai/student-analytics', saasMw.requireAuth, aiRateLimiter, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const {
-        studentName,
-        className,
-        attendancePercentage,
-        homeworkSubmissionRate,
-        homeworkAverageMarks,
-        examAverageMarks,
-        subjectPerformance = [],
-        weakSubjects = [],
-        strongSubjects = [],
-        missingHomeworkCount = 0,
-        attendanceWarning = false,
-      } = req.body;
+      if (!isPlainRecord(req.body)) {
+        return res.status(400).json({ success: false, error: 'ANALYTICS_ERROR', message: 'Invalid request payload.' });
+      }
+      const studentName = sanitizeText(req.body.studentName, 120) || 'Student';
+      const className = sanitizeText(req.body.className, 60) || 'Class 10';
+      const attendancePercentage = Math.min(100, Math.max(0, Number(req.body.attendancePercentage) || 0));
+      const homeworkSubmissionRate = Math.min(100, Math.max(0, Number(req.body.homeworkSubmissionRate) || 0));
+      const homeworkAverageMarks = Math.min(100, Math.max(0, Number(req.body.homeworkAverageMarks) || 0));
+      const examAverageMarks = Math.min(100, Math.max(0, Number(req.body.examAverageMarks) || 0));
+      const subjectPerformance = Array.isArray(req.body.subjectPerformance)
+        ? req.body.subjectPerformance.slice(0, 20)
+        : [];
+      const weakSubjects = Array.isArray(req.body.weakSubjects)
+        ? req.body.weakSubjects.map((s: unknown) => sanitizeText(s, 80)).filter(Boolean).slice(0, 15)
+        : [];
+      const strongSubjects = Array.isArray(req.body.strongSubjects)
+        ? req.body.strongSubjects.map((s: unknown) => sanitizeText(s, 80)).filter(Boolean).slice(0, 15)
+        : [];
+      const missingHomeworkCount = Math.min(1000, Math.max(0, Number(req.body.missingHomeworkCount) || 0));
+      const attendanceWarning = Boolean(req.body.attendanceWarning);
 
       const ai = getGeminiClient();
       if (!ai) {
@@ -564,24 +717,38 @@ OUTPUT FORMAT: Return ONLY valid JSON:
       return res.status(500).json({
         success: false,
         error: 'ANALYTICS_ERROR',
-        message: error?.message || 'Error generating AI student analytics.',
+        message: 'Error generating AI student analytics.',
       });
     }
   });
 
   // API: ROLE-GOVERNED AMARSCHOOL AI AGENT (স্মার্ট এআই সহকারী)
-  app.post('/api/ai/agent-chat', async (req: Request, res: Response) => {
+  app.post('/api/ai/agent-chat', saasMw.requireAuth, aiRateLimiter, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const {
-        message = '',
-        history = [],
-        role = 'student',
-        userName = 'User',
-        studentContext = null,
-        schoolContext = null,
-      } = req.body;
+      if (!isPlainRecord(req.body)) {
+        return res.status(400).json({ success: false, error: 'Invalid request payload.' });
+      }
+      const principal = req.principal!;
+      // Derive AI persona strictly from verified server-side role/claims (never trust client-supplied req.body.role)
+      const role: 'super_admin' | 'teacher' | 'student' =
+        principal.isMasterAdmin ||
+        principal.schoolRole === 'super_admin' ||
+        principal.schoolRole === 'admin'
+          ? 'super_admin'
+          : ['teacher', 'accountant', 'staff', 'librarian', 'receptionist', 'gatekeeper'].includes(
+              principal.schoolRole || ''
+            )
+          ? 'teacher'
+          : 'student';
 
-      if (!message.trim()) {
+      const message = sanitizeText(req.body.message, 4000);
+      const history = Array.isArray(req.body.history) ? req.body.history.slice(-10) : [];
+      const userName = sanitizeText(principal.displayName || req.body.userName, 100) || 'User';
+      const studentContext = isPlainRecord(req.body.studentContext) ? req.body.studentContext : null;
+      const schoolContext =
+        role !== 'student' && isPlainRecord(req.body.schoolContext) ? req.body.schoolContext : null;
+
+      if (!message) {
         return res.status(400).json({ success: false, error: 'Empty message' });
       }
 
@@ -781,12 +948,18 @@ Capabilities:
         });
 
         if (Array.isArray(history) && history.length > 0) {
-          history.slice(-6).forEach((h) => {
-            if (h && h.role && h.parts) {
-              chatContents.push({
-                role: h.role === 'model' ? 'model' : 'user',
-                parts: h.parts,
-              });
+          history.slice(-6).forEach((h: any) => {
+            if (h && Array.isArray(h.parts)) {
+              const sanitizedParts = h.parts
+                .map((p: any) => sanitizeText(p?.text, 2000))
+                .filter(Boolean)
+                .map((text: string) => ({ text }));
+              if (sanitizedParts.length > 0) {
+                chatContents.push({
+                  role: h.role === 'model' ? 'model' : 'user',
+                  parts: sanitizedParts,
+                });
+              }
             }
           });
         }
@@ -809,12 +982,17 @@ Capabilities:
         const rawText = response.text || '';
 
         let extractedAction: any = null;
-        const actionMatch = rawText.match(/```action\s*([\s\S]*?)\s*```/);
-        if (actionMatch && actionMatch[1]) {
-          try {
-            extractedAction = JSON.parse(actionMatch[1]);
-          } catch {
-            // ignore parse error if action block wasn't strict JSON
+        if (role === 'super_admin') {
+          const actionMatch = rawText.match(/```action\s*([\s\S]*?)\s*```/);
+          if (actionMatch && actionMatch[1]) {
+            try {
+              const candidateAction = JSON.parse(actionMatch[1]);
+              if (isPlainRecord(candidateAction) && candidateAction.actionType === 'CREATE_NOTICE') {
+                extractedAction = candidateAction;
+              }
+            } catch {
+              // ignore parse error if action block wasn't strict JSON
+            }
           }
         }
 
@@ -830,13 +1008,13 @@ Capabilities:
         return res.json({
           success: true,
           text: fallback.text,
-          action: fallback.action || null,
+          action: role === 'super_admin' ? fallback.action || null : null,
           mode: 'grounded_fallback',
         });
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Agent chat endpoint error:', err);
-      return res.status(500).json({ success: false, error: err.message || 'Server error' });
+      return res.status(500).json({ success: false, error: 'Failed to process AI chat request.' });
     }
   });
 

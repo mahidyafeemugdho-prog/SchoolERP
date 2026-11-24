@@ -467,6 +467,35 @@ export interface SupportMessageRecord {
   createdAt: string;
 }
 
+export type SupportVideoCategory =
+  | 'getting_started'
+  | 'fees'
+  | 'attendance'
+  | 'exams'
+  | 'students'
+  | 'settings'
+  | 'other';
+
+export type SupportVideoAudience = 'admins' | 'all';
+
+export interface SupportVideoRecord {
+  id: string;
+  title: string;
+  description?: string;
+  category: SupportVideoCategory;
+  videoId: string;
+  embedUrl: string;
+  watchUrl: string;
+  thumbnailUrl: string;
+  audience: SupportVideoAudience;
+  sortOrder: number;
+  isActive: boolean;
+  createdByUid: string;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DatabaseProviderInterface {
   readonly providerName: string;
   isMasterAdminUidOrEmail(uid: string, email: string): Promise<boolean>;
@@ -530,6 +559,12 @@ export interface DatabaseProviderInterface {
     ticketId: string,
     updates: Partial<SupportTicketRecord>
   ): Promise<SupportTicketRecord>;
+
+  listSupportVideos(): Promise<SupportVideoRecord[]>;
+  getSupportVideoById(videoDocId: string): Promise<SupportVideoRecord | null>;
+  upsertSupportVideo(video: SupportVideoRecord): Promise<SupportVideoRecord>;
+  upsertSupportVideosBatch(videos: SupportVideoRecord[]): Promise<SupportVideoRecord[]>;
+  deleteSupportVideo(videoDocId: string): Promise<void>;
 
   runInTransaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T>;
 }

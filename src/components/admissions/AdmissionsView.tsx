@@ -9,6 +9,7 @@ import { compressImageToPassportSize } from '../../utils/storageHelper';
 import { resolveSchoolCode, formatSchoolScopedId } from '../../utils/schoolIdFormatter';
 import { toEnNumber } from '../../utils/i18n';
 import { exportStudentsAdmissionExcel } from '../../utils/studentExcelExport';
+import { printStudentAdmissionForm } from '../../utils/admissionPrintHelper';
 import {
   ModernStudentIDCardFront,
   ModernStudentIDCardBack,
@@ -113,6 +114,9 @@ export const AdmissionsView: React.FC = () => {
   const [enrollGroup, setEnrollGroup] = useState<GroupType>('Science');
   const [enrollBloodGroup, setEnrollBloodGroup] = useState<string>('B+');
   const [enrollPhotoUrl, setEnrollPhotoUrl] = useState<string>('');
+  const [enrollAdmissionDate, setEnrollAdmissionDate] = useState<string>(
+    () => new Date().toISOString().split('T')[0]
+  );
 
   // Hard Copy & Document Vault States
   const [birthCertificateNo, setBirthCertificateNo] = useState<string>('');
@@ -245,6 +249,7 @@ export const AdmissionsView: React.FC = () => {
     setEnrollGroup(['Class 9', 'Class 10'].includes(enq.applyingClass) ? 'Science' : 'General');
     setEnrollBloodGroup(enq.bloodGroup || 'Unknown');
     setEnrollPhotoUrl(enq.photoUrl || '');
+    setEnrollAdmissionDate(new Date().toISOString().split('T')[0]);
     setBirthCertificateNo('');
     setBirthCertificateUrl('');
     setFatherNidUrl('');
@@ -273,6 +278,7 @@ export const AdmissionsView: React.FC = () => {
         motherNidUrl,
         transferCertificateUrl,
         group: ['Class 9', 'Class 10'].includes(targetEnquiry.applyingClass) ? enrollGroup : 'General',
+        admissionDate: enrollAdmissionDate,
       }
     );
 
@@ -530,21 +536,44 @@ export const AdmissionsView: React.FC = () => {
                         </button>
                       )}
                       {enq.status === 'Enrolled' && (
-                        <button
-                          onClick={() => {
-                            const st = StorageService.getStudents().find(
-                              (s) => s.nameEn === enq.applicantNameEn || s.guardianPhone === enq.phone
-                            );
-                            if (st) {
-                              setNewlyEnrolledStudent(st);
-                              setShowIdCardModal(true);
-                            }
-                          }}
-                          className="flex items-center space-x-1 px-2.5 py-1 bg-slate-100 hover:bg-blue-50 text-blue-700 rounded-lg text-[11px] font-semibold border border-slate-200"
-                        >
-                          <CreditCard className="w-3.5 h-3.5 text-blue-600" />
-                          <span>{language === 'bn' ? 'আইডি কার্ড' : 'ID Card'}</span>
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const st = StorageService.getStudents().find(
+                                (s) => s.nameEn === enq.applicantNameEn || s.guardianPhone === enq.phone
+                              );
+                              if (st) {
+                                printStudentAdmissionForm({
+                                  student: st,
+                                  school,
+                                  schoolCode: activeSchoolCode,
+                                  language,
+                                });
+                              }
+                            }}
+                            className="flex items-center space-x-1 px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 rounded-lg text-[11px] font-semibold border border-teal-200"
+                            title={language === 'bn' ? 'ভর্তি ফরম প্রিন্ট' : 'Print Admission Form'}
+                          >
+                            <Printer className="w-3.5 h-3.5 text-teal-700" />
+                            <span>{language === 'bn' ? 'ভর্তি ফরম' : 'Form'}</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              const st = StorageService.getStudents().find(
+                                (s) => s.nameEn === enq.applicantNameEn || s.guardianPhone === enq.phone
+                              );
+                              if (st) {
+                                setNewlyEnrolledStudent(st);
+                                setShowIdCardModal(true);
+                              }
+                            }}
+                            className="flex items-center space-x-1 px-2.5 py-1 bg-slate-100 hover:bg-blue-50 text-blue-700 rounded-lg text-[11px] font-semibold border border-slate-200"
+                          >
+                            <CreditCard className="w-3.5 h-3.5 text-blue-600" />
+                            <span>{language === 'bn' ? 'আইডি কার্ড' : 'ID Card'}</span>
+                          </button>
+                        </>
                       )}
                     </div>
                   </td>
@@ -1002,6 +1031,19 @@ export const AdmissionsView: React.FC = () => {
                 </div>
               </div>
 
+              <div>
+                <label className="block font-semibold mb-1 text-emerald-800">
+                  {language === 'bn' ? 'ভর্তির তারিখ (Admission Date) *' : 'Admission Date *'}
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={enrollAdmissionDate}
+                  onChange={(e) => setEnrollAdmissionDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-emerald-300 bg-emerald-50/40 rounded-lg font-semibold text-slate-900"
+                />
+              </div>
+
               {['Class 9', 'Class 10'].includes(targetEnquiry.applyingClass) && (
                 <div>
                   <label className="block font-semibold mb-1 text-slate-700">
@@ -1124,7 +1166,22 @@ export const AdmissionsView: React.FC = () => {
                   </p>
                 </div>
               </div>
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    printStudentAdmissionForm({
+                      student: newlyEnrolledStudent,
+                      school,
+                      schoolCode: activeSchoolCode,
+                      language,
+                    })
+                  }
+                  className="flex items-center space-x-1.5 px-3.5 py-2 bg-teal-600 text-white text-xs font-bold rounded-xl hover:bg-teal-700 shadow-sm"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>{language === 'bn' ? 'ভর্তি ফরম প্রিন্ট' : 'Print Admission Form'}</span>
+                </button>
                 <button
                   onClick={() => window.print()}
                   className="flex items-center space-x-1.5 px-4 py-2 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 shadow-sm"

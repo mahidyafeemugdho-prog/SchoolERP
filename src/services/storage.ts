@@ -53,6 +53,7 @@ import {
 } from '../utils/approvalWorkflow';
 import { canEditOrDeleteInvoice, canEditOrDeleteFinanceRecord } from '../utils/permissions';
 import { DEFAULT_TRANSACTION_SECURITY_CONFIG } from '../utils/transactionAuth';
+import { getFreshIdToken } from './firebase';
 import {
   initialSchoolProfile,
   initialClasses,
@@ -352,13 +353,21 @@ export const StorageService = {
       window.dispatchEvent(new CustomEvent('mfs_settings_updated', { detail: settings }));
     }
     CloudSyncService.pushSliceToCloud('profile', true);
-    // Sync to server storage
+    // Sync to server storage when authenticated
     try {
-      fetch('/api/mfs-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings),
-      }).catch((e) => console.warn('Could not sync MFS settings to server:', e));
+      void getFreshIdToken(false)
+        .then((token) => {
+          if (!token) return;
+          return fetch('/api/mfs-settings', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(settings),
+          });
+        })
+        .catch((e) => console.warn('Could not sync MFS settings to server:', e));
     } catch {}
   },
 
@@ -4263,6 +4272,7 @@ export const StorageService = {
       guardianNidUrl?: string;
       transferCertificateUrl?: string;
       group?: GroupType;
+      admissionDate?: string;
     }
   ): Student | null {
     const enquiries = this.getEnquiries();
@@ -4367,7 +4377,7 @@ export const StorageService = {
       previousSchool: enq.previousSchool,
       photoUrl: photoUrl || enq.photoUrl || '',
       status: 'active',
-      admissionDate: new Date().toISOString().split('T')[0],
+      admissionDate: docDetails?.admissionDate?.trim() || new Date().toISOString().split('T')[0],
     };
 
     this.addStudent(newStudent);
@@ -5184,10 +5194,17 @@ export const StorageService = {
     sizeFormatted: string;
   }> {
     try {
+      const token = await getFreshIdToken(false);
+      if (!token) {
+        throw new Error('প্রজেক্ট জিপ ডাউনলোড করতে মাস্টার অ্যাডমিন সেশন লগইন প্রয়োজন।');
+      }
       const fullExport = this.exportAllDatabaseToJson();
       const response = await fetch('/api/export-full-codebase-zip', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(fullExport),
       });
 

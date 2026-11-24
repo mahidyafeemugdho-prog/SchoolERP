@@ -7,6 +7,7 @@ import {
   SupportMessageDTO,
   SupportTicketDTO,
   SupportTicketStatus,
+  SupportVideoDTO,
 } from '../../services/saasApi';
 import {
   createSupportTicketClient,
@@ -14,11 +15,13 @@ import {
   sendSupportReplyClient,
   subscribeToSupportMessages,
   subscribeToSupportTickets,
+  subscribeToSupportVideos,
   updateSupportTicketStatusClient,
 } from '../../services/supportService';
 import { compressSupportScreenshot } from '../../utils/storageHelper';
 import { resolveSchoolDisplayName } from '../../utils/schoolNameResolver';
 import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
+import { SupportVideoGuideSection } from './SupportVideoGuideSection';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -28,6 +31,7 @@ import {
   ImagePlus,
   Loader2,
   MessageSquarePlus,
+  PlayCircle,
   RefreshCw,
   RotateCcw,
   Search,
@@ -50,6 +54,12 @@ export const SupportTeamView: React.FC<SupportTeamViewProps> = ({ embedded = fal
 
   const isMasterAdmin =
     activeRole === 'master_admin' || Boolean(saasSession?.principal?.isMasterAdmin);
+  const isAdminOrSuperAdmin =
+    isMasterAdmin || activeRole === 'super_admin' || activeRole === 'admin';
+
+  const [supportSection, setSupportSection] = useState<'tickets' | 'videos'>('tickets');
+  const [supportVideos, setSupportVideos] = useState<SupportVideoDTO[]>([]);
+  const [loadingVideos, setLoadingVideos] = useState(true);
 
   const [tickets, setTickets] = useState<SupportTicketDTO[]>([]);
   const [loadingTickets, setLoadingTickets] = useState(true);
@@ -134,6 +144,31 @@ export const SupportTeamView: React.FC<SupportTeamViewProps> = ({ embedded = fal
       unsub();
     };
   }, [isMasterAdmin, saasSession?.school?.schoolId, currentUser?.schoolId, firebaseUser?.uid]);
+
+  // Subscribe to Support Video Tutorials
+  useEffect(() => {
+    setLoadingVideos(true);
+    let firstDelivery = true;
+    const unsub = subscribeToSupportVideos({
+      isMasterAdmin,
+      schoolRole: saasSession?.principal?.schoolRole || activeRole,
+      onVideos: (list) => {
+        setSupportVideos(list);
+        if (firstDelivery) {
+          firstDelivery = false;
+          setLoadingVideos(false);
+        }
+      },
+      onError: () => {
+        setLoadingVideos(false);
+      },
+    });
+    const safetyTimer = setTimeout(() => setLoadingVideos(false), 3500);
+    return () => {
+      clearTimeout(safetyTimer);
+      unsub();
+    };
+  }, [isMasterAdmin, saasSession?.principal?.schoolRole, activeRole, firebaseUser?.uid]);
 
   // Auto-select first ticket on desktop if none selected yet
   useEffect(() => {
@@ -409,43 +444,70 @@ export const SupportTeamView: React.FC<SupportTeamViewProps> = ({ embedded = fal
     }
   };
 
+  const showVideosTile = isAdminOrSuperAdmin || supportVideos.length > 0;
+
   const supportLauncherItems: LauncherTileItem[] = [
     {
       id: 'all',
       label: language === 'bn' ? 'সকল টিকেট' : 'All Tickets',
       icon: Layers,
       color: 'blue',
-      active: statusFilter === 'all',
+      active: supportSection === 'tickets' && statusFilter === 'all',
       badge: tickets.length || undefined,
-      onClick: () => setStatusFilter('all'),
+      onClick: () => {
+        setSupportSection('tickets');
+        setStatusFilter('all');
+      },
     },
     {
       id: 'open',
       label: language === 'bn' ? 'অপেক্ষমাণ' : 'Open',
       icon: Clock,
       color: 'amber',
-      active: statusFilter === 'open',
+      active: supportSection === 'tickets' && statusFilter === 'open',
       badge: tickets.filter((t) => t.status === 'open').length || undefined,
-      onClick: () => setStatusFilter('open'),
+      onClick: () => {
+        setSupportSection('tickets');
+        setStatusFilter('open');
+      },
     },
     {
       id: 'replied',
       label: language === 'bn' ? 'উত্তর পাওয়া' : 'Replied',
       icon: Headphones,
       color: 'teal',
-      active: statusFilter === 'replied',
+      active: supportSection === 'tickets' && statusFilter === 'replied',
       badge: tickets.filter((t) => t.status === 'replied').length || undefined,
-      onClick: () => setStatusFilter('replied'),
+      onClick: () => {
+        setSupportSection('tickets');
+        setStatusFilter('replied');
+      },
     },
     {
       id: 'resolved',
       label: language === 'bn' ? 'সমাধান' : 'Resolved',
       icon: CheckCircle2,
       color: 'purple',
-      active: statusFilter === 'resolved',
+      active: supportSection === 'tickets' && statusFilter === 'resolved',
       badge: tickets.filter((t) => t.status === 'resolved').length || undefined,
-      onClick: () => setStatusFilter('resolved'),
+      onClick: () => {
+        setSupportSection('tickets');
+        setStatusFilter('resolved');
+      },
     },
+    ...(showVideosTile
+      ? [
+          {
+            id: 'videos',
+            label: language === 'bn' ? 'ভিডিও গাইড' : 'Video Guides',
+            icon: PlayCircle,
+            color: 'red' as const,
+            active: supportSection === 'videos',
+            badge: supportVideos.length || undefined,
+            onClick: () => setSupportSection('videos'),
+          },
+        ]
+      : []),
     ...(!isMasterAdmin
       ? [
           {
@@ -465,7 +527,7 @@ export const SupportTeamView: React.FC<SupportTeamViewProps> = ({ embedded = fal
   return (
     <div className={embedded ? 'space-y-4' : 'space-y-5'}>
       {/* App-Launcher Icon Tile Grid */}
-      <LauncherIconGrid items={supportLauncherItems} columns={5} compact />
+      <LauncherIconGrid items={supportLauncherItems} columns={6} compact />
 
       {/* Page Header */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -491,16 +553,48 @@ export const SupportTeamView: React.FC<SupportTeamViewProps> = ({ embedded = fal
             <p className="text-xs text-slate-600 mt-0.5">
               {isMasterAdmin
                 ? language === 'bn'
-                  ? 'সকল স্কুলের সমস্যা দেখুন, স্ক্রিনশট/ছবি আপলোড করে সরাসরি ফিডব্যাক ও চ্যাট করুন।'
-                  : 'Review school issues, upload feedback screenshots, and chat directly with schools.'
+                  ? 'সকল স্কুলের সমস্যা দেখুন, স্ক্রিনশট/ছবি আপলোড করে চ্যাট করুন এবং ভিডিও গাইড ট্যাবে YouTube টিউটোরিয়াল আপলোড করুন।'
+                  : 'Review school issues, reply with screenshots, and publish YouTube tutorial videos in the Video Guides tab.'
                 : language === 'bn'
-                ? 'কোথায় সমস্যা হচ্ছে বা বুঝতে পারছেন না তা লিখে ছবি/স্ক্রিনশট পাঠান—মাস্টার অ্যাডমিন সরাসরি ছবি ও বার্তায় সমাধান দেবেন।'
-                : 'Describe where you need help and attach screenshots—Master Admin will reply with feedback and images.'}
+                ? 'ভিডিও গাইডে ক্লিক করে টিউটোরিয়াল দেখুন অথবা সমস্যা লিখে ছবি/স্ক্রিনশট পাঠান—মাস্টার অ্যাডমিন সরাসরি সমাধান দেবেন।'
+                : 'Watch tutorial videos in Video Guides or send a support ticket with screenshots.'}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {showVideosTile && (
+            <button
+              type="button"
+              onClick={() =>
+                setSupportSection((prev) => (prev === 'videos' ? 'tickets' : 'videos'))
+              }
+              className={`px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer border whitespace-nowrap shrink-0 ${
+                supportSection === 'videos'
+                  ? 'bg-slate-900 hover:bg-slate-800 text-white border-slate-900'
+                  : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+              }`}
+            >
+              {supportSection === 'videos' ? (
+                <>
+                  <Layers className="w-4 h-4" />
+                  <span>
+                    {language === 'bn' ? 'সাপোর্ট টিকেটে ফিরুন' : 'Back to Tickets'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <PlayCircle className="w-4 h-4" />
+                  <span>
+                    {language === 'bn'
+                      ? `ভিডিও গাইড (${toBnNumber(supportVideos.length)})`
+                      : `Video Guides (${supportVideos.length})`}
+                  </span>
+                </>
+              )}
+            </button>
+          )}
+
           {!isMasterAdmin && (
             <button
               type="button"
@@ -508,7 +602,7 @@ export const SupportTeamView: React.FC<SupportTeamViewProps> = ({ embedded = fal
                 setErrorMsg(null);
                 setShowNewModal(true);
               }}
-              className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+              className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
             >
               <MessageSquarePlus className="w-4 h-4" />
               <span>
@@ -532,8 +626,48 @@ export const SupportTeamView: React.FC<SupportTeamViewProps> = ({ embedded = fal
         </div>
       )}
 
-      {/* Main Split View: Ticket Inbox + Two-Way Chat */}
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-[560px]">
+      {supportSection === 'videos' ? (
+        <SupportVideoGuideSection
+          videos={supportVideos}
+          loading={loadingVideos}
+          isMasterAdmin={isMasterAdmin}
+          senderDisplayName={senderDisplayName}
+        />
+      ) : (
+        <>
+          {showVideosTile && supportVideos.length > 0 && !isMasterAdmin && (
+            <button
+              type="button"
+              onClick={() => setSupportSection('videos')}
+              className="w-full p-3 rounded-2xl bg-rose-50/80 hover:bg-rose-100/80 border border-rose-200 flex items-center justify-between gap-3 text-left transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="p-2 rounded-xl bg-rose-600 text-white shrink-0">
+                  <PlayCircle className="w-4 h-4" />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-black text-rose-950 truncate">
+                    {language === 'bn'
+                      ? `সফটওয়্যার ব্যবহারের ${toBnNumber(
+                          supportVideos.length
+                        )}টি ভিডিও টিউটোরিয়াল দেখুন`
+                      : `Watch ${supportVideos.length} Video Tutorial Guide(s)`}
+                  </div>
+                  <div className="text-[11px] text-rose-700 truncate">
+                    {language === 'bn'
+                      ? 'এখানে ক্লিক করলেই সাপোর্টের ভেতরেই YouTube ভিডিও প্লে হবে।'
+                      : 'Click here to play YouTube guides directly inside Support.'}
+                  </div>
+                </div>
+              </div>
+              <span className="px-3 py-1.5 rounded-xl bg-rose-600 text-white text-[11px] font-bold whitespace-nowrap shrink-0">
+                {language === 'bn' ? 'ভিডিও দেখুন →' : 'Watch Videos →'}
+              </span>
+            </button>
+          )}
+
+          {/* Main Split View: Ticket Inbox + Two-Way Chat */}
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-[560px]">
         {/* Left Sidebar: Ticket List */}
         <div
           className={`lg:col-span-4 xl:col-span-4 border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col ${
@@ -1008,6 +1142,8 @@ export const SupportTeamView: React.FC<SupportTeamViewProps> = ({ embedded = fal
           )}
         </div>
       </div>
+        </>
+      )}
 
       {/* NEW SUPPORT REQUEST MODAL */}
       {showNewModal && (

@@ -168,6 +168,47 @@
         "imageUrls",
         "createdAt"
       ]
+    },
+    "SupportVideo": {
+      "title": "SupportVideo",
+      "description": "Sanitized YouTube tutorial video embeds uploaded by Master Admin for school Super Admins and Admins",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "category": {
+          "type": "string",
+          "enum": ["getting_started", "fees", "attendance", "exams", "students", "settings", "other"]
+        },
+        "videoId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]{11}$" },
+        "embedUrl": { "type": "string", "maxLength": 300 },
+        "watchUrl": { "type": "string", "maxLength": 300 },
+        "thumbnailUrl": { "type": "string", "maxLength": 300 },
+        "audience": { "type": "string", "enum": ["admins", "all"] },
+        "sortOrder": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdByName": { "type": "string", "maxLength": 150 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": [
+        "id",
+        "title",
+        "category",
+        "videoId",
+        "embedUrl",
+        "watchUrl",
+        "thumbnailUrl",
+        "audience",
+        "sortOrder",
+        "isActive",
+        "createdByUid",
+        "createdByName",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -206,6 +247,10 @@
     "/support_tickets/{ticketId}/messages/{messageId}": {
       "schema": "SupportMessage",
       "description": "Support chat messages with screenshot attachments"
+    },
+    "/support_videos/{videoId}": {
+      "schema": "SupportVideo",
+      "description": "YouTube tutorial video embeds uploaded by Master Admin"
     }
   }
 }

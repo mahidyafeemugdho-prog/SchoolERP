@@ -33,11 +33,27 @@ const HOST = getCliArg('--host') || '0.0.0.0';
 const DATA_DIR = path.resolve(__dirname, 'data_storage');
 const app = createApiApp({ dataDir: DATA_DIR });
 
-// API: Full Runnable Project ZIP for Google AI Studio & Local Deployment
-app.post('/api/export-full-codebase-zip', async (req: Request, res: Response) => {
-  try {
-    const customData = req.body;
-    const zip = new JSZip();
+const saasMw = app.locals.saasMw;
+
+// API: Full Runnable Project ZIP for Google AI Studio & Local Deployment (Master Admin only)
+app.post(
+  '/api/export-full-codebase-zip',
+  saasMw.requireAuth,
+  saasMw.requireMasterAdmin,
+  async (req: Request, res: Response) => {
+    try {
+      const rawBody = req.body;
+      if (
+        rawBody !== undefined &&
+        (typeof rawBody !== 'object' ||
+          rawBody === null ||
+          Array.isArray(rawBody) ||
+          Object.keys(rawBody).some((k) => k === '__proto__' || k === 'constructor' || k === 'prototype'))
+      ) {
+        return res.status(400).json({ success: false, error: 'Invalid backup payload.' });
+      }
+      const customData = rawBody;
+      const zip = new JSZip();
 
     const addDirToZip = (dirPath: string, zipFolder: any, relBase = '') => {
       if (!fs.existsSync(dirPath)) return;
@@ -55,6 +71,8 @@ app.post('/api/export-full-codebase-zip', async (req: Request, res: Response) =>
           const lower = item.toLowerCase();
           if (
             lower.endsWith('.zip') ||
+            lower.endsWith('.pem') ||
+            lower.endsWith('.key') ||
             lower.includes('firebase-adminsdk') ||
             (lower.startsWith('.env') && lower !== '.env.example') ||
             (relPath.startsWith('public/') &&
@@ -135,9 +153,9 @@ This archive contains the full, production-ready codebase including:
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', buffer.length);
     return res.send(buffer);
-  } catch (err: any) {
+  } catch (err) {
     console.error('Error generating codebase zip:', err);
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: 'Failed to generate codebase archive.' });
   }
 });
 

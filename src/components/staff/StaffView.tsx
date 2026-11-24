@@ -46,10 +46,11 @@ import {
   ID_CARD_THEME_OPTIONS,
   IDCardTheme,
 } from '../common/ModernIDCardFronts';
+import { printStaffJoiningRecord } from '../../utils/admissionPrintHelper';
 
 export const StaffView: React.FC = () => {
   const { activeRole, saasSession } = useAuth();
-  const { t, language, formatTaka, toBnNumber } = useLanguage();
+  const { t, language, formatTaka, toBnNumber, formatDate } = useLanguage();
   const { schoolProfile } = useSchool();
   const activeSchoolCode = resolveSchoolCode(saasSession?.school?.schoolId, schoolProfile);
   const [staffList, setStaffList] = useState<Staff[]>(() => StorageService.getStaff());
@@ -503,6 +504,19 @@ export const StaffView: React.FC = () => {
                       {member.qualification}
                     </span>
                   </div>
+                  <div className="flex items-center justify-between text-slate-700">
+                    <span className="text-slate-400 flex items-center space-x-1">
+                      <Calendar className="w-3 h-3 text-emerald-600" />
+                      <span>{language === 'bn' ? 'যোগদানের তারিখ:' : 'Joining Date:'}</span>
+                    </span>
+                    <span className="font-semibold text-emerald-700">
+                      {member.joiningDate
+                        ? formatDate(member.joiningDate)
+                        : language === 'bn'
+                        ? 'উল্লেখ নেই'
+                        : 'Not set'}
+                    </span>
+                  </div>
 
                   {canViewSalary && (() => {
                     const curSummary = computeStaffMonthSummary(member, getCurrentYearMonth(), salaryPayments);
@@ -591,13 +605,32 @@ export const StaffView: React.FC = () => {
                       </button>
                     </>
                   )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      printStaffJoiningRecord({
+                        staff: member,
+                        school: schoolProfile,
+                        schoolCode: activeSchoolCode,
+                        language,
+                      })
+                    }
+                    title={language === 'bn' ? 'যোগদান ও প্রোফাইল প্রিন্ট করুন' : 'Print Staff Joining & Profile'}
+                    className="flex items-center space-x-1 px-2.5 py-1 text-xs font-semibold bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg transition-colors"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-teal-700" />
+                    <span>{language === 'bn' ? 'যোগদান প্রিন্ট' : 'Joining Print'}</span>
+                  </button>
                 </div>
 
                 {canManage && (
                   <div className="flex items-center space-x-1">
                     <button
                       onClick={() => {
-                        setFormData(member);
+                        setFormData({
+                          ...member,
+                          joiningDate: member.joiningDate || new Date().toISOString().split('T')[0],
+                        });
                         setFormError('');
                         setFormSuccess('');
                         setShowAddModal(true);
@@ -888,7 +921,7 @@ export const StaffView: React.FC = () => {
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg"
                   />
                 </div>
-                <div className="col-span-2">
+                <div>
                   <label className="block font-semibold mb-1">Qualification (শিক্ষাগত যোগ্যতা)</label>
                   <input
                     type="text"
@@ -896,6 +929,18 @@ export const StaffView: React.FC = () => {
                     onChange={(e) => setFormData({ ...formData, qualification: e.target.value })}
                     placeholder="e.g. M.Sc in Mathematics, B.Ed (DU)"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1 text-emerald-800">
+                    {language === 'bn' ? 'যোগদানের তারিখ (Joining Date) *' : 'Joining Date *'}
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={formData.joiningDate || ''}
+                    onChange={(e) => setFormData({ ...formData, joiningDate: e.target.value })}
+                    className="w-full px-3 py-2 border border-emerald-300 bg-emerald-50/40 rounded-lg font-semibold text-slate-900"
                   />
                 </div>
                 {/* Salary configuration */}
@@ -941,20 +986,41 @@ export const StaffView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-700"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold"
-                >
-                  {formData.id ? 'Save Changes' : 'Create Profile'}
-                </button>
+              <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  {formData.id && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        printStaffJoiningRecord({
+                          staff: formData as Staff,
+                          school: schoolProfile,
+                          schoolCode: activeSchoolCode,
+                          language,
+                        })
+                      }
+                      className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-bold"
+                    >
+                      <Printer className="w-4 h-4 text-teal-700" />
+                      <span>{language === 'bn' ? 'যোগদান ও প্রোফাইল প্রিন্ট' : 'Print Joining Record'}</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddModal(false)}
+                    className="px-4 py-2 border border-slate-200 rounded-lg text-slate-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold"
+                  >
+                    {formData.id ? 'Save Changes' : 'Create Profile'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -1027,6 +1093,12 @@ export const StaffView: React.FC = () => {
                     <div>
                       <span className="text-slate-500">Department: </span>
                       <strong className="text-slate-900">{selectedStaff.department}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Joining Date: </span>
+                      <strong className="text-slate-900">
+                        {selectedStaff.joiningDate ? formatDate(selectedStaff.joiningDate) : 'N/A'}
+                      </strong>
                     </div>
                   </div>
 
@@ -1145,7 +1217,22 @@ export const StaffView: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      printStaffJoiningRecord({
+                        staff: selectedStaffForIdCard,
+                        school: schoolProfile,
+                        schoolCode: activeSchoolCode,
+                        language,
+                      })
+                    }
+                    className="flex items-center space-x-1.5 px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>{language === 'bn' ? 'যোগদান প্রিন্ট' : 'Print Joining'}</span>
+                  </button>
                   <button
                     onClick={handleDownloadStaffQR}
                     className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors"

@@ -21,6 +21,8 @@ import {
 } from '../../utils/studentDemographics';
 import { LiveCameraModal } from '../common/LiveCameraModal';
 import { buildPrincipalSignatureHtml } from '../../utils/signatureHelper';
+import { escapeHtml, sanitizeSafeMediaUrl } from '../../utils/htmlSanitizer';
+import { printStudentAdmissionForm } from '../../utils/admissionPrintHelper';
 import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   Search,
@@ -149,6 +151,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
   const [idCardViewMode, setIdCardViewMode] = useState<'both' | 'front' | 'back'>('both');
   const [singleStudentQrUrl, setSingleStudentQrUrl] = useState<string>('');
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const printAdmissionAfterSaveRef = useRef<boolean>(false);
 
   // Student ID Customizer state
   const [showIdCustomizer, setShowIdCustomizer] = useState<boolean>(false);
@@ -384,11 +387,31 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
       window.print();
       return;
     }
+    printWindow.opener = null;
+    const safeTitle = escapeHtml(title);
+    const safeSchoolName = escapeHtml(school.nameBn || school.nameEn || 'School');
+    const safeEiin = escapeHtml(school.eiin || 'N/A');
+    const safeAddress = escapeHtml(school.addressBn || '');
+    const safeStudentDisplayName = escapeHtml(student.nameBn || student.nameEn);
+    const safeStudentNameEn = escapeHtml(student.nameEn);
+    const safeStudentId = escapeHtml(student.studentId);
+    const safeClassName = escapeHtml(student.className);
+    const safeSection = escapeHtml(student.section || 'A');
+    const safeRoll = escapeHtml(student.roll);
+    const safePhone = escapeHtml(student.guardianPhone);
+    const safeFatherName = escapeHtml(student.fatherNameEn || '');
+    const safeMotherName = escapeHtml(student.motherNameEn || '');
+    const safeDocUrl = sanitizeSafeMediaUrl(url);
+    const safePrintDate = escapeHtml(new Date().toLocaleDateString('bn-BD'));
+    const docBodyHtml = safeDocUrl
+      ? `<img src="${escapeHtml(safeDocUrl)}" class="doc-image" alt="${safeTitle}" />`
+      : `<div style="padding:24px;color:#64748b;font-size:13px;">ডকুমেন্ট প্রিভিউ পাওয়া যায়নি বা অনুমোদিত ফরম্যাটে নেই।</div>`;
+
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
-          <title>${title} - ${student.nameEn} (${student.studentId})</title>
+          <title>${safeTitle} - ${safeStudentNameEn} (${safeStudentId})</title>
           <style>
             body { font-family: 'Hind Siliguri', Arial, sans-serif; margin: 20px; color: #1e293b; }
             .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 15px; }
@@ -402,29 +425,29 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
         </head>
         <body>
           <div class="header">
-            <h2 style="margin:0; font-size: 20px;">${school.nameBn || school.nameEn}</h2>
-            <div style="font-size: 12px; color: #64748b;">EIIN: ${school.eiin} • ${school.addressBn || ''}</div>
-            <div class="title">${title}</div>
+            <h2 style="margin:0; font-size: 20px;">${safeSchoolName}</h2>
+            <div style="font-size: 12px; color: #64748b;">EIIN: ${safeEiin} • ${safeAddress}</div>
+            <div class="title">${safeTitle}</div>
           </div>
           <table class="info-table">
             <tr>
-              <td><strong>শিক্ষার্থীর নাম:</strong> ${student.nameBn || student.nameEn} (${student.nameEn})</td>
-              <td><strong>Student ID:</strong> ${student.studentId}</td>
+              <td><strong>শিক্ষার্থীর নাম:</strong> ${safeStudentDisplayName} (${safeStudentNameEn})</td>
+              <td><strong>Student ID:</strong> ${safeStudentId}</td>
             </tr>
             <tr>
-              <td><strong>শ্রেণি ও রোল:</strong> ${student.className} (শাখা: ${student.section || 'A'}, রোল: ${student.roll})</td>
-              <td><strong>অভিভাবক মোবাইল:</strong> ${student.guardianPhone}</td>
+              <td><strong>শ্রেণি ও রোল:</strong> ${safeClassName} (শাখা: ${safeSection}, রোল: ${safeRoll})</td>
+              <td><strong>অভিভাবক মোবাইল:</strong> ${safePhone}</td>
             </tr>
             <tr>
-              <td><strong>পিতার নাম:</strong> ${student.fatherNameEn || ''}</td>
-              <td><strong>মাতার নাম:</strong> ${student.motherNameEn || ''}</td>
+              <td><strong>পিতার নাম:</strong> ${safeFatherName}</td>
+              <td><strong>মাতার নাম:</strong> ${safeMotherName}</td>
             </tr>
           </table>
           <div class="doc-container">
-            <img src="${url}" class="doc-image" alt="${title}" />
+            ${docBodyHtml}
           </div>
           <div class="footer">
-            <div>যাচাইকৃত ডিজিটাল কপি • মুদ্রণের তারিখ: ${new Date().toLocaleDateString('bn-BD')}</div>
+            <div>যাচাইকৃত ডিজিটাল কপি • মুদ্রণের তারিখ: ${safePrintDate}</div>
             <div style="text-align: center;">
               ${buildPrincipalSignatureHtml(school)}
               <div style="border-top: 1px solid #000; width: 180px; text-align: center; padding-top: 5px;">অধ্যক্ষের স্বাক্ষর ও সিল</div>
@@ -453,6 +476,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
     group: 'Science',
     roll: '',
     session: '2026',
+    admissionDate: new Date().toISOString().split('T')[0],
     fatherNameEn: '',
     fatherNameBn: '',
     fatherPhone: '',
@@ -568,20 +592,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
     setSearchTerm('');
   };
 
-  const escapeHtml = (value: string) =>
-    String(value || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-
   const handlePrintDemographicReport = () => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       window.print();
       return;
     }
+    printWindow.opener = null;
 
     const formatNum = (val: number) => (language === 'bn' ? toBnNumber(val) : String(val));
     const showOtherCol = hasOtherDemographics;
@@ -759,6 +776,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
       group: 'Science',
       roll: nextRoll,
       session: curSession,
+      admissionDate: new Date().toISOString().split('T')[0],
       fatherNameEn: '',
       fatherNameBn: '',
       fatherPhone: '',
@@ -771,6 +789,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
       permanentAddress: 'Mirpur, Dhaka',
       status: 'active',
     });
+    printAdmissionAfterSaveRef.current = false;
     setFormError('');
     setFormSuccess('');
     setShowAddModal(true);
@@ -801,11 +820,26 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
       return;
     }
 
+    const resolvedAdmissionDate =
+      (formData.admissionDate || '').trim() || new Date().toISOString().split('T')[0];
+
     if (formData.id) {
       // Update
-      const updated = formData as Student;
+      const updated: Student = {
+        ...(formData as Student),
+        admissionDate: resolvedAdmissionDate,
+      };
       StorageService.updateStudent(updated);
       setStudents(StorageService.getStudents());
+      if (printAdmissionAfterSaveRef.current) {
+        printAdmissionAfterSaveRef.current = false;
+        printStudentAdmissionForm({
+          student: updated,
+          school,
+          schoolCode: activeSchoolCode,
+          language,
+        });
+      }
       setFormSuccess(language === 'bn' ? 'সফলভাবে হালনাগাদ করা হয়েছে' : 'Student updated successfully.');
       setTimeout(() => {
         setShowAddModal(false);
@@ -820,11 +854,26 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
         id: `std_${Date.now()}`,
         studentId: autoId,
         admissionNo: autoId,
-        admissionDate: new Date().toISOString().split('T')[0],
+        admissionDate: resolvedAdmissionDate,
       };
       StorageService.addStudent(newStudent);
       setStudents(StorageService.getStudents());
       setShowAddModal(false);
+      setActionToast(
+        language === 'bn'
+          ? `নতুন শিক্ষার্থী ${newStudent.nameBn || newStudent.nameEn} (${formatDate(resolvedAdmissionDate)}) ভর্তি সম্পন্ন হয়েছে!`
+          : `New admission saved for ${newStudent.nameEn} (${formatDate(resolvedAdmissionDate)})!`
+      );
+      setTimeout(() => setActionToast(''), 4500);
+      if (printAdmissionAfterSaveRef.current) {
+        printAdmissionAfterSaveRef.current = false;
+        printStudentAdmissionForm({
+          student: newStudent,
+          school,
+          schoolCode: activeSchoolCode,
+          language,
+        });
+      }
       // Immediately open newly admitted student's ID Card with generated QR code
       handleOpenIdCardModal(newStudent);
     }
@@ -1525,6 +1574,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                       <div className="text-[11px] text-slate-500 font-medium">
                         Roll: {language === 'bn' ? toBnNumber(s.roll) : s.roll}
                       </div>
+                      <div className="text-[10px] text-emerald-700 font-semibold mt-0.5 flex items-center space-x-1">
+                        <Calendar className="w-2.5 h-2.5 shrink-0" />
+                        <span>
+                          {language === 'bn' ? 'ভর্তি:' : 'Admitted:'}{' '}
+                          {s.admissionDate ? formatDate(s.admissionDate) : language === 'bn' ? 'উল্লেখ নেই' : 'N/A'}
+                        </span>
+                      </div>
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center space-x-2.5">
@@ -1607,6 +1663,23 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                           <CreditCard className="w-4 h-4" />
                         </button>
 
+                        {/* Print Admission Form / Confirmation Slip */}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            printStudentAdmissionForm({
+                              student: s,
+                              school,
+                              schoolCode: activeSchoolCode,
+                              language,
+                            })
+                          }
+                          title={language === 'bn' ? 'ভর্তি ফরম ও নিশ্চিতকরণ স্লিপ প্রিন্ট' : 'Print Admission Form'}
+                          className="p-1.5 text-slate-600 hover:text-teal-700 hover:bg-teal-50 rounded transition-colors"
+                        >
+                          <Printer className="w-4 h-4 text-teal-600" />
+                        </button>
+
                         {/* Student Documents Vault (Birth Certificate, Father/Mother NID, TC) */}
                         <button
                           onClick={() => handleOpenDocVaultModal(s)}
@@ -1651,7 +1724,11 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                         {canEdit && (
                           <button
                             onClick={() => {
-                              setFormData(s);
+                              setFormData({
+                                ...s,
+                                admissionDate: s.admissionDate || new Date().toISOString().split('T')[0],
+                              });
+                              printAdmissionAfterSaveRef.current = false;
                               setFormError('');
                               setFormSuccess('');
                               setShowAddModal(true);
@@ -2005,6 +2082,35 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                     <option value="Other">Other / অন্যান্য</option>
                   </select>
                 </div>
+
+                <div>
+                  <label className="block font-semibold text-emerald-800 mb-1">
+                    {language === 'bn' ? 'ভর্তির তারিখ (Admission Date) *' : 'Admission Date *'}
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={formData.admissionDate || ''}
+                    onChange={(e) => setFormData({ ...formData, admissionDate: e.target.value })}
+                    className="w-full px-3 py-2 border border-emerald-300 bg-emerald-50/40 rounded-lg font-semibold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    {language === 'bn' ? 'শিক্ষাবর্ষ (Session)' : 'Academic Session'}
+                  </label>
+                  <select
+                    value={formData.session || school.currentSession || '2026'}
+                    onChange={(e) => setFormData({ ...formData, session: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white font-semibold"
+                  >
+                    <option value="2025">2025</option>
+                    <option value="2026">2026</option>
+                    <option value="2027">2027</option>
+                    <option value="2028">2028</option>
+                  </select>
+                </div>
               </div>
 
               {/* Section 2: Academic Placement */}
@@ -2274,20 +2380,56 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
               </div>
 
               {/* Form Buttons */}
-              <div className="pt-4 border-t border-slate-100 flex items-center justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-700 font-semibold hover:bg-slate-50 transition-colors"
-                >
-                  {t('cancel')}
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-sm transition-colors"
-                >
-                  {formData.id ? t('save') : language === 'bn' ? 'ভর্তি সম্পন্ন করুন' : 'Confirm Admission'}
-                </button>
+              <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  {formData.id && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        printStudentAdmissionForm({
+                          student: formData as Student,
+                          school,
+                          schoolCode: activeSchoolCode,
+                          language,
+                        })
+                      }
+                      className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg font-bold transition-colors"
+                    >
+                      <Printer className="w-4 h-4 text-teal-700" />
+                      <span>{language === 'bn' ? 'ভর্তি ফরম প্রিন্ট' : 'Print Admission Form'}</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddModal(false)}
+                    className="px-4 py-2 border border-slate-200 rounded-lg text-slate-700 font-semibold hover:bg-slate-50 transition-colors"
+                  >
+                    {t('cancel')}
+                  </button>
+                  {!formData.id && (
+                    <button
+                      type="submit"
+                      onClick={() => {
+                        printAdmissionAfterSaveRef.current = true;
+                      }}
+                      className="inline-flex items-center space-x-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-sm transition-colors"
+                    >
+                      <Printer className="w-4 h-4" />
+                      <span>{language === 'bn' ? 'সংরক্ষণ ও ভর্তি ফরম প্রিন্ট' : 'Save & Print Form'}</span>
+                    </button>
+                  )}
+                  <button
+                    type="submit"
+                    onClick={() => {
+                      printAdmissionAfterSaveRef.current = false;
+                    }}
+                    className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-sm transition-colors"
+                  >
+                    {formData.id ? t('save') : language === 'bn' ? 'ভর্তি সম্পন্ন করুন' : 'Confirm Admission'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -2391,6 +2533,16 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                   <div>
                     <span className="text-slate-400">Date of Birth:</span>
                     <p className="font-semibold text-slate-800">{selectedStudent.dob}</p>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">{language === 'bn' ? 'ভর্তির তারিখ (Admission Date):' : 'Admission Date:'}</span>
+                    <p className="font-bold text-emerald-700">
+                      {selectedStudent.admissionDate
+                        ? formatDate(selectedStudent.admissionDate)
+                        : language === 'bn'
+                        ? 'উল্লেখ নেই'
+                        : 'Not specified'}
+                    </p>
                   </div>
                   <div>
                     <span className="text-slate-400">Academic Session:</span>
@@ -2771,7 +2923,22 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
             )}
 
             {/* Modal Bottom Actions */}
-            <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-end space-x-2">
+            <div className="pt-4 mt-4 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  printStudentAdmissionForm({
+                    student: selectedStudent,
+                    school,
+                    schoolCode: activeSchoolCode,
+                    language,
+                  })
+                }
+                className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>{language === 'bn' ? 'ভর্তি ফরম প্রিন্ট' : 'Print Admission Form'}</span>
+              </button>
               {onPrintCertificate && (
                 <button
                   onClick={() => {
@@ -2871,7 +3038,22 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      printStudentAdmissionForm({
+                        student: idCardStudent,
+                        school,
+                        schoolCode: activeSchoolCode,
+                        language,
+                      })
+                    }
+                    className="flex items-center space-x-1.5 px-3 py-1.5 bg-teal-600 text-white text-xs font-bold rounded-lg hover:bg-teal-700 shadow-sm"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>{language === 'bn' ? 'ভর্তি ফরম প্রিন্ট' : 'Print Admission Form'}</span>
+                  </button>
                   {singleStudentQrUrl && (
                     <button
                       type="button"
@@ -2887,7 +3069,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onPrintCertificate }
                     className="flex items-center space-x-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 shadow-sm"
                   >
                     <Printer className="w-3.5 h-3.5" />
-                    <span>প্রিন্ট করুন</span>
+                    <span>{language === 'bn' ? 'আইডি কার্ড প্রিন্ট' : 'Print ID Card'}</span>
                   </button>
                   <button
                     onClick={() => setShowIdCardModal(false)}

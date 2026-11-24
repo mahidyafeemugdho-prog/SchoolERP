@@ -23,6 +23,7 @@ import {
   SubscriptionPlanId,
   SupportMessageRecord,
   SupportTicketRecord,
+  SupportVideoRecord,
   TransactionContext,
   getDefaultPlatformPaymentChannels,
 } from '../types';
@@ -1267,6 +1268,49 @@ export class FirebaseDatabaseProvider implements DatabaseProviderInterface {
     }) as SupportTicketRecord;
     await ref.set(merged);
     return merged;
+  }
+
+  async listSupportVideos(): Promise<SupportVideoRecord[]> {
+    const db = this.getDb();
+    const snap = await db.collection('support_videos').get();
+    return snap.docs
+      .map((d) => d.data() as SupportVideoRecord)
+      .filter((v) => Boolean(v?.id && v?.embedUrl))
+      .sort((a, b) => {
+        if ((a.sortOrder ?? 0) !== (b.sortOrder ?? 0)) {
+          return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+        }
+        return (b.createdAt || '').localeCompare(a.createdAt || '');
+      });
+  }
+
+  async getSupportVideoById(videoDocId: string): Promise<SupportVideoRecord | null> {
+    const db = this.getDb();
+    const snap = await db.collection('support_videos').doc(videoDocId).get();
+    return snap.exists ? (snap.data() as SupportVideoRecord) : null;
+  }
+
+  async upsertSupportVideo(video: SupportVideoRecord): Promise<SupportVideoRecord> {
+    const db = this.getDb();
+    const clean = stripUndefined(video);
+    await db.collection('support_videos').doc(clean.id).set(clean);
+    return clean;
+  }
+
+  async upsertSupportVideosBatch(videos: SupportVideoRecord[]): Promise<SupportVideoRecord[]> {
+    const db = this.getDb();
+    const cleaned = videos.map((v) => stripUndefined(v));
+    const batch = db.batch();
+    for (const item of cleaned) {
+      batch.set(db.collection('support_videos').doc(item.id), item);
+    }
+    await batch.commit();
+    return cleaned;
+  }
+
+  async deleteSupportVideo(videoDocId: string): Promise<void> {
+    const db = this.getDb();
+    await db.collection('support_videos').doc(videoDocId).delete();
   }
 
   async runInTransaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {

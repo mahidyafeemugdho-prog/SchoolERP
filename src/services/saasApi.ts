@@ -272,6 +272,35 @@ export interface SupportMessageDTO {
   createdAt: string;
 }
 
+export type SupportVideoCategory =
+  | 'getting_started'
+  | 'fees'
+  | 'attendance'
+  | 'exams'
+  | 'students'
+  | 'settings'
+  | 'other';
+
+export type SupportVideoAudience = 'admins' | 'all';
+
+export interface SupportVideoDTO {
+  id: string;
+  title: string;
+  description?: string;
+  category: SupportVideoCategory;
+  videoId: string;
+  embedUrl: string;
+  watchUrl: string;
+  thumbnailUrl: string;
+  audience: SupportVideoAudience;
+  sortOrder: number;
+  isActive: boolean;
+  createdByUid: string;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export const DEFAULT_FALLBACK_PLANS: SaaSPlanConfig[] = [
   {
     id: 'free',
@@ -935,6 +964,53 @@ export const SaaSApi = {
       {
         method: 'PATCH',
         body: JSON.stringify(payload),
+      }
+    ),
+
+  // Support Video Tutorials (Master Admin uploads, Super Admin / Admin watches)
+  listSupportVideos: () =>
+    saasFetch<{ success: boolean; videos: SupportVideoDTO[] }>('/support/videos'),
+
+  createSupportVideos: (payload: {
+    videos: Array<{
+      title: string;
+      description?: string;
+      category?: SupportVideoCategory;
+      rawInput: string;
+      audience?: SupportVideoAudience;
+      sortOrder?: number;
+    }>;
+  }) =>
+    saasFetch<{ success: boolean; videos: SupportVideoDTO[] }>('/support/videos', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateSupportVideo: (
+    docId: string,
+    payload: {
+      title?: string;
+      description?: string;
+      category?: SupportVideoCategory;
+      rawInput?: string;
+      audience?: SupportVideoAudience;
+      sortOrder?: number;
+      isActive?: boolean;
+    }
+  ) =>
+    saasFetch<{ success: boolean; video: SupportVideoDTO }>(
+      `/support/videos/${encodeURIComponent(docId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  deleteSupportVideo: (docId: string) =>
+    saasFetch<{ success: boolean; deletedId: string }>(
+      `/support/videos/${encodeURIComponent(docId)}`,
+      {
+        method: 'DELETE',
       }
     ),
 };
