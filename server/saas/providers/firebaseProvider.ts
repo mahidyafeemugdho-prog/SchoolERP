@@ -206,7 +206,10 @@ function getAdminApp(): { app: App | null; config: FirebaseAppletConfig; hasCred
   }
 
   const isNetlifyRuntime = Boolean(
-    process.env.NETLIFY === 'true' || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT
+    process.env.NETLIFY === 'true' ||
+      process.env.VERCEL ||
+      process.env.AWS_LAMBDA_FUNCTION_NAME ||
+      process.env.LAMBDA_TASK_ROOT
   );
   const isTestEnv = Boolean(process.env.VITEST || process.env.NODE_ENV === 'test');
   const hasValidProjectId = Boolean(config.projectId && !/remixed/i.test(config.projectId));

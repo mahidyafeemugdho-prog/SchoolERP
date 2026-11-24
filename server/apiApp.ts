@@ -18,6 +18,7 @@ export interface CreateApiAppOptions {
 function resolveWritableDataDir(explicitDir?: string): string {
   const isServerless =
     process.env.NETLIFY === 'true' ||
+    Boolean(process.env.VERCEL) ||
     Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
     Boolean(process.env.LAMBDA_TASK_ROOT);
   const targetDir = explicitDir && !isServerless

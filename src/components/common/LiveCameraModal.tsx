@@ -78,12 +78,14 @@ export const LiveCameraModal: React.FC<LiveCameraModalProps> = ({
     if (!stream) {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoInputs = devices.filter((d) => d.kind === 'videoinput');
+        const videoInputs = devices.filter((d) => d.kind === 'videoinput' && Boolean(d.deviceId && d.deviceId.trim()));
         const matched =
           desiredFacing === 'user'
             ? videoInputs.find((d) => /front|user|selfie|facetime/i.test(d.label || ''))
             : videoInputs.find((d) => /back|rear|environment/i.test(d.label || ''));
-        const candidates = [matched, ...videoInputs].filter(Boolean) as MediaDeviceInfo[];
+        const candidates = [matched, ...videoInputs].filter(
+          (d, idx, arr): d is MediaDeviceInfo => Boolean(d) && arr.indexOf(d) === idx
+        );
         for (const dev of candidates) {
           try {
             stream = await navigator.mediaDevices.getUserMedia({

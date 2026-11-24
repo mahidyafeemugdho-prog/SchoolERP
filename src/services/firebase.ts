@@ -21,6 +21,10 @@ import {
 } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
+import {
+  clearFailedOriginValidationCache,
+  isExpectedAuthWarningCode,
+} from '../utils/firebaseAuthErrors';
 
 export enum OperationType {
   CREATE = 'create',
@@ -129,6 +133,24 @@ googleProvider.setCustomParameters({ prompt: 'select_account' });
 // CRITICAL: Must pass firestoreDatabaseId as required by skill guidelines
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 
+let originValidationNeedsReset = false;
+
+function resetPopupOriginValidationCache(): void {
+  clearFailedOriginValidationCache([
+    browserPopupRedirectResolver as any,
+    (auth as any)?._popupRedirectResolver,
+  ]);
+  originValidationNeedsReset = false;
+}
+
+function assertBrowserOnlineForAuth(): void {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    const offlineErr: any = new Error('Firebase: Error (auth/network-request-failed).');
+    offlineErr.code = 'auth/network-request-failed';
+    throw offlineErr;
+  }
+}
+
 export async function testConnection(): Promise<boolean> {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
@@ -143,28 +165,59 @@ export async function testConnection(): Promise<boolean> {
 }
 
 export async function loginWithFirebaseEmail(email: string, password: string) {
+  assertBrowserOnlineForAuth();
   return await signInWithEmailAndPassword(auth, email.trim(), password);
 }
 
 export async function loginWithGoogle() {
+  assertBrowserOnlineForAuth();
+  if (originValidationNeedsReset) {
+    resetPopupOriginValidationCache();
+  }
   try {
     return await signInWithPopup(auth, googleProvider);
-  } catch (err) {
-    console.error('Google Sign In Error:', err);
+  } catch (err: any) {
+    const code = err?.code || '';
+    if (code === 'auth/network-request-failed' || code === 'auth/internal-error') {
+      resetPopupOriginValidationCache();
+      originValidationNeedsReset = true;
+    }
+    if (isExpectedAuthWarningCode(code)) {
+      console.warn('Google Sign-In interrupted:', code, err?.message || '');
+    } else {
+      console.error('Google Sign In Error:', err);
+    }
     throw err;
   }
 }
 
 export async function loginWithGoogleRedirect() {
+  assertBrowserOnlineForAuth();
+  if (originValidationNeedsReset) {
+    resetPopupOriginValidationCache();
+  }
   markGoogleRedirectPending(true);
-  await signInWithRedirect(auth, googleProvider);
+  try {
+    await signInWithRedirect(auth, googleProvider);
+  } catch (err: any) {
+    markGoogleRedirectPending(false);
+    if (err?.code === 'auth/network-request-failed' || err?.code === 'auth/internal-error') {
+      resetPopupOriginValidationCache();
+      originValidationNeedsReset = true;
+    }
+    throw err;
+  }
 }
 
 export async function completeGoogleRedirectLogin() {
   try {
     return await getRedirectResult(auth);
-  } catch (err) {
-    console.error('Google Redirect Result Error:', err);
+  } catch (err: any) {
+    if (isExpectedAuthWarningCode(err?.code)) {
+      console.warn('Google Redirect Result interrupted:', err?.code, err?.message || '');
+    } else {
+      console.error('Google Redirect Result Error:', err);
+    }
     throw err;
   }
 }
@@ -176,6 +229,7 @@ export async function getFreshIdToken(forceRefresh = false): Promise<string | nu
 }
 
 export async function resetFirebasePassword(email: string) {
+  assertBrowserOnlineForAuth();
   return await sendPasswordResetEmail(auth, email.trim());
 }
 
@@ -193,11 +247,23 @@ export async function reauthenticateWithCurrentPassword(currentPassword: string)
 }
 
 export async function reauthenticateWithGoogleAccount(): Promise<void> {
+  assertBrowserOnlineForAuth();
+  if (originValidationNeedsReset) {
+    resetPopupOriginValidationCache();
+  }
   const user = auth.currentUser;
   if (!user) {
     throw new Error('No authenticated user session found.');
   }
-  await reauthenticateWithPopup(user, googleProvider);
+  try {
+    await reauthenticateWithPopup(user, googleProvider);
+  } catch (err: any) {
+    if (err?.code === 'auth/network-request-failed' || err?.code === 'auth/internal-error') {
+      resetPopupOriginValidationCache();
+      originValidationNeedsReset = true;
+    }
+    throw err;
+  }
 }
 
 export async function updateFirebaseClientPassword(newPassword: string): Promise<void> {

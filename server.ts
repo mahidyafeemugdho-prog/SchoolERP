@@ -82,6 +82,7 @@ app.post('/api/export-full-codebase-zip', async (req: Request, res: Response) =>
       'firebase-applet-config.json',
       'firebase-blueprint.json',
       'netlify.toml',
+      'vercel.json',
       'README.md',
     ];
 
@@ -92,7 +93,7 @@ app.post('/api/export-full-codebase-zip', async (req: Request, res: Response) =>
       }
     }
 
-    for (const dirName of ['src', 'server', 'scripts', 'docs', 'public', 'netlify']) {
+    for (const dirName of ['src', 'server', 'scripts', 'docs', 'public', 'netlify', 'api']) {
       const dirPath = path.join(__dirname, dirName);
       if (fs.existsSync(dirPath)) {
         addDirToZip(dirPath, zip.folder(dirName), dirName);

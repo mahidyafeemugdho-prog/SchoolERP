@@ -7,6 +7,7 @@ import {
 } from '../../services/firebase';
 import { SaaSApi, isSaaSBackendUnavailableError } from '../../services/saasApi';
 import { validateLoginIdentifier } from '../../utils/loginIdentifier';
+import { formatFirebaseAuthErrorMessage } from '../../utils/firebaseAuthErrors';
 import campusBackdropImg from '../../assets/images/smart_school_campus_1794653963006.jpg';
 import firebaseConfig from '../../../firebase-applet-config.json';
 import {
@@ -302,7 +303,12 @@ export const HeroLoginView: React.FC = () => {
         ? 'Username/mobile lookup requires server connection. Enter your registered @ email or contact your School Admin.'
         : err?.code === 'USER_NOT_FOUND'
         ? 'No account matched this username or mobile number.'
-        : err?.message || 'Could not send reset email. Please verify your login ID or contact your School Admin.';
+        : formatFirebaseAuthErrorMessage({
+            code: err?.code,
+            rawMessage: err?.message,
+            flow: 'password-reset',
+            isOffline: typeof navigator !== 'undefined' && navigator.onLine === false,
+          }).message;
       setResetStatus({
         type: 'error',
         text: fallbackMsg,

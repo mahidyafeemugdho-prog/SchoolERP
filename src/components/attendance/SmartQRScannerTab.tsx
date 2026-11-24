@@ -35,6 +35,7 @@ import {
   Search,
   Image as ImageIcon,
   ExternalLink,
+  Copy,
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { useAuth } from '../../context/AuthContext';
@@ -52,6 +53,7 @@ import { QrVoiceController } from '../../utils/qrVoiceAnnouncement';
 import {
   CameraPermissionState,
   formatCameraStartupErrorMessage,
+  isAndroidWebView,
   isCameraPermissionError,
 } from '../../utils/cameraPermissionHelper';
 
@@ -141,10 +143,6 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
     }
   };
 
-  // Camera-off offline manual attendance roster states
-  const [manualRosterSearch, setManualRosterSearch] = useState<string>('');
-  const [manualRosterClass, setManualRosterClass] = useState<string>('all');
-  const [manualRosterTab, setManualRosterTab] = useState<'student' | 'staff'>('student');
   const [capturedFaceSnapshot, setCapturedFaceSnapshot] = useState<string | null>(null);
   const [biometricScore, setBiometricScore] = useState<number | null>(null);
   const [isFaceDetecting, setIsFaceDetecting] = useState<boolean>(false);
@@ -182,7 +180,6 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
   const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
   const cameraFacingRef = useRef<'environment' | 'user'>('environment');
   const autoStartAttemptedRef = useRef<boolean>(false);
-  const [manualTokenInput, setManualTokenInput] = useState<string>('');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
   const soundEnabledRef = useRef<boolean>(soundEnabled);
@@ -208,7 +205,6 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
   const [modalDismissTimer, setModalDismissTimer] = useState<number>(2);
   const [cameraFlash, setCameraFlash] = useState<'success' | 'warning' | 'error' | null>(null);
   const [currentVoiceText, setCurrentVoiceText] = useState<string>('');
-  const [showManualInput, setShowManualInput] = useState<boolean>(false);
 
   const dismissTimeoutRef = useRef<any>(null);
   const timerIntervalRef = useRef<any>(null);
@@ -586,6 +582,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
             inIframe: isEmbeddedIframe(),
             permissionState: 'denied',
             hasMediaDevices: Boolean(typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia),
+            isWebView: isAndroidWebView(),
           });
           setCameraError(formatted.message);
           return;
@@ -600,6 +597,38 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
 
   const [isStartingCamera, setIsStartingCamera] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [copiedKioskUrl, setCopiedKioskUrl] = useState<boolean>(false);
+  const isWebViewEnv = isAndroidWebView();
+
+  const handleCopyKioskUrl = async () => {
+    const url = typeof window !== 'undefined' ? window.location.href : 'https://smartedubd.netlify.app';
+    let copied = false;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        copied = true;
+      }
+    } catch {}
+    if (!copied && typeof document !== 'undefined') {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch {}
+    }
+    if (copied) {
+      setCopiedKioskUrl(true);
+      setTimeout(() => {
+        if (isMountedRef.current) setCopiedKioskUrl(false);
+      }, 2500);
+    }
+  };
 
   // Auto-start camera once when entering Gatekeeper mode if not yet attempted
   useEffect(() => {
@@ -629,6 +658,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
             inIframe: isEmbeddedIframe(),
             permissionState: 'unknown',
             hasMediaDevices: false,
+            isWebView: isAndroidWebView(),
           }).message
         );
       }
@@ -661,14 +691,15 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
       return { width: edge, height: edge };
     };
 
-    // Enable native hardware BarcodeDetector inside Html5Qrcode + high 25 FPS for instant QR decode
+    // Disable native BarcodeDetector inside Android WebView to avoid partial WebView engine stalls
+    const useNativeDetector = !isAndroidWebView();
     const tryStartWith = async (config: any) => {
       const el = document.getElementById('qr-reader-container');
       if (el) el.innerHTML = '';
       const scanner = new Html5Qrcode('qr-reader-container', {
         verbose: false,
-        useBarCodeDetectorIfSupported: true,
-        experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+        useBarCodeDetectorIfSupported: useNativeDetector,
+        experimentalFeatures: { useBarCodeDetectorIfSupported: useNativeDetector },
       });
       scannerRef.current = scanner;
       await scanner.start(
@@ -749,7 +780,8 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
         throw lastErr;
       }
       if (!isMountedRef.current || cameraOpIdRef.current !== opId) return;
-      const devices = await Html5Qrcode.getCameras();
+      const rawDevices = await Html5Qrcode.getCameras();
+      const devices = (rawDevices || []).filter((d: any) => Boolean(d?.id && String(d.id).trim()));
       if (devices && devices.length > 0) {
         if (isMountedRef.current) setCameras(devices);
         const matchFront = devices.find((d: any) => /front|user|selfie|facetime|integrated/i.test(d.label || ''));
@@ -821,6 +853,53 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
         }
       }
 
+      // Android WebView fallback: probe plain { video: true } to unlock deviceId when facingMode constraints fail
+      if (isMountedRef.current && cameraOpIdRef.current === opId && navigator.mediaDevices?.getUserMedia) {
+        try {
+          const probeStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          const probeTrack = probeStream.getVideoTracks?.()?.[0];
+          const probeDeviceId = probeTrack?.getSettings?.()?.deviceId;
+          probeStream.getTracks().forEach((t) => {
+            try {
+              t.stop();
+            } catch {}
+          });
+          await new Promise((r) => setTimeout(r, 120));
+          if (!isMountedRef.current || cameraOpIdRef.current !== opId) return;
+
+          const unlockedDevices = ((await Html5Qrcode.getCameras().catch(() => [])) || []).filter((d: any) =>
+            Boolean(d?.id && String(d.id).trim())
+          );
+          const candidateIds = [
+            ...(probeDeviceId ? [probeDeviceId] : []),
+            ...unlockedDevices.map((d: any) => String(d.id)),
+          ].filter((id, idx, arr) => Boolean(id) && arr.indexOf(id) === idx);
+
+          for (const cid of candidateIds) {
+            if (!isMountedRef.current || cameraOpIdRef.current !== opId) return;
+            try {
+              await tryStartWith(cid);
+              if (!isMountedRef.current || cameraOpIdRef.current !== opId) {
+                await stopCamera();
+                return;
+              }
+              setSelectedCameraId(cid);
+              setScanning(true);
+              setIsStartingCamera(false);
+              return;
+            } catch (probeStartErr: any) {
+              lastErr = probeStartErr;
+              await stopCamera();
+            }
+          }
+        } catch (probeErr: any) {
+          if (isCameraPermissionError(probeErr)) {
+            throw probeErr;
+          }
+          lastErr = probeErr || lastErr;
+        }
+      }
+
       throw lastErr || new Error('কোনো ক্যামেরা ডিভাইস পাওয়া যায়নি (No camera detected).');
     } catch (finalErr: any) {
       if (!isMountedRef.current || cameraOpIdRef.current !== opId) return;
@@ -836,6 +915,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
         inIframe: isEmbeddedIframe(),
         permissionState: permState,
         hasMediaDevices,
+        isWebView: isAndroidWebView(),
       });
       setCameraError(formatted.message);
     }
@@ -1778,14 +1858,6 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
     }
   };
 
-  // Handle Manual Token / USB Barcode Gun Scan
-  const handleManualSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!manualTokenInput.trim()) return;
-    handleScanSuccess(manualTokenInput.trim());
-    setManualTokenInput('');
-  };
-
   const enrolledFaceCount =
     StorageService.getStudents().filter((s) => !!s.photoUrl).length +
     StorageService.getStaff().filter((st) => !!st.photoUrl).length;
@@ -2137,382 +2209,133 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
             </div>
           )}
 
-          {/* Idle / Off Camera Overlay - Dedicated Full Camera-Off Attendance Station */}
+          {/* Idle / Off Camera Overlay - Pure Camera & Photo Scan Only */}
           {!scanning && (
-            effectiveIsGatekeeper ? (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!isStartingCamera) startCamera();
+              }}
+              className="absolute inset-0 flex flex-col items-center justify-center p-5 sm:p-6 text-center text-white bg-slate-950 z-20 select-none cursor-pointer overflow-y-auto"
+            >
               <div
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!isStartingCamera) startCamera();
-                }}
-                className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center text-white bg-slate-950 z-20 select-none cursor-pointer"
+                className={`w-20 h-20 sm:w-24 sm:h-24 rounded-3xl flex items-center justify-center mb-4 animate-pulse border-2 shrink-0 ${
+                  scannerType === 'face'
+                    ? 'bg-cyan-500/10 border-cyan-400/80 text-cyan-400 shadow-[0_0_50px_rgba(6,182,212,0.3)]'
+                    : 'bg-emerald-500/10 border-emerald-400/80 text-emerald-400 shadow-[0_0_50px_rgba(16,185,129,0.3)]'
+                }`}
               >
-                <div
-                  className={`w-24 h-24 sm:w-28 sm:h-28 rounded-3xl flex items-center justify-center mb-5 animate-pulse border-2 ${
+                {scannerType === 'qr' ? (
+                  <Camera className="w-10 h-10 sm:w-12 sm:h-12 text-emerald-400" />
+                ) : (
+                  <ScanFace className="w-10 h-10 sm:w-12 sm:h-12 text-cyan-400" />
+                )}
+              </div>
+              <h3 className="text-lg sm:text-2xl font-black text-white mb-1.5 tracking-wide">
+                {isStartingCamera
+                  ? 'ক্যামেরা চালু হচ্ছে...'
+                  : scannerType === 'auto'
+                  ? 'অটো স্মার্ট কিওস্ক (QR + Face একসাথে)'
+                  : scannerType === 'face'
+                  ? 'এআই ফেস স্ক্যান কিওস্ক (Face Scan)'
+                  : 'স্কুল গেট কিউআর কিওস্ক'}
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-400 max-w-sm mb-5 leading-relaxed">
+                {isStartingCamera
+                  ? 'ক্যামেরা ডিভাইস লোড হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...'
+                  : scannerType === 'auto'
+                  ? 'ক্যামেরার সামনে মুখমণ্ডল অথবা QR আইডি কার্ড ধরলেই স্বয়ংক্রিয়ভাবে হাজিরা হয়ে যাবে'
+                  : scannerType === 'face'
+                  ? 'শিক্ষার্থী বা শিক্ষকের মুখমণ্ডল ক্যামেরায় স্ক্যান করে অটো বা 1-ট্যাপ হাজিরা নিতে ক্যামেরা চালু করুন'
+                  : 'আইডি কার্ড বা কিউআর কোড স্ক্যান করে উপস্থিতি নিতে স্ক্রিনে অথবা বাটনে চাপ দিন'}
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2.5 max-w-lg">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    startCamera();
+                  }}
+                  disabled={isStartingCamera}
+                  className={`px-7 py-3.5 text-white font-black text-sm sm:text-base rounded-2xl shadow-2xl flex items-center gap-2.5 active:scale-95 transition-all cursor-pointer ring-4 ${
                     scannerType === 'face'
-                      ? 'bg-cyan-500/10 border-cyan-400/80 text-cyan-400 shadow-[0_0_50px_rgba(6,182,212,0.3)]'
-                      : 'bg-emerald-500/10 border-emerald-400/80 text-emerald-400 shadow-[0_0_50px_rgba(16,185,129,0.3)]'
+                      ? 'bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 ring-cyan-500/20'
+                      : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 ring-emerald-500/20'
                   }`}
                 >
                   {scannerType === 'qr' ? (
-                    <Camera className="w-12 h-12 text-emerald-400" />
+                    <Camera className="w-5 h-5 text-white" />
                   ) : (
-                    <ScanFace className="w-12 h-12 text-cyan-400" />
+                    <ScanFace className="w-5 h-5 text-white" />
                   )}
-                </div>
-                <h3 className="text-xl sm:text-2xl font-black text-white mb-2 tracking-wide">
-                  {isStartingCamera
-                    ? 'ক্যামেরা চালু হচ্ছে...'
-                    : scannerType === 'auto'
-                    ? 'অটো স্মার্ট কিওস্ক (QR + Face একসাথে)'
-                    : scannerType === 'face'
-                    ? 'এআই ফেস স্ক্যান কিওস্ক (Face Scan)'
-                    : 'স্কুল গেট কিউআর কিওস্ক'}
-                </h3>
-                <p className="text-xs sm:text-sm text-slate-400 max-w-sm mb-6 leading-relaxed">
-                  {isStartingCamera
-                    ? 'ক্যামেরা ডিভাইস লোড হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...'
-                    : scannerType === 'auto'
-                    ? 'ক্যামেরার সামনে মুখমণ্ডল অথবা QR আইডি কার্ড ধরলেই স্বয়ংক্রিয়ভাবে হাজিরা হয়ে যাবে'
-                    : scannerType === 'face'
-                    ? 'শিক্ষার্থী বা শিক্ষকের মুখমণ্ডল ক্যামেরায় স্ক্যান করে অটো বা 1-ট্যাপ হাজিরা নিতে ক্যামেরা চালু করুন'
-                    : 'আইডি কার্ড বা কিউআর কোড স্ক্যান করে উপস্থিতি নিতে স্ক্রিনে অথবা বাটনে চাপ দিন'}
-                </p>
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      startCamera();
-                    }}
-                    disabled={isStartingCamera}
-                    className={`px-7 py-3.5 text-white font-black text-sm sm:text-base rounded-2xl shadow-2xl flex items-center gap-2.5 active:scale-95 transition-all cursor-pointer ring-4 ${
-                      scannerType === 'face'
-                        ? 'bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 ring-cyan-500/20'
-                        : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 ring-emerald-500/20'
-                    }`}
-                  >
-                    {scannerType === 'qr' ? (
-                      <Camera className="w-5 h-5 text-white" />
-                    ) : (
-                      <ScanFace className="w-5 h-5 text-white" />
-                    )}
-                    <span>{isStartingCamera ? 'ক্যামেরা সক্রিয় হচ্ছে...' : '📹 ক্যামেরা চালু করুন (Start Camera)'}</span>
-                  </button>
+                  <span>{isStartingCamera ? 'ক্যামেরা সক্রিয় হচ্ছে...' : '📹 ক্যামেরা চালু করুন (Start Camera)'}</span>
+                </button>
 
-                  {isEmbeddedIframe() && typeof window !== 'undefined' && (
+                {(isEmbeddedIframe() || isWebViewEnv) && typeof window !== 'undefined' && (
+                  <>
                     <a
                       href={window.location.href}
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
-                      className="px-5 py-3 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs sm:text-sm rounded-2xl shadow-lg flex items-center gap-2 transition-colors"
+                      className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-2xl shadow-lg flex items-center gap-1.5 transition-colors"
                     >
                       <ExternalLink className="w-4 h-4" />
-                      <span>নতুন ট্যাবে খুলুন</span>
+                      <span>{isWebViewEnv ? 'ক্রোম ব্রাউজারে খুলুন' : 'নতুন ট্যাবে খুলুন'}</span>
                     </a>
-                  )}
 
-                  <label
-                    onClick={(e) => e.stopPropagation()}
-                    className="px-5 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-100 font-bold text-xs sm:text-sm rounded-2xl shadow-lg flex items-center gap-2 cursor-pointer transition-colors"
-                  >
-                    <Camera className="w-4 h-4 text-cyan-300" />
-                    <span>ছবি তুলে স্ক্যান করুন</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={handlePhotoScan}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-                {cameraError && (
-                  <div
-                    onClick={(e) => e.stopPropagation()}
-                    className="mt-4 px-4 py-2.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-200 max-w-md leading-relaxed"
-                  >
-                    {cameraError}
-                  </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCopyKioskUrl();
+                      }}
+                      className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-100 font-bold text-xs rounded-2xl shadow-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <Copy className="w-4 h-4 text-amber-300" />
+                      <span>{copiedKioskUrl ? '✓ লিংক কপি হয়েছে!' : 'লিংক কপি করুন'}</span>
+                    </button>
+                  </>
                 )}
-              </div>
-            ) : (
-            <div className="absolute inset-0 flex flex-col p-3 sm:p-5 text-white bg-slate-950/95 z-20 overflow-y-auto">
-              {/* Top Banner */}
-              <div className="flex flex-wrap items-center justify-between gap-2.5 pb-3 border-b border-slate-800 shrink-0">
-                <div className="flex items-center space-x-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
-                    <Smartphone className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-extrabold text-xs sm:text-sm text-white">
-                        মোবাইল ক্যামেরা ছাড়া বিকল্প হাজিরা স্টেশন
-                      </h4>
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                        ক্যামেরা অফ মোড
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-400">
-                      ক্যামেরা বন্ধ থাকলেও আইডি/রোল লিখে বা তালিকা থেকে 1-ট্যাপে সরাসরি উপস্থিতি নিন
-                    </p>
-                  </div>
-                </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => startCamera()}
-                    disabled={isStartingCamera}
-                    className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center gap-1.5 active:scale-95"
-                  >
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>{isStartingCamera ? 'ক্যামেরা চালু হচ্ছে...' : '📹 ক্যামেরা চালু করুন'}</span>
-                  </button>
-
-                  <label className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl font-bold text-xs shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95">
-                    <QrCode className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="hidden sm:inline">ছবি ফাইল স্ক্যান</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={handlePhotoScan}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-              </div>
-
-              {/* Direct ID / Roll Manual Quick Input */}
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!manualTokenInput.trim()) return;
-                  handleScanSuccess(manualTokenInput.trim(), scanDirectionMode === 'auto' ? undefined : scanDirectionMode);
-                  setManualTokenInput('');
-                }}
-                className="my-3 p-2.5 bg-slate-900/90 rounded-2xl border border-slate-800 flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0"
-              >
-                <div className="relative flex-1 min-w-[200px]">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <label
+                  onClick={(e) => e.stopPropagation()}
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-100 font-bold text-xs rounded-2xl shadow-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <Camera className="w-4 h-4 text-cyan-300" />
+                  <span>ছবি তুলে স্ক্যান</span>
                   <input
-                    type="text"
-                    value={manualTokenInput}
-                    onChange={(e) => setManualTokenInput(e.target.value)}
-                    placeholder="স্টুডেন্ট আইডি, রোল বা মোবাইল নম্বর (যেমন: 1, 01, S-2026-1001)..."
-                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-blue-500"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handlePhotoScan}
+                    className="hidden"
                   />
-                </div>
+                </label>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!manualTokenInput.trim()) return;
-                      handleScanSuccess(manualTokenInput.trim(), 'in');
-                      setManualTokenInput('');
-                    }}
-                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-md flex items-center gap-1 active:scale-95 transition-all"
-                  >
-                    <LogIn className="w-3.5 h-3.5" />
-                    <span>প্রবেশ (In)</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!manualTokenInput.trim()) return;
-                      handleScanSuccess(manualTokenInput.trim(), 'out');
-                      setManualTokenInput('');
-                    }}
-                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-black shadow-md flex items-center gap-1 active:scale-95 transition-all"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>ছুটি (Out)</span>
-                  </button>
-                </div>
-              </form>
-
-              {/* Quick 1-Click Tap Roster (Students / Staff) */}
-              <div className="flex-1 flex flex-col min-h-0 bg-slate-900/60 rounded-2xl border border-slate-800 p-2.5">
-                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 shrink-0">
-                  <div className="inline-flex p-0.5 bg-slate-950 rounded-xl border border-slate-800 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setManualRosterTab('student')}
-                      className={`px-3 py-1 rounded-lg font-bold transition-all ${
-                        manualRosterTab === 'student' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      শিক্ষার্থী ({StorageService.getStudents().length})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setManualRosterTab('staff')}
-                      className={`px-3 py-1 rounded-lg font-bold transition-all ${
-                        manualRosterTab === 'staff' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      শিক্ষক ও স্টাফ ({StorageService.getStaff().length})
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {manualRosterTab === 'student' && (
-                      <select
-                        value={manualRosterClass}
-                        onChange={(e) => setManualRosterClass(e.target.value)}
-                        className="px-2 py-1 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 text-xs focus:outline-none"
-                      >
-                        <option value="all">সকল শ্রেণি</option>
-                        {allClasses.map((cls) => (
-                          <option key={cls} value={cls}>{cls}</option>
-                        ))}
-                      </select>
-                    )}
-                    <input
-                      type="text"
-                      placeholder="নাম বা রোল ফিল্টার..."
-                      value={manualRosterSearch}
-                      onChange={(e) => setManualRosterSearch(e.target.value)}
-                      className="w-28 sm:w-40 px-2.5 py-1 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 placeholder-slate-500 text-xs focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                {/* Scrollable Roster Items */}
-                <div className="flex-1 overflow-y-auto max-h-[300px] sm:max-h-[360px] pr-1 space-y-1.5">
-                  {manualRosterTab === 'student' ? (
-                    StorageService.getStudents()
-                      .filter((st) => !st.status || st.status === 'active')
-                      .filter((st) => manualRosterClass === 'all' || st.className === manualRosterClass)
-                      .filter((st) => {
-                        if (!manualRosterSearch.trim()) return true;
-                        const q = manualRosterSearch.toLowerCase();
-                        return (
-                          String(st.nameBn || '').toLowerCase().includes(q) ||
-                          String(st.nameEn || '').toLowerCase().includes(q) ||
-                          String(st.studentId || '').toLowerCase().includes(q) ||
-                          String(st.roll || '').toLowerCase().includes(q) ||
-                          String(st.guardianPhone || '').toLowerCase().includes(q)
-                        );
-                      })
-                      .sort((a, b) => {
-                        const ra = parseInt(String(a.roll || '').replace(/[০-৯]/g, (d) => String('০১২৩৪৫৬৭৮৯'.indexOf(d))).replace(/\D/g, ''), 10) || Number.MAX_SAFE_INTEGER;
-                        const rb = parseInt(String(b.roll || '').replace(/[০-৯]/g, (d) => String('০১২৩৪৫৬৭৮৯'.indexOf(d))).replace(/\D/g, ''), 10) || Number.MAX_SAFE_INTEGER;
-                        return ra - rb;
-                      })
-                      .map((st) => (
-                        <div
-                          key={st.id}
-                          className="p-2 bg-slate-950/80 hover:bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between gap-2 transition-colors"
-                        >
-                          <div className="flex items-center space-x-2.5 truncate">
-                            <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-slate-200 overflow-hidden shrink-0">
-                              {st.photoUrl ? (
-                                <img src={st.photoUrl} alt="" className="w-full h-full object-cover" />
-                              ) : (
-                                st.nameBn?.charAt(0) || st.nameEn?.charAt(0) || 'S'
-                              )}
-                            </div>
-                            <div className="truncate">
-                              <div className="text-xs font-bold text-slate-100 truncate">
-                                {st.nameBn || st.nameEn}
-                              </div>
-                              <div className="text-[10px] text-slate-400">
-                                {st.className} • রোল {toBnNumber(st.roll || '1')} • {st.studentId}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center space-x-1.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => handleScanSuccess(st.studentId || st.id, 'in')}
-                              className="px-2.5 py-1 bg-emerald-600/90 hover:bg-emerald-600 text-white rounded-lg text-[10px] font-black flex items-center gap-1 shadow-xs active:scale-95"
-                              title="প্রবেশ হাজিরা"
-                            >
-                              <LogIn className="w-3 h-3" />
-                              <span>প্রবেশ</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleScanSuccess(st.studentId || st.id, 'out')}
-                              className="px-2.5 py-1 bg-purple-600/90 hover:bg-purple-600 text-white rounded-lg text-[10px] font-black flex items-center gap-1 shadow-xs active:scale-95"
-                              title="ছুটি হাজিরা"
-                            >
-                              <LogOut className="w-3 h-3" />
-                              <span>ছুটি</span>
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                  ) : (
-                    StorageService.getStaff()
-                      .filter((st) => st.status !== 'resigned')
-                      .filter((st) => {
-                        if (!manualRosterSearch.trim()) return true;
-                        const q = manualRosterSearch.toLowerCase();
-                        return (
-                          String(st.nameBn || '').toLowerCase().includes(q) ||
-                          String(st.nameEn || '').toLowerCase().includes(q) ||
-                          String(st.employeeId || '').toLowerCase().includes(q) ||
-                          String(st.designation || '').toLowerCase().includes(q) ||
-                          String(st.phone || '').toLowerCase().includes(q)
-                        );
-                      })
-                      .map((st) => (
-                        <div
-                          key={st.id}
-                          className="p-2 bg-slate-950/80 hover:bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between gap-2 transition-colors"
-                        >
-                          <div className="flex items-center space-x-2.5 truncate">
-                            <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-slate-200 overflow-hidden shrink-0">
-                              {st.photoUrl ? (
-                                <img src={st.photoUrl} alt="" className="w-full h-full object-cover" />
-                              ) : (
-                                st.nameBn?.charAt(0) || st.nameEn?.charAt(0) || 'T'
-                              )}
-                            </div>
-                            <div className="truncate">
-                              <div className="text-xs font-bold text-slate-100 truncate">
-                                {st.nameBn || st.nameEn}
-                              </div>
-                              <div className="text-[10px] text-slate-400">
-                                {st.designation} • {st.employeeId || st.phone}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center space-x-1.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => handleScanSuccess(st.employeeId || st.id, 'in')}
-                              className="px-2.5 py-1 bg-emerald-600/90 hover:bg-emerald-600 text-white rounded-lg text-[10px] font-black flex items-center gap-1 shadow-xs active:scale-95"
-                              title="প্রবেশ হাজিরা"
-                            >
-                              <LogIn className="w-3 h-3" />
-                              <span>প্রবেশ</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleScanSuccess(st.employeeId || st.id, 'out')}
-                              className="px-2.5 py-1 bg-purple-600/90 hover:bg-purple-600 text-white rounded-lg text-[10px] font-black flex items-center gap-1 shadow-xs active:scale-95"
-                              title="ছুটি হাজিরা"
-                            >
-                              <LogOut className="w-3 h-3" />
-                              <span>ছুটি</span>
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                  )}
-                </div>
+                <label
+                  onClick={(e) => e.stopPropagation()}
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-100 font-bold text-xs rounded-2xl shadow-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <ImageIcon className="w-4 h-4 text-emerald-300" />
+                  <span>গ্যালারি / ফাইল স্ক্যান</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handlePhotoScan}
+                    className="hidden"
+                  />
+                </label>
               </div>
+              {cameraError && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="mt-4 px-4 py-2.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-200 max-w-md leading-relaxed"
+                >
+                  {cameraError}
+                </div>
+              )}
             </div>
-            )
           )}
         </div>
 
@@ -2521,13 +2344,12 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
           <div className="relative z-20 w-full p-3 sm:p-4 bg-gradient-to-t from-slate-950/95 via-slate-950/60 to-transparent flex flex-wrap items-center justify-between gap-2">
             {/* Left: Snap Photo, Face Capture, or Manual Entry */}
             <div className="flex flex-wrap items-center gap-2">
-              <label className="p-2 sm:px-3 sm:py-2 rounded-xl bg-black/60 hover:bg-black/80 border border-white/15 text-white backdrop-blur-md shadow-md text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5" title="ছবি তুলে সরাসরি স্ক্যান">
+              <label className="p-2 sm:px-3 sm:py-2 rounded-xl bg-black/60 hover:bg-black/80 border border-white/15 text-white backdrop-blur-md shadow-md text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5" title="ছবি বা গ্যালারি থেকে সরাসরি স্ক্যান">
                 <Camera className="w-4 h-4 text-emerald-400" />
                 <span className="hidden sm:inline">{scannerType === 'face' ? 'সেলফি / ছবি আপলোড' : 'ছবি আপলোড'}</span>
                 <input
                   type="file"
                   accept="image/*"
-                  capture="environment"
                   onChange={handlePhotoScan}
                   className="hidden"
                 />
@@ -2542,22 +2364,6 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
                 >
                   <ScanFace className="w-4 h-4 text-cyan-200" />
                   <span>ক্যাপচার ও ফেস ভেরিফাই</span>
-                </button>
-              )}
-
-              {scannerType !== 'face' && (
-                <button
-                  type="button"
-                  onClick={() => setShowManualInput((prev) => !prev)}
-                  className={`p-2 sm:px-3 sm:py-2 rounded-xl border backdrop-blur-md shadow-md text-xs font-bold transition-colors flex items-center gap-1.5 ${
-                    showManualInput
-                      ? 'bg-blue-600 border-blue-400 text-white'
-                      : 'bg-black/60 hover:bg-black/80 border-white/15 text-slate-300 hover:text-white'
-                  }`}
-                  title="আইডি বা রোল লিখে হাজিরা"
-                >
-                  <QrCode className="w-4 h-4 text-blue-400" />
-                  <span className="hidden sm:inline">রোল / আইডি এন্ট্রি</span>
                 </button>
               )}
             </div>
@@ -2625,113 +2431,24 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
             </div>
           )
         )}
-
-        {/* Optional Manual Entry Drawer (Floats over bottom of camera when toggled) */}
-        {!effectiveIsGatekeeper && showManualInput && (
-          <div className="absolute bottom-16 left-3 right-3 sm:left-6 sm:right-6 z-30 p-3 bg-slate-900/95 backdrop-blur-md border border-white/15 rounded-2xl shadow-2xl animate-in slide-in-from-bottom-3 duration-200">
-            <form onSubmit={handleManualSubmit} className="flex items-center gap-2">
-              <input
-                type="text"
-                autoFocus
-                placeholder="বারকোড বা রোল / স্টুডেন্ট আইডি লিখুন (যেমন: std_1 বা 1001)..."
-                value={manualTokenInput}
-                onChange={(e) => setManualTokenInput(e.target.value)}
-                className="flex-1 px-3 py-2 border border-slate-700 rounded-xl text-xs bg-slate-950 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md"
-              >
-                হাজিরা দিন
-              </button>
-            </form>
-          </div>
-        )}
       </div>
 
-      {/* ========================================================================= */}
-      {/* ALWAYS VISIBLE QUICK MANUAL ATTENDANCE BAR (WORKS CAMERA ON OR OFF)       */}
-      {/* ========================================================================= */}
-      {!effectiveIsGatekeeper && (
-        <div className="bg-white p-3 rounded-2xl border border-slate-200/90 shadow-xs flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-600 shrink-0">
-              <Zap className="w-4 h-4 text-amber-600" />
-            </div>
-            <div>
-              <div className="text-xs font-black text-slate-900">
-                ক্যামেরা ছাড়া সরাসরি দ্রুত হাজিরা (Manual Attendance Bar)
-              </div>
-              <div className="text-[10px] text-slate-500">
-                আইডি, রোল নম্বর বা মোবাইল লিখে তাৎক্ষণিক প্রবেশ বা ছুটি নিশ্চিত করুন
-              </div>
-            </div>
-          </div>
-
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!manualTokenInput.trim()) return;
-              handleScanSuccess(manualTokenInput.trim(), scanDirectionMode === 'auto' ? undefined : scanDirectionMode);
-              setManualTokenInput('');
-            }}
-            className="flex-1 max-w-lg flex items-center gap-1.5"
-          >
-            <input
-              type="text"
-              value={manualTokenInput}
-              onChange={(e) => setManualTokenInput(e.target.value)}
-              placeholder="রোল, স্টুডেন্ট আইডি বা মোবাইল (যেমন: 1, 01, S-2026-1001)..."
-              className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-xs bg-slate-50 focus:bg-white focus:outline-none focus:border-blue-500 font-semibold"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                if (!manualTokenInput.trim()) return;
-                handleScanSuccess(manualTokenInput.trim(), 'in');
-                setManualTokenInput('');
-              }}
-              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs flex items-center gap-1 shrink-0 active:scale-95 transition-all"
-              title="প্রবেশ হাজিরা"
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>প্রবেশ (In)</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (!manualTokenInput.trim()) return;
-                handleScanSuccess(manualTokenInput.trim(), 'out');
-                setManualTokenInput('');
-              }}
-              className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-black shadow-xs flex items-center gap-1 shrink-0 active:scale-95 transition-all"
-              title="ছুটি হাজিরা"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>ছুটি (Out)</span>
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* Optional Collapsible Tools & Simulation Panel (Zero distraction - hidden for gatekeeper) */}
+      {/* Optional Collapsible Recent Scans Panel (Zero distraction - hidden for gatekeeper) */}
       {!effectiveIsGatekeeper && (
         <details className="group border border-slate-200/80 rounded-2xl bg-white shadow-2xs overflow-hidden transition-all">
           <summary className="px-4 py-3 text-xs font-bold text-slate-500 cursor-pointer flex items-center justify-between hover:bg-slate-50 transition-colors select-none">
             <span className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-500" />
-              <span>অতিরিক্ত টুলস: 1-ক্লিক টেস্ট সিমুলেশন ও সাম্প্রতিক স্ক্যান হিস্ট্রি</span>
-          </span>
-          <span className="text-[10px] text-slate-400 group-open:rotate-180 transition-transform">▼</span>
-        </summary>
+              <History className="w-4 h-4 text-slate-500" />
+              <span>আজকের সাম্প্রতিক কিউআর স্ক্যান হিস্ট্রি</span>
+            </span>
+            <span className="text-[10px] text-slate-400 group-open:rotate-180 transition-transform">▼</span>
+          </summary>
 
-        <div className="p-4 pt-2 border-t border-slate-100 space-y-4 bg-slate-50/50">
-          {/* Quick 1-Click Test Simulation Cards */}
-          <div>
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div className="p-4 pt-2 border-t border-slate-100 space-y-3 bg-slate-50/50">
+            <div className="flex items-center justify-between gap-2">
               <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                <span>1-ক্লিকে টেস্ট করুন (ভয়েস ঘোষণা ও স্ক্রিন ছবি পরীক্ষা):</span>
+                <History className="w-3.5 h-3.5 text-slate-500" />
+                <span>আজকের সাম্প্রতিক স্ক্যান হিস্ট্রি:</span>
               </span>
               <button
                 type="button"
@@ -2742,58 +2459,6 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
                 <span>⚙️ শ্রেণির সময় ও লেইট রুলস</span>
               </button>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
-              {StorageService.getStudents().slice(0, 4).map((st) => (
-                <div
-                  key={st.id}
-                  className="p-2.5 bg-white border border-slate-200 rounded-xl shadow-2xs space-y-1.5"
-                >
-                  <div className="flex items-center justify-between gap-1">
-                    <div className="truncate">
-                      <div className="text-[11px] font-bold text-slate-900 truncate">
-                        {st.nameBn || st.nameEn}
-                      </div>
-                      <div className="text-[10px] text-slate-500 truncate">
-                        {st.className} • রোল {toBnNumber(st.roll || '1')}
-                      </div>
-                    </div>
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 shrink-0">
-                      {st.studentId}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-1 pt-1 border-t border-slate-100">
-                    <button
-                      type="button"
-                      onClick={() => handleScanSuccess(st.studentId || st.id, 'in')}
-                      className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 transition-colors"
-                      title="আগমন / প্রবেশ হাজিরা টেস্ট করুন"
-                    >
-                      <LogIn className="w-3 h-3 text-emerald-600" />
-                      <span>প্রবেশ</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleScanSuccess(st.studentId || st.id, 'out')}
-                      className="px-2 py-1 bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 transition-colors"
-                      title="প্রস্থান / ছুটি হাজিরা টেস্ট করুন"
-                    >
-                      <LogOut className="w-3 h-3 text-purple-600" />
-                      <span>ছুটি</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Recent Scans Mini Table */}
-          <div className="pt-2 border-t border-slate-200/70">
-            <span className="text-[11px] font-bold text-slate-700 block mb-2 flex items-center gap-1.5">
-              <History className="w-3.5 h-3.5 text-slate-500" />
-              <span>আজকের সাম্প্রতিক কিউআর স্ক্যান হিস্ট্রি:</span>
-            </span>
 
             <div className="max-h-36 overflow-y-auto space-y-1.5 text-[11px]">
               {recentScans.length === 0 ? (
@@ -2834,8 +2499,7 @@ export const SmartQRScannerTab: React.FC<SmartQRScannerTabProps> = ({
               )}
             </div>
           </div>
-        </div>
-      </details>
+        </details>
       )}
 
       {/* ========================================================================= */}

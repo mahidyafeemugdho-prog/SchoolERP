@@ -1,11 +1,42 @@
 import { describe, it, expect } from 'vitest';
 import {
+  isAndroidWebView,
   isCameraPermissionError,
   isCameraHardwareBusyError,
   formatCameraStartupErrorMessage,
 } from '../cameraPermissionHelper';
 
 describe('cameraPermissionHelper', () => {
+  describe('isAndroidWebView', () => {
+    it('identifies Android WebView and AppCreator24 user agents accurately', () => {
+      expect(
+        isAndroidWebView(
+          'Mozilla/5.0 (Linux; Android 13; SM-A536E Build/TP1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.0.0 Mobile Safari/537.36'
+        )
+      ).toBe(true);
+      expect(isAndroidWebView('Mozilla/5.0 AppCreator24 Android Mobile')).toBe(true);
+      expect(
+        isAndroidWebView(
+          'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/110.0.0.0 Mobile Safari/537.36'
+        )
+      ).toBe(true);
+    });
+
+    it('returns false for standard Chrome, SamsungBrowser, or Desktop browsers', () => {
+      expect(
+        isAndroidWebView(
+          'Mozilla/5.0 (Linux; Android 13; SM-A536E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
+        )
+      ).toBe(false);
+      expect(
+        isAndroidWebView(
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        )
+      ).toBe(false);
+      expect(isAndroidWebView('')).toBe(false);
+    });
+  });
+
   describe('isCameraPermissionError', () => {
     it('detects standard DOMException permission errors and strings', () => {
       expect(isCameraPermissionError({ name: 'NotAllowedError', message: 'Permission denied' })).toBe(true);
@@ -51,6 +82,19 @@ describe('cameraPermissionHelper', () => {
       expect(bn.message).toContain('Google Chrome');
       expect(bn.message).toContain('ছবি তুলে স্ক্যান');
 
+      const wvBn = formatCameraStartupErrorMessage({
+        error: new Error('missing'),
+        language: 'bn',
+        inIframe: false,
+        permissionState: 'unknown',
+        hasMediaDevices: false,
+        isWebView: true,
+      });
+      expect(wvBn.isPermissionBlocked).toBe(true);
+      expect(wvBn.message).toContain('AppCreator24');
+      expect(wvBn.message).toContain('ক্রোম ব্রাউজারে খুলুন');
+      expect(wvBn.message).toContain('ছবি/গ্যালারি স্ক্যান');
+
       const en = formatCameraStartupErrorMessage({
         error: new Error('missing'),
         language: 'en',
@@ -61,6 +105,32 @@ describe('cameraPermissionHelper', () => {
       expect(en.isPermissionBlocked).toBe(true);
       expect(en.message).toContain('Chrome');
       expect(en.message).toContain('Photo Scan');
+    });
+
+    it('returns AppCreator24/WebView guidance when permission fails inside WebView', () => {
+      const bn = formatCameraStartupErrorMessage({
+        error: { name: 'NotAllowedError', message: 'Permission denied' },
+        language: 'bn',
+        inIframe: false,
+        permissionState: 'denied',
+        hasMediaDevices: true,
+        isWebView: true,
+      });
+      expect(bn.isPermissionBlocked).toBe(true);
+      expect(bn.message).toContain('AppCreator24');
+      expect(bn.message).toContain('ক্রোম ব্রাউজারে খুলুন');
+      expect(bn.message).toContain('ছবি তুলে স্ক্যান');
+
+      const en = formatCameraStartupErrorMessage({
+        error: { name: 'NotAllowedError' },
+        language: 'en',
+        inIframe: false,
+        permissionState: 'prompt',
+        hasMediaDevices: true,
+        isWebView: true,
+      });
+      expect(en.isPermissionBlocked).toBe(true);
+      expect(en.message).toContain('AppCreator24');
     });
 
     it('prioritizes iframe guidance when permission error occurs inside an iframe', () => {

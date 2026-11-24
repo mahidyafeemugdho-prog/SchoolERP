@@ -1,0 +1,26 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/[...route].ts": {
+      "includeFiles": "firebase-applet-config.json"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(self), microphone=(self)"
+        }
+      ]
+    }
+  ]
+}

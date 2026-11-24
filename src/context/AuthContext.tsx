@@ -35,6 +35,8 @@ import {
   clearSessionPasswordVerifier,
   lockTransactionSession,
 } from '../utils/transactionAuth';
+import { formatFirebaseAuthErrorMessage } from '../utils/firebaseAuthErrors';
+import { isAndroidWebView } from '../utils/cameraPermissionHelper';
 
 export interface LoginResult {
   success: boolean;
@@ -620,15 +622,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (err: any) {
           markGoogleRedirectPending(false);
           if (isMounted) {
-            const code = err?.code || '';
             const host = typeof window !== 'undefined' ? window.location.hostname : '';
-            if (code === 'auth/unauthorized-domain') {
-              setRedirectAuthError(
-                `ডোমেইনটি Firebase-এ অনুমোদিত নয় (${host})। Firebase Console → Authentication → Settings → Authorized domains-এ "${host}" যোগ করুন।`
-              );
-            } else {
-              setRedirectAuthError(err?.message || 'Google redirect sign-in failed. Please try again.');
-            }
+            const formatted = formatFirebaseAuthErrorMessage({
+              code: err?.code,
+              rawMessage: err?.message,
+              flow: 'google-redirect',
+              host,
+              inIframe: isEmbeddedIframe(),
+              isOffline: typeof navigator !== 'undefined' && navigator.onLine === false,
+              isWebView: isAndroidWebView(),
+            });
+            setRedirectAuthError(formatted.message);
           }
         } finally {
           isCheckingRedirectRef.current = false;
@@ -858,6 +862,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else if (code === 'auth/operation-not-allowed') {
         msg =
           'Email/Password Sign-In is disabled in Firebase Console. Enable it under Authentication → Sign-in method, or use Google Sign-In.';
+      } else if (code === 'auth/network-request-failed' || code === 'auth/too-many-requests') {
+        msg = formatFirebaseAuthErrorMessage({
+          code,
+          rawMessage: err?.message,
+          flow: 'email-password',
+          isOffline: typeof navigator !== 'undefined' && navigator.onLine === false,
+        }).message;
       }
       return {
         success: false,
@@ -877,10 +888,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     } catch (e: any) {
       markGoogleRedirectPending(false);
+      const formatted = formatFirebaseAuthErrorMessage({
+        code: e?.code,
+        rawMessage: e?.message,
+        flow: 'google-redirect',
+        host: typeof window !== 'undefined' ? window.location.hostname : '',
+        inIframe: isEmbeddedIframe(),
+        isOffline: typeof navigator !== 'undefined' && navigator.onLine === false,
+        isWebView: isAndroidWebView(),
+      });
       return {
         success: false,
         errorType: 'AUTH_ERROR',
-        errorMessage: e?.message || 'Google redirect sign-in could not start.',
+        needsStandaloneTab: formatted.needsStandaloneTab,
+        errorMessage: formatted.message,
       };
     }
   };
@@ -919,55 +940,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       hasExplicitLoginThisLoadRef.current = false;
       const code = e?.code || '';
       const inIframe = isEmbeddedIframe();
-      if (code === 'auth/unauthorized-domain') {
-        const host = typeof window !== 'undefined' ? window.location.hostname : '';
-        return {
-          success: false,
-          errorType: 'AUTH_ERROR',
-          errorMessage: `ডোমেইনটি Firebase-এ অনুমোদিত নয় (${host})। Firebase Console → Authentication → Settings → Authorized domains-এ "${host}" যোগ করুন।`,
-        };
-      }
-      if (code === 'auth/popup-blocked') {
-        if (!inIframe) {
-          // Directly fall back to redirect sign-in when running in standalone browser tab
-          await loginWithGoogleRedirect().catch(() => {});
-          return {
-            success: false,
-            errorType: 'AUTH_ERROR',
-            canUseRedirect: true,
-            errorMessage: 'পপ-আপ ব্লক হওয়ায় Google Redirect লগইনে পাঠানো হচ্ছে...',
-          };
-        }
-        return {
-          success: false,
-          errorType: 'AUTH_ERROR',
-          needsStandaloneTab: true,
-          errorMessage:
-            'মোবাইল/প্রিভিউ ব্রাউজার লগইন পপ-আপ ব্লক করেছে। নিচের "নতুন ট্যাবে খুলে Google Login করুন" বাটনে চাপ দিন অথবা Email ও Password দিয়ে লগইন করুন।',
-        };
-      }
-      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-        if (inIframe) {
-          return {
-            success: false,
-            errorType: 'AUTH_ERROR',
-            needsStandaloneTab: true,
-            errorMessage:
-              'মোবাইল প্রিভিউ উইন্ডো (iframe)-এর ভেতর থেকে Google পপ-আপ সম্পন্ন হওয়ার আগেই বন্ধ হয়ে গেছে। নিচের বাটনে চাপ দিয়ে নতুন ট্যাবে খুলে Google Login করুন, অথবা Email ও Password দিয়ে লগইন করুন।',
-          };
-        }
+      const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      const host = typeof window !== 'undefined' ? window.location.hostname : '';
+
+      if (code === 'auth/popup-blocked' && !inIframe && !isOffline) {
+        // Directly fall back to redirect sign-in when running in standalone browser tab
+        await loginWithGoogleRedirect().catch(() => {});
         return {
           success: false,
           errorType: 'AUTH_ERROR',
           canUseRedirect: true,
-          errorMessage:
-            'Google লগইন পপ-আপ সম্পূর্ণ হওয়ার আগেই বন্ধ হয়ে গেছে। আবার চেষ্টা করুন অথবা নিচের "Redirect দিয়ে Google Login" বাটন ব্যবহার করুন।',
+          errorMessage: 'পপ-আপ ব্লক হওয়ায় Google Redirect লগইনে পাঠানো হচ্ছে...',
         };
       }
+
+      const formatted = formatFirebaseAuthErrorMessage({
+        code,
+        rawMessage: e?.message,
+        flow: 'google-popup',
+        host,
+        inIframe,
+        isOffline,
+        isWebView: isAndroidWebView(),
+      });
+
       return {
         success: false,
         errorType: 'AUTH_ERROR',
-        errorMessage: e?.message || 'Google Sign-In failed.',
+        needsStandaloneTab: formatted.needsStandaloneTab,
+        canUseRedirect: formatted.canUseRedirect,
+        errorMessage: formatted.message,
       };
     } finally {
       isExplicitLoginInProgressRef.current = false;
