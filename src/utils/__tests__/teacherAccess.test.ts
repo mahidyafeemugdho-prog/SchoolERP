@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isTabAuthorized } from '../../utils/permissions';
+import {
+  isTabAuthorized,
+  canManageNotices,
+  canManageClassRoutine,
+  canManageExamRoutine,
+} from '../../utils/permissions';
 import { resolveTeacherStaffProfile } from '../../utils/teacherResolver';
 import { Staff, UserProfile } from '../../types';
 
@@ -17,14 +22,33 @@ const teacherUser: UserProfile = {
     manageAttendance: true,
     manageExams: true,
     manageFees: false,
-    manageRoutine: true,
+    manageRoutine: false,
     manageHomework: true,
     manageLibrary: false,
   },
 };
 
+const adminUser: UserProfile = {
+  id: 'usr_a1',
+  schoolId: 'SCH01',
+  role: 'admin',
+  name: 'Head Teacher',
+  nameBn: 'প্রধান শিক্ষক',
+  username: 'admin1',
+  email: 'admin@school.edu.bd',
+  permissions: {
+    manageStudents: true,
+    manageAttendance: true,
+    manageExams: true,
+    manageFees: true,
+    manageRoutine: true,
+    manageHomework: true,
+    manageLibrary: true,
+  },
+};
+
 describe('Teacher RBAC & Strict Privacy Isolation', () => {
-  it('authorizes teacher for dashboard, attendance, routine, examinations, homework, and reports', () => {
+  it('authorizes teacher to view dashboard, attendance, routine, examinations, notices, homework, and reports', () => {
     expect(isTabAuthorized('dashboard', 'teacher', teacherUser)).toBe(true);
     expect(isTabAuthorized('students', 'teacher', teacherUser)).toBe(true);
     expect(isTabAuthorized('attendance', 'teacher', teacherUser)).toBe(true);
@@ -36,9 +60,28 @@ describe('Teacher RBAC & Strict Privacy Isolation', () => {
     expect(isTabAuthorized('notices', 'teacher', teacherUser)).toBe(true);
   });
 
-  it('blocks teacher from fees, staff payroll, settings, master portal, qr kiosk, and certificates', () => {
+  it('keeps teachers strictly read-only for Notices, Class Routine, and Exam Routine even with legacy permissions', () => {
+    const legacyTeacher: UserProfile = {
+      ...teacherUser,
+      permissions: { ...teacherUser.permissions!, manageRoutine: true, manageExams: true },
+    };
+    expect(canManageNotices('teacher')).toBe(false);
+    expect(canManageClassRoutine('teacher', legacyTeacher)).toBe(false);
+    expect(canManageExamRoutine('teacher', legacyTeacher)).toBe(false);
+
+    // Admins & Super Admins retain full create/edit/delete permissions
+    expect(canManageNotices('super_admin')).toBe(true);
+    expect(canManageNotices('admin')).toBe(true);
+    expect(canManageClassRoutine('admin', adminUser)).toBe(true);
+    expect(canManageExamRoutine('admin', adminUser)).toBe(true);
+    expect(canManageClassRoutine('super_admin', null)).toBe(true);
+    expect(canManageExamRoutine('super_admin', null)).toBe(true);
+  });
+
+  it('blocks teacher from fees, staff payroll, academic structure, settings, master portal, qr kiosk, and certificates', () => {
     expect(isTabAuthorized('fees', 'teacher', teacherUser)).toBe(false);
     expect(isTabAuthorized('staff', 'teacher', teacherUser)).toBe(false);
+    expect(isTabAuthorized('academic', 'teacher', teacherUser)).toBe(false);
     expect(isTabAuthorized('settings', 'teacher', teacherUser)).toBe(false);
     expect(isTabAuthorized('master_portal', 'teacher', teacherUser)).toBe(false);
     expect(isTabAuthorized('qr_attendance', 'teacher', teacherUser)).toBe(false);

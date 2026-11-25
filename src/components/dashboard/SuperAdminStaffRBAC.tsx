@@ -53,15 +53,19 @@ const DEFAULT_PERMISSIONS: Record<string, StaffRBACPermissions> = {
     manageRoutine: true,
     manageHomework: true,
     manageLibrary: true,
+    manageHrDocuments: true,
+    viewSalaryDocuments: true,
   },
   teacher: {
     manageStudents: true,
     manageAttendance: true,
     manageExams: true,
     manageFees: false,
-    manageRoutine: true,
+    manageRoutine: false,
     manageHomework: true,
     manageLibrary: false,
+    manageHrDocuments: false,
+    viewSalaryDocuments: false,
   },
   accountant: {
     manageStudents: true,
@@ -71,6 +75,8 @@ const DEFAULT_PERMISSIONS: Record<string, StaffRBACPermissions> = {
     manageRoutine: false,
     manageHomework: false,
     manageLibrary: false,
+    manageHrDocuments: false,
+    viewSalaryDocuments: true,
   },
   librarian: {
     manageStudents: false,
@@ -80,6 +86,8 @@ const DEFAULT_PERMISSIONS: Record<string, StaffRBACPermissions> = {
     manageRoutine: false,
     manageHomework: false,
     manageLibrary: true,
+    manageHrDocuments: false,
+    viewSalaryDocuments: false,
   },
   receptionist: {
     manageStudents: true,
@@ -89,6 +97,8 @@ const DEFAULT_PERMISSIONS: Record<string, StaffRBACPermissions> = {
     manageRoutine: false,
     manageHomework: false,
     manageLibrary: false,
+    manageHrDocuments: true,
+    viewSalaryDocuments: false,
   },
   gatekeeper: {
     manageStudents: false,
@@ -98,6 +108,8 @@ const DEFAULT_PERMISSIONS: Record<string, StaffRBACPermissions> = {
     manageRoutine: false,
     manageHomework: false,
     manageLibrary: false,
+    manageHrDocuments: false,
+    viewSalaryDocuments: false,
     onlyQrAttendanceKiosk: true,
   },
 };
@@ -657,6 +669,16 @@ export const SuperAdminStaffRBAC: React.FC = () => {
                             Library
                           </span>
                         )}
+                        {st.permissions?.manageHrDocuments && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] bg-teal-50 text-teal-700">
+                            HR Docs
+                          </span>
+                        )}
+                        {st.permissions?.viewSalaryDocuments && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] bg-cyan-50 text-cyan-700">
+                            Salary Docs
+                          </span>
+                        )}
                         {(st.permissions?.onlyQrAttendanceKiosk || st.role === 'gatekeeper') && (
                           <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
                             🔒 QR Kiosk Only
@@ -1041,6 +1063,26 @@ export const SuperAdminStaffRBAC: React.FC = () => {
                       className="rounded text-blue-600"
                     />
                     <span>Library & Book Issues</span>
+                  </label>
+
+                  <label className="flex items-center space-x-2 text-slate-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(permissions.manageHrDocuments)}
+                      onChange={(e) => setPermissions({ ...permissions, manageHrDocuments: e.target.checked })}
+                      className="rounded text-blue-600"
+                    />
+                    <span>Manage HR & Staff Documents</span>
+                  </label>
+
+                  <label className="flex items-center space-x-2 text-slate-700 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(permissions.viewSalaryDocuments)}
+                      onChange={(e) => setPermissions({ ...permissions, viewSalaryDocuments: e.target.checked })}
+                      className="rounded text-blue-600"
+                    />
+                    <span>View Salary HR Documents</span>
                   </label>
 
                   <div className="col-span-2 mt-2 p-3 rounded-xl bg-amber-50/90 border border-amber-300">

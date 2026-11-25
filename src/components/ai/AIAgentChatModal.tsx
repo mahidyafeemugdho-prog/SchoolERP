@@ -23,6 +23,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { AIService } from '../../services/aiService';
 import { StorageService } from '../../services/storage';
 import { Notice } from '../../types';
+import { canManageNotices } from '../../utils/permissions';
 
 interface AIAgentChatModalProps {
   isOpen: boolean;
@@ -135,9 +136,10 @@ export const AIAgentChatModal: React.FC<AIAgentChatModalProps> = ({
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // 1-Click Publish Notice Action for Super Admin
+  // 1-Click Publish Notice Action for Super Admin / Admin
   const handleExecuteAction = (action: { actionType: string; title?: string; content?: string; category?: string }, msgId: string) => {
     if (action.actionType === 'CREATE_NOTICE' && action.title && action.content) {
+      if (!canManageNotices(activeRole)) return;
       const newNotice: Notice = {
         id: `not_${Date.now()}`,
         title: action.title,

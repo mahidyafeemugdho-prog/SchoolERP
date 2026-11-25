@@ -13,6 +13,7 @@ import { DashboardView } from './components/dashboard/DashboardView';
 import { StudentDedicatedDashboard } from './components/dashboard/StudentDedicatedDashboard';
 import { StudentsView } from './components/students/StudentsView';
 import { StaffView } from './components/staff/StaffView';
+import { StaffDocumentsDashboardView } from './components/hr/StaffDocumentsDashboardView';
 import { AttendanceView, AttendanceSubTab } from './components/attendance/AttendanceView';
 import { SmartQRScannerTab } from './components/attendance/SmartQRScannerTab';
 import { AcademicView } from './components/academic/AcademicView';
@@ -518,7 +519,9 @@ function AppContent() {
       case 'students':
         return <StudentsView onPrintCertificate={() => handleNavigate('certificates')} />;
       case 'staff':
-        return <StaffView />;
+        return <StaffView onNavigate={handleNavigate} />;
+      case 'staff_documents':
+        return <StaffDocumentsDashboardView />;
       case 'attendance':
         return <AttendanceView initialSubTab={attendanceInitialSubTab} jumpNonce={attendanceJumpNonce} />;
       case 'qr_attendance':

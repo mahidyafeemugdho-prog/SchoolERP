@@ -52,8 +52,11 @@ export const isTabAuthorized = (tab: string, role: UserRole, user: UserProfile |
     if (tab === 'fees') {
       return perms.manageFees === true || role === 'accountant';
     }
-    if (tab === 'routine' || tab === 'academic') {
-      return perms.manageRoutine !== false;
+    if (tab === 'routine') {
+      return role === 'teacher' || role === 'student' || role === 'guardian' || perms.manageRoutine !== false;
+    }
+    if (tab === 'academic') {
+      return role !== 'teacher' && perms.manageRoutine !== false;
     }
     if (tab === 'homework') {
       return perms.manageHomework !== false;
@@ -64,12 +67,21 @@ export const isTabAuthorized = (tab: string, role: UserRole, user: UserProfile |
     if (tab === 'reports') {
       return role === 'teacher' || role === 'admin' || role === 'accountant' || perms.manageFees === true;
     }
+    if (tab === 'staff_documents') {
+      return role === 'admin' ||
+        role === 'teacher' ||
+        role === 'receptionist' ||
+        role === 'librarian' ||
+        (role === 'accountant' && (perms.viewSalaryDocuments === true || perms.manageFees === true || perms.manageHrDocuments === true)) ||
+        perms.manageHrDocuments === true;
+    }
   }
 
   // 6. Base default role-to-tab access mapping
   const baseAllowedRoles: Record<string, UserRole[]> = {
     dashboard: ['super_admin', 'admin', 'teacher', 'accountant', 'student', 'guardian', 'librarian', 'receptionist'],
     students: ['super_admin', 'admin', 'teacher', 'receptionist', 'accountant', 'guardian'],
+    staff_documents: ['super_admin', 'admin', 'teacher', 'accountant', 'librarian', 'receptionist'],
     attendance: ['super_admin', 'admin', 'teacher', 'student', 'guardian'],
     qr_attendance: ['super_admin', 'admin', 'student', 'guardian', 'gatekeeper'],
     routine: ['super_admin', 'admin', 'teacher', 'student', 'guardian'],
@@ -107,5 +119,28 @@ export const canEditOrDeleteFinanceRecord = (role?: UserRole | null): boolean =>
 export const canEditOrDeleteInvoice = (role?: UserRole | null): boolean => {
   return canEditOrDeleteFinanceRecord(role);
 };
+
+/**
+ * Teachers can view notices, class routines, and exam routines,
+ * but ONLY school admins (super_admin, admin, master_admin) may create, edit, or delete them.
+ */
+export const canManageNotices = (role?: UserRole | null): boolean => {
+  return role === 'super_admin' || role === 'admin' || role === 'master_admin';
+};
+
+export const canManageClassRoutine = (role?: UserRole | null, user?: UserProfile | null): boolean => {
+  return (
+    (role === 'super_admin' || role === 'admin' || role === 'master_admin') &&
+    user?.permissions?.manageRoutine !== false
+  );
+};
+
+export const canManageExamRoutine = (role?: UserRole | null, user?: UserProfile | null): boolean => {
+  return (
+    (role === 'super_admin' || role === 'admin' || role === 'master_admin') &&
+    user?.permissions?.manageExams !== false
+  );
+};
+
 
 

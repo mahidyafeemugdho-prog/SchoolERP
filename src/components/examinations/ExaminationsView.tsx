@@ -97,6 +97,7 @@ import {
   resolveEffectiveApprovalStatus,
 } from '../../utils/approvalWorkflow';
 import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
+import { canManageExamRoutine as canManageExamRoutineHelper } from '../../utils/permissions';
 
 // Helper to get subjects specifically matching a student's class and secondary stream (group)
 export const getSubjectsForStudent = (
@@ -320,6 +321,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
       activeRole === 'master_admin' ||
       activeRole === 'teacher') &&
     currentUser?.permissions?.manageExams !== false;
+  const canManageExamRoutine = canManageExamRoutineHelper(activeRole, currentUser);
   const { schoolProfile, updateSchoolProfile } = useSchool();
   const school = schoolProfile;
 
@@ -648,6 +650,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   };
 
   const handleOpenAddRoutine = () => {
+    if (!canManageExamRoutine) return;
     setEditingRoutineItem(null);
     const firstSub = classSubjects[0];
     setRoutineSubjectId(firstSub?.id || '');
@@ -662,6 +665,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   };
 
   const handleOpenEditRoutine = (item: ExamScheduleItem) => {
+    if (!canManageExamRoutine) return;
     setEditingRoutineItem(item);
     const sub = subjects.find((s) => s.className === item.className && (s.code === item.subjectCode || s.nameEn === item.subjectNameEn));
     setRoutineSubjectId(sub?.id || '');
@@ -675,6 +679,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
 
   const handleSaveRoutineItem = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageExamRoutine) return;
     const sub = subjects.find((s) => s.id === routineSubjectId) || classSubjects[0];
     if (!sub) return;
     const approvalMeta = isApprover
@@ -722,6 +727,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   };
 
   const handleDeleteRoutineItem = (id: string) => {
+    if (!canManageExamRoutine) return;
     const target = examRoutines.find((r) => r.id === id);
     if (target && !isApprover && isPublishedForStudents(target.approvalStatus)) {
       showWorkflowNotice(
@@ -736,6 +742,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   };
 
   const handleOpenAutoRoutineModal = () => {
+    if (!canManageExamRoutine) return;
     setAutoRoutineExamId(selectedExamId);
     setAutoRoutineTargetClass(selectedClass as ClassLevel);
     if (currentExam) {
@@ -746,6 +753,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   };
 
   const handleApply1stModelTestPreset = () => {
+    if (!canManageExamRoutine) return;
     const modelExam = exams.find(
       (e) =>
         e.id === 'exam_1st_model_test_2026' ||
@@ -770,11 +778,13 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   };
 
   const handleAutoGenerateRoutine = () => {
+    if (!canManageExamRoutine) return;
     handleOpenAutoRoutineModal();
   };
 
   const handleExecuteSmartRoutine = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (!canManageExamRoutine) return;
     const targetExamId = autoRoutineExamId || selectedExamId;
     const approvalMeta = isApprover
       ? buildSuperAdminPublishMeta(actorName)
@@ -805,6 +815,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
   };
 
   const handleSubmitExamRoutineDrafts = () => {
+    if (!canManageExamRoutine) return;
     const draftIds = currentClassRoutines
       .filter((r) => r.approvalStatus === 'draft' || r.approvalStatus === 'rejected')
       .map((r) => r.id);
@@ -1109,23 +1120,27 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
             </button>
           )}
 
-          {canManage && activeTab === 'exam_routine' && (
+          {activeTab === 'exam_routine' && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                onClick={handleAutoGenerateRoutine}
-                className="flex items-center space-x-1 px-3 py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold"
-                title="Auto generate routine with 2 days gap skipping Fridays"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                <span>{language === 'bn' ? 'অটো জেনারেট' : 'Auto Generate'}</span>
-              </button>
-              <button
-                onClick={handleOpenAddRoutine}
-                className="flex items-center space-x-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs"
-              >
-                <Plus className="w-4 h-4" />
-                <span>{language === 'bn' ? 'বিষয় যোগ' : 'Add Subject'}</span>
-              </button>
+              {canManageExamRoutine && (
+                <>
+                  <button
+                    onClick={handleAutoGenerateRoutine}
+                    className="flex items-center space-x-1 px-3 py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold"
+                    title="Auto generate routine with 2 days gap skipping Fridays"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>{language === 'bn' ? 'অটো জেনারেট' : 'Auto Generate'}</span>
+                  </button>
+                  <button
+                    onClick={handleOpenAddRoutine}
+                    className="flex items-center space-x-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>{language === 'bn' ? 'বিষয় যোগ' : 'Add Subject'}</span>
+                  </button>
+                </>
+              )}
               <button
                 onClick={() => setShowRoutinePrintModal(true)}
                 className="flex items-center space-x-1 px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 transition-all"
@@ -1266,14 +1281,16 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={handleApply1stModelTestPreset}
-                className="flex items-center space-x-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 rounded-xl text-xs font-black shadow-md transition-all scale-100 hover:scale-[1.02]"
-                title="১ম মডেল টেস্ট পরীক্ষা (০৫/০৩/২০২৬ - ২০/০৩/২০২৬) স্বয়ংক্রিয় রুটিন প্রিসেট"
-              >
-                <Zap className="w-4 h-4 text-slate-950 fill-current" />
-                <span>{language === 'bn' ? '১ম মডেল টেস্ট (০৫-২০ মার্চ)' : '1st Model Test (05-20 Mar)'}</span>
-              </button>
+              {canManageExamRoutine && (
+                <button
+                  onClick={handleApply1stModelTestPreset}
+                  className="flex items-center space-x-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 rounded-xl text-xs font-black shadow-md transition-all scale-100 hover:scale-[1.02]"
+                  title="১ম মডেল টেস্ট পরীক্ষা (০৫/০৩/২০২৬ - ২০/০৩/২০২৬) স্বয়ংক্রিয় রুটিন প্রিসেট"
+                >
+                  <Zap className="w-4 h-4 text-slate-950 fill-current" />
+                  <span>{language === 'bn' ? '১ম মডেল টেস্ট (০৫-২০ মার্চ)' : '1st Model Test (05-20 Mar)'}</span>
+                </button>
+              )}
               {activeRole !== 'teacher' && (
                 <button
                   onClick={() => setActiveTab('admit_cards')}
@@ -1283,7 +1300,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                   <span>{language === 'bn' ? 'প্রবেশপত্র' : 'Admit Cards'}</span>
                 </button>
               )}
-              {canManage && (
+              {canManageExamRoutine && (
                 <>
                   <button
                     onClick={handleOpenAutoRoutineModal}
@@ -1368,7 +1385,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
 
             return (
               <>
-                {canManage && !isApprover && (erDraftOrReturned.length > 0 || erPending.length > 0) && (
+                {canManageExamRoutine && !isApprover && (erDraftOrReturned.length > 0 || erPending.length > 0) && (
                   <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 flex flex-wrap items-center justify-between gap-3 text-xs print:hidden">
                     <div className="flex items-center space-x-2.5 text-amber-950">
                       <Clock className="w-4 h-4 text-amber-600 shrink-0" />
@@ -1599,7 +1616,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                                 )}
                               </div>
 
-                              {(canManage || isApprover) && (
+                              {(canManageExamRoutine || isApprover) && (
                                 <div className="flex flex-wrap items-center justify-end gap-1.5 mt-3 pt-2 border-t border-slate-200/60 print:hidden">
                                   {isApprover && resolveEffectiveApprovalStatus(item.approvalStatus) !== 'published' && (
                                     <>
@@ -1627,7 +1644,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                                       </button>
                                     </>
                                   )}
-                                  {canManage && (
+                                  {canManageExamRoutine && (
                                     <>
                                       <button
                                         onClick={() => handleOpenEditRoutine(item)}
@@ -1668,7 +1685,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                     <th className="py-3 px-4 w-44 text-center print:border print:border-slate-800">Exam Date & Day (তারিখ ও বার)</th>
                     <th className="py-3 px-4 w-40 text-center print:border print:border-slate-800">Time (সময়)</th>
                     <th className="py-3 px-4 w-32 text-center print:border print:border-slate-800">Exam Hall (কক্ষ)</th>
-                    {canManage && <th className="py-3 px-4 w-28 text-right print:hidden">Actions</th>}
+                    {(canManageExamRoutine || isApprover) && <th className="py-3 px-4 w-28 text-right print:hidden">Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 print:divide-slate-800">
@@ -1725,7 +1742,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                         <td className="py-3 px-4 text-center font-semibold text-slate-700 print:border print:border-slate-800">
                           {item.roomNo || 'Main Hall'}
                         </td>
-                        {canManage && (
+                        {(canManageExamRoutine || isApprover) && (
                           <td className="py-3 px-4 text-right print:hidden">
                             <div className="flex items-center justify-end space-x-1.5">
                               {isApprover && resolveEffectiveApprovalStatus(item.approvalStatus) !== 'published' && (
@@ -1752,20 +1769,24 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                                   </button>
                                 </>
                               )}
-                              <button
-                                onClick={() => handleOpenEditRoutine(item)}
-                                className="p-1.5 hover:bg-slate-100 text-slate-600 rounded-lg hover:text-blue-600 transition-colors"
-                                title="Edit"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteRoutineItem(item.id)}
-                                className="p-1.5 hover:bg-rose-50 text-slate-400 rounded-lg hover:text-rose-600 transition-colors"
-                                title="Delete"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              {canManageExamRoutine && (
+                                <>
+                                  <button
+                                    onClick={() => handleOpenEditRoutine(item)}
+                                    className="p-1.5 hover:bg-slate-100 text-slate-600 rounded-lg hover:text-blue-600 transition-colors"
+                                    title="Edit"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteRoutineItem(item.id)}
+                                    className="p-1.5 hover:bg-rose-50 text-slate-400 rounded-lg hover:text-rose-600 transition-colors"
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
                             </div>
                           </td>
                         )}
@@ -1773,18 +1794,22 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={canManage ? 7 : 6} className="py-12 text-center">
+                      <td colSpan={(canManageExamRoutine || isApprover) ? 7 : 6} className="py-12 text-center">
                         <div className="max-w-md mx-auto space-y-2">
                           <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
                           <h4 className="font-bold text-slate-800 text-sm">
                             {language === 'bn' ? 'কোনো রুটিন পাওয়া যায়নি' : 'No Routine Found for ' + selectedClass}
                           </h4>
                           <p className="text-xs text-slate-500">
-                            {language === 'bn'
-                              ? '"১ম মডেল টেস্ট" অথবা "স্মার্ট অটো জেনারেটর" বাটনে চাপ দিয়ে ০৫/০৩/২৬ থেকে ২০/০৩/২৬ তারিখের রুটিন তৈরি করুন।'
-                              : 'Click "1st Model Test" or "Smart Auto Generator" to populate the exam routine.'}
+                            {canManageExamRoutine
+                              ? (language === 'bn'
+                                  ? '"১ম মডেল টেস্ট" অথবা "স্মার্ট অটো জেনারেটর" বাটনে চাপ দিয়ে ০৫/০৩/২৬ থেকে ২০/০৩/২৬ তারিখের রুটিন তৈরি করুন।'
+                                  : 'Click "1st Model Test" or "Smart Auto Generator" to populate the exam routine.')
+                              : (language === 'bn'
+                                  ? 'অ্যাডমিন পরীক্ষার রুটিন প্রকাশ করলে এখানে দেখা যাবে।'
+                                  : 'Exam routine will appear here once published by the school admin.')}
                           </p>
-                          {canManage && (
+                          {canManageExamRoutine && (
                             <div className="flex items-center justify-center gap-2 pt-2">
                               <button
                                 onClick={handleApply1stModelTestPreset}
@@ -5340,7 +5365,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
       )}
 
       {/* ADD / EDIT EXAM ROUTINE ITEM MODAL */}
-      {showRoutineModal && (
+      {canManageExamRoutine && showRoutineModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
           <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-md w-full p-6 text-xs">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -5476,7 +5501,7 @@ export const ExaminationsView: React.FC<ExaminationsViewProps> = ({ initialSubTa
       )}
 
       {/* SMART AUTO EXAM ROUTINE GENERATOR MODAL */}
-      {showAutoRoutineModal && (
+      {canManageExamRoutine && showAutoRoutineModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
           <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-3xl w-full p-6 text-xs max-h-[92vh] overflow-y-auto">
             {/* Modal Header */}

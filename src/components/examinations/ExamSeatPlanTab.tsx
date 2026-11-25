@@ -10,6 +10,7 @@ import {
 import { StorageService } from '../../services/storage';
 import { getManagedClassNames } from '../../utils/academicClasses';
 import { compareRolls, compareStudentsByClassAndRoll } from '../../utils/studentSort';
+import { allocateExamSeats, SeatStrategy } from '../../utils/examSeatPlanAlgorithm';
 import { DEFAULT_SCHOOL_LOGO } from '../../data/schoolLogo';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
 import { DigitInput } from '../common/DigitInput';
@@ -54,7 +55,6 @@ interface ExamSeatPlanTabProps {
 }
 
 type PrintLayoutMode = 'room_map' | 'desk_stickers' | 'notice_summary';
-type SeatStrategy = 'sequential' | 'zigzag_class' | 'zigzag_roll';
 
 const DEFAULT_ROOMS: ExamSeatRoom[] = [
   {
@@ -207,18 +207,39 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
     }));
   }, [activeStudents, managedClassNames]);
 
-  // Pool of eligible students based on class toggles, section, shift
-  const eligibleStudents = useMemo(() => {
-    const classSet = new Set(selectedClasses);
+  const availableSections = useMemo(() => {
+    const base = ['A', 'B', 'C'];
+    const fromStudents = activeStudents.map((s) => s.section).filter(Boolean);
+    return Array.from(new Set([...base, ...fromStudents]));
+  }, [activeStudents]);
+
+  const availableShifts = useMemo(() => {
+    const base = ['Morning', 'Day'];
+    const fromStudents = activeStudents.map((s) => s.shift).filter(Boolean);
+    return Array.from(new Set([...base, ...fromStudents]));
+  }, [activeStudents]);
+
+  const computeEligiblePool = (
+    classesList: string[] = selectedClasses,
+    sec: string = sectionFilter,
+    shf: string = shiftFilter
+  ) => {
+    const classSet = new Set(classesList);
     return activeStudents
       .filter((s) => {
         if (!classSet.has(s.className)) return false;
-        if (sectionFilter !== 'all' && s.section !== sectionFilter) return false;
-        if (shiftFilter !== 'all' && s.shift !== shiftFilter) return false;
+        if (sec !== 'all' && s.section !== sec) return false;
+        if (shf !== 'all' && s.shift !== shf) return false;
         return true;
       })
       .sort(compareStudentsByClassAndRoll);
-  }, [activeStudents, selectedClasses, sectionFilter, shiftFilter]);
+  };
+
+  // Pool of eligible students based on class toggles, section, shift
+  const eligibleStudents = useMemo(
+    () => computeEligiblePool(selectedClasses, sectionFilter, shiftFilter),
+    [activeStudents, selectedClasses, sectionFilter, shiftFilter]
+  );
 
   const totalCapacity = useMemo(
     () => rooms.reduce((sum, r) => sum + getRoomCapacity(r), 0),
@@ -307,115 +328,57 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
     setTimeout(() => setFeedback(null), 4000);
   };
 
-  const toggleClassSelection = (clsName: string) => {
-    setSelectedClasses((prev) => {
-      if (prev.includes(clsName)) {
-        if (prev.length === 1) return prev; // Keep at least 1 selected
-        return prev.filter((c) => c !== clsName);
+  const runSeatAllocation = (opts?: {
+    nextStrategy?: SeatStrategy;
+    nextClasses?: string[];
+    nextSection?: string;
+    nextShift?: string;
+    nextRooms?: ExamSeatRoom[];
+    silentIfEmpty?: boolean;
+  }) => {
+    const targetStrategy = opts?.nextStrategy ?? strategy;
+    const targetClasses = opts?.nextClasses ?? selectedClasses;
+    const targetSection = opts?.nextSection ?? sectionFilter;
+    const targetShift = opts?.nextShift ?? shiftFilter;
+    const targetRooms = opts?.nextRooms ?? rooms;
+
+    if (targetRooms.length === 0) {
+      if (!opts?.silentIfEmpty) {
+        notify(
+          language === 'bn'
+            ? 'অনুগ্রহ করে প্রথমে অন্তত ১টি পরীক্ষা কক্ষ (Room) যোগ করুন।'
+            : 'Please add at least 1 exam room first.'
+        );
       }
-      return [...prev, clsName];
+      return;
+    }
+
+    const pool = computeEligiblePool(targetClasses, targetSection, targetShift);
+    if (pool.length === 0) {
+      setAssignments([]);
+      persistSeatPlan(targetRooms, [], targetStrategy, targetClasses);
+      if (!opts?.silentIfEmpty) {
+        notify(
+          language === 'bn'
+            ? 'নির্বাচিত শ্রেণি ও ফিল্টারে কোনো সক্রিয় শিক্ষার্থী পাওয়া যায়নি।'
+            : 'No active students found for the selected class/filters.'
+        );
+      }
+      return;
+    }
+
+    const generated = allocateExamSeats({
+      examId: selectedExamId,
+      rooms: targetRooms,
+      eligibleStudents: pool,
+      strategy: targetStrategy,
+      selectedClassesCount: targetClasses.length,
     });
-  };
-
-  // Auto-allocate algorithm
-  const handleAutoAllocate = () => {
-    if (rooms.length === 0) {
-      notify(
-        language === 'bn'
-          ? 'অনুগ্রহ করে প্রথমে অন্তত ১টি পরীক্ষা কক্ষ (Room) যোগ করুন।'
-          : 'Please add at least 1 exam room first.'
-      );
-      return;
-    }
-    if (eligibleStudents.length === 0) {
-      notify(
-        language === 'bn'
-          ? 'নির্বাচিত শ্রেণি ও ফিল্টারে কোনো সক্রিয় শিক্ষার্থী পাওয়া যায়নি।'
-          : 'No active students found for the selected class/filters.'
-      );
-      return;
-    }
-
-    // Build ordered queue based on strategy
-    let orderedQueue: Student[] = [];
-
-    if (strategy === 'sequential') {
-      orderedQueue = [...eligibleStudents];
-    } else if (strategy === 'zigzag_class') {
-      // Interleave students across classes (or sections if only 1 class)
-      const buckets = new Map<string, Student[]>();
-      const useClassBuckets = selectedClasses.length > 1;
-      eligibleStudents.forEach((st) => {
-        const key = useClassBuckets ? st.className : `${st.className}_${st.section}`;
-        if (!buckets.has(key)) buckets.set(key, []);
-        buckets.get(key)!.push(st);
-      });
-      const bucketLists = Array.from(buckets.values());
-      let added = true;
-      let idx = 0;
-      while (added) {
-        added = false;
-        for (const list of bucketLists) {
-          if (idx < list.length) {
-            orderedQueue.push(list[idx]);
-            added = true;
-          }
-        }
-        idx++;
-      }
-    } else if (strategy === 'zigzag_roll') {
-      // Odd index rolls paired with second half rolls so consecutive rolls don't sit together
-      const half = Math.ceil(eligibleStudents.length / 2);
-      const firstHalf = eligibleStudents.slice(0, half);
-      const secondHalf = eligibleStudents.slice(half);
-      for (let i = 0; i < half; i++) {
-        if (firstHalf[i]) orderedQueue.push(firstHalf[i]);
-        if (secondHalf[i]) orderedQueue.push(secondHalf[i]);
-      }
-    }
-
-    // Fill rooms bench-by-bench (column by column, bench by bench, seat by seat)
-    const generated: ExamSeatAssignment[] = [];
-    let studentCursor = 0;
-
-    for (const room of rooms) {
-      if (studentCursor >= orderedQueue.length) break;
-      let benchCounter = 1;
-      for (let col = 1; col <= room.columns; col++) {
-        for (let row = 1; row <= room.benchesPerColumn; row++) {
-          const currentBenchNo = benchCounter++;
-          for (let seatPos = 1; seatPos <= room.seatsPerBench; seatPos++) {
-            if (studentCursor >= orderedQueue.length) break;
-            const st = orderedQueue[studentCursor++];
-            const seatLetter = seatPos === 1 ? 'A' : seatPos === 2 ? 'B' : 'C';
-            generated.push({
-              id: `seat_${selectedExamId}_${room.id}_${currentBenchNo}_${seatPos}`,
-              examId: selectedExamId,
-              roomId: room.id,
-              roomNo: room.roomNo,
-              columnIndex: col,
-              benchNumber: currentBenchNo,
-              seatPosition: seatPos,
-              seatLabel: `${room.roomNo}-B${currentBenchNo}-${seatLetter}`,
-              studentId: st.id,
-              studentCode: st.studentId,
-              studentNameEn: st.nameEn,
-              studentNameBn: st.nameBn || st.nameEn,
-              className: st.className,
-              section: st.section,
-              shift: st.shift,
-              group: st.group,
-              roll: st.roll,
-            });
-          }
-        }
-      }
-    }
 
     setAssignments(generated);
-    persistSeatPlan(rooms, generated, strategy, selectedClasses);
+    persistSeatPlan(targetRooms, generated, targetStrategy, targetClasses);
 
-    const overflow = orderedQueue.length - generated.length;
+    const overflow = pool.length - generated.length;
     if (overflow > 0) {
       notify(
         language === 'bn'
@@ -428,6 +391,47 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
           ? `সকল ${toBnNumber(generated.length)} জন শিক্ষার্থীর আসন বিন্যাস সফলভাবে তৈরি ও সংরক্ষিত হয়েছে!`
           : `Successfully allocated & saved seats for all ${generated.length} students!`
       );
+    }
+  };
+
+  const toggleClassSelection = (clsName: string) => {
+    const next = selectedClasses.includes(clsName)
+      ? selectedClasses.length === 1
+        ? selectedClasses
+        : selectedClasses.filter((c) => c !== clsName)
+      : [...selectedClasses, clsName];
+    if (next === selectedClasses) return;
+    setSelectedClasses(next);
+    if (canManage && assignments.length > 0) {
+      runSeatAllocation({ nextClasses: next, silentIfEmpty: true });
+    }
+  };
+
+  const handleAutoAllocate = () => {
+    runSeatAllocation();
+  };
+
+  const handleStrategyChange = (nextStrategy: SeatStrategy) => {
+    setStrategy(nextStrategy);
+    if (canManage) {
+      // Immediately regenerate and apply when seats exist (or auto-generate if rooms & students exist)
+      if (assignments.length > 0 || (rooms.length > 0 && eligibleStudents.length > 0)) {
+        runSeatAllocation({ nextStrategy });
+      }
+    }
+  };
+
+  const handleSectionFilterChange = (nextSection: string) => {
+    setSectionFilter(nextSection);
+    if (canManage && assignments.length > 0) {
+      runSeatAllocation({ nextSection, silentIfEmpty: true });
+    }
+  };
+
+  const handleShiftFilterChange = (nextShift: string) => {
+    setShiftFilter(nextShift);
+    if (canManage && assignments.length > 0) {
+      runSeatAllocation({ nextShift, silentIfEmpty: true });
     }
   };
 
@@ -897,13 +901,15 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
                 </label>
                 <select
                   value={sectionFilter}
-                  onChange={(e) => setSectionFilter(e.target.value)}
+                  onChange={(e) => handleSectionFilterChange(e.target.value)}
                   className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-medium"
                 >
                   <option value="all">{language === 'bn' ? 'সকল শাখা' : 'All Sections'}</option>
-                  <option value="A">Section A</option>
-                  <option value="B">Section B</option>
-                  <option value="C">Section C</option>
+                  {availableSections.map((sec) => (
+                    <option key={sec} value={sec}>
+                      Section {sec}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -912,23 +918,26 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
                 </label>
                 <select
                   value={shiftFilter}
-                  onChange={(e) => setShiftFilter(e.target.value)}
+                  onChange={(e) => handleShiftFilterChange(e.target.value)}
                   className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-medium"
                 >
                   <option value="all">{language === 'bn' ? 'সকল শিফট' : 'All Shifts'}</option>
-                  <option value="Morning">Morning</option>
-                  <option value="Day">Day</option>
+                  {availableShifts.map((shf) => (
+                    <option key={shf} value={shf}>
+                      {shf}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
 
-            <div>
+            <div className="space-y-2">
               <label className="block font-semibold text-slate-600 mb-1 text-[11px]">
                 {language === 'bn' ? 'বসানোর পদ্ধতি (Seating Strategy)' : 'Seating Strategy'}
               </label>
               <select
                 value={strategy}
-                onChange={(e) => setStrategy(e.target.value as SeatStrategy)}
+                onChange={(e) => handleStrategyChange(e.target.value as SeatStrategy)}
                 className="w-full px-2.5 py-2 border border-slate-200 rounded-lg bg-slate-50 font-bold text-slate-800"
               >
                 <option value="sequential">
@@ -947,6 +956,20 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
                     : 'Split-Half Roll Interleaved'}
                 </option>
               </select>
+              {canManage && (
+                <button
+                  type="button"
+                  onClick={handleAutoAllocate}
+                  className="w-full flex items-center justify-center space-x-1.5 px-3.5 py-2 bg-[#0f294d] hover:bg-[#163a6b] text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>
+                    {language === 'bn'
+                      ? 'আসন বিন্যাস প্রয়োগ / আপডেট করুন'
+                      : 'Apply Strategy & Allocate Seats'}
+                  </span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -1217,22 +1240,38 @@ export const ExamSeatPlanTab: React.FC<ExamSeatPlanTabProps> = ({
                   </div>
 
                   {/* Class & Roll Range Breakdown Chips */}
-                  {summary && summary.breakdown.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-2 mb-3 text-[10px] font-bold">
-                      <span className="text-slate-600 uppercase">
-                        {language === 'bn' ? 'শ্রেণি ও রোল রেঞ্জ:' : 'Roll Summary:'}
-                      </span>
-                      {summary.breakdown.map((b) => (
-                        <span
-                          key={b.className}
-                          className="px-2 py-0.5 rounded bg-blue-50 border border-blue-300 text-blue-950"
-                        >
-                          {b.className}: {language === 'bn' ? 'রোল' : 'Roll'} {b.rollRange} (
-                          {language === 'bn' ? `${toBnNumber(b.count)} জন` : b.count})
+                  <div className="flex flex-wrap items-center gap-2 mb-3 text-[10px] font-bold">
+                    <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-300 text-slate-800">
+                      {language === 'bn' ? 'বসানোর পদ্ধতি:' : 'Strategy:'}{' '}
+                      {strategy === 'sequential'
+                        ? language === 'bn'
+                          ? 'ধারাবাহিক রোল'
+                          : 'Sequential'
+                        : strategy === 'zigzag_class'
+                        ? language === 'bn'
+                          ? 'জিগ-জ্যাগ অ্যান্টি-কপি'
+                          : 'Zig-Zag Anti-Copy'
+                        : language === 'bn'
+                        ? 'ভিন্ন রোল (Split Half)'
+                        : 'Split-Half Interleaved'}
+                    </span>
+                    {summary && summary.breakdown.length > 0 && (
+                      <>
+                        <span className="text-slate-600 uppercase">
+                          {language === 'bn' ? 'শ্রেণি ও রোল রেঞ্জ:' : 'Roll Summary:'}
                         </span>
-                      ))}
-                    </div>
-                  )}
+                        {summary.breakdown.map((b) => (
+                          <span
+                            key={b.className}
+                            className="px-2 py-0.5 rounded bg-blue-50 border border-blue-300 text-blue-950"
+                          >
+                            {b.className}: {language === 'bn' ? 'রোল' : 'Roll'} {b.rollRange} (
+                            {language === 'bn' ? `${toBnNumber(b.count)} জন` : b.count})
+                          </span>
+                        ))}
+                      </>
+                    )}
+                  </div>
 
                   {/* Front of Room (Blackboard) */}
                   <div className="w-2/3 mx-auto mb-3 py-1 bg-slate-800 text-white text-center text-[10px] font-black uppercase tracking-widest rounded print:bg-black">

@@ -209,6 +209,161 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "StaffHRDocument": {
+      "title": "StaffHRDocument",
+      "description": "Official school teacher and staff HR document (Appointment, Joining, Resignation, Release, Experience, Promotion, Transfer, Increment, Warning, Show Cause)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "schoolId": { "type": "string", "maxLength": 128 },
+        "employeeId": { "type": "string", "maxLength": 128 },
+        "employeeAuthUid": { "type": "string", "maxLength": 128 },
+        "employeeCode": { "type": "string", "maxLength": 64 },
+        "employeeName": { "type": "string", "maxLength": 150 },
+        "documentType": {
+          "type": "string",
+          "enum": [
+            "appointment_letter",
+            "joining_letter",
+            "resignation_letter",
+            "resignation_acceptance",
+            "release_letter",
+            "experience_certificate",
+            "promotion_letter",
+            "transfer_letter",
+            "salary_increment_letter",
+            "warning_letter",
+            "show_cause_notice"
+          ]
+        },
+        "documentNumber": { "type": "string", "maxLength": 80 },
+        "issueDate": { "type": "string", "maxLength": 32 },
+        "language": { "type": "string", "enum": ["bn", "en"] },
+        "templateId": { "type": "string", "maxLength": 128 },
+        "approvalStatus": { "type": "string", "enum": ["Pending", "Approved", "Rejected", "Issued"] },
+        "approvalNote": { "type": "string", "maxLength": 1000 },
+        "approvedByUid": { "type": "string", "maxLength": 128 },
+        "approvedByName": { "type": "string", "maxLength": 150 },
+        "approvedAt": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdBy": { "type": "string", "maxLength": 150 },
+        "createdByRole": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 },
+        "documentData": { "type": "object" },
+        "auditLogs": { "type": "array" }
+      },
+      "required": [
+        "id",
+        "schoolId",
+        "employeeId",
+        "employeeCode",
+        "employeeName",
+        "documentType",
+        "documentNumber",
+        "issueDate",
+        "approvalStatus",
+        "createdByUid",
+        "createdBy",
+        "createdAt",
+        "updatedAt",
+        "documentData"
+      ]
+    },
+    "StaffDocumentTemplate": {
+      "title": "StaffDocumentTemplate",
+      "description": "Customizable A4 letterhead template for school HR documents",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "schoolId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 120 },
+        "styleTheme": {
+          "type": "string",
+          "enum": ["classic_navy_gold", "modern_institutional", "minimal_official", "bordered_certificate"]
+        },
+        "language": { "type": "string", "enum": ["bn", "en"] },
+        "fontFamily": { "type": "string", "maxLength": 120 },
+        "logoPosition": { "type": "string", "enum": ["left", "center", "right"] },
+        "showLogo": { "type": "boolean" },
+        "showHeader": { "type": "boolean" },
+        "headerSubtitle": { "type": "string", "maxLength": 240 },
+        "showFooter": { "type": "boolean" },
+        "footerText": { "type": "string", "maxLength": 300 },
+        "signaturePosition": { "type": "string", "enum": ["left", "center", "right"] },
+        "sealPosition": { "type": "string", "enum": ["left", "center", "right"] },
+        "showSeal": { "type": "boolean" },
+        "sealLabel": { "type": "string", "maxLength": 120 },
+        "primaryColor": { "type": "string", "maxLength": 24 },
+        "accentColor": { "type": "string", "maxLength": 24 },
+        "marginTopMm": { "type": "number" },
+        "marginRightMm": { "type": "number" },
+        "marginBottomMm": { "type": "number" },
+        "marginLeftMm": { "type": "number" },
+        "isDefault": { "type": "boolean" },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": [
+        "id",
+        "schoolId",
+        "name",
+        "styleTheme",
+        "language",
+        "fontFamily",
+        "logoPosition",
+        "signaturePosition",
+        "sealPosition",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StaffResignation": {
+      "title": "StaffResignation",
+      "description": "Teacher and staff resignation submission and Principal review workflow",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "schoolId": { "type": "string", "maxLength": 128 },
+        "employeeId": { "type": "string", "maxLength": 128 },
+        "employeeAuthUid": { "type": "string", "maxLength": 128 },
+        "employeeCode": { "type": "string", "maxLength": 64 },
+        "employeeName": { "type": "string", "maxLength": 150 },
+        "designation": { "type": "string", "maxLength": 120 },
+        "department": { "type": "string", "maxLength": 120 },
+        "resignationReason": { "type": "string", "maxLength": 2000 },
+        "applicationDate": { "type": "string", "maxLength": 32 },
+        "proposedLastWorkingDate": { "type": "string", "maxLength": 32 },
+        "noticePeriod": { "type": "string", "maxLength": 80 },
+        "employeeSignature": { "type": "string", "maxLength": 150 },
+        "principalRemarks": { "type": "string", "maxLength": 1000 },
+        "approvalStatus": { "type": "string", "enum": ["Pending", "Approved", "Rejected"] },
+        "reviewedByUid": { "type": "string", "maxLength": 128 },
+        "reviewedByName": { "type": "string", "maxLength": 150 },
+        "reviewedAt": { "type": "string", "maxLength": 64 },
+        "linkedDocumentId": { "type": "string", "maxLength": 128 },
+        "linkedDocumentNumber": { "type": "string", "maxLength": 80 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 },
+        "auditLogs": { "type": "array" }
+      },
+      "required": [
+        "id",
+        "schoolId",
+        "employeeId",
+        "employeeCode",
+        "employeeName",
+        "resignationReason",
+        "applicationDate",
+        "proposedLastWorkingDate",
+        "approvalStatus",
+        "createdByUid",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -223,6 +378,18 @@
     "/schools/{schoolId}/users/{uid}": {
       "schema": "SaaSUser",
       "description": "School-scoped provisioned user directory"
+    },
+    "/schools/{schoolId}/staffDocuments/{docId}": {
+      "schema": "StaffHRDocument",
+      "description": "School-isolated Teacher and Staff HR documents"
+    },
+    "/schools/{schoolId}/staffDocumentTemplates/{templateId}": {
+      "schema": "StaffDocumentTemplate",
+      "description": "Customizable HR document templates per school"
+    },
+    "/schools/{schoolId}/staffResignations/{resignationId}": {
+      "schema": "StaffResignation",
+      "description": "Staff resignation submissions and approval workflow records"
     },
     "/subscription_plans/{planId}": {
       "schema": "SubscriptionPlan",

@@ -167,11 +167,223 @@ service cloud.firestore {
         allow delete: if isValidId(schoolId) && isValidId(sliceId) && isMasterAdmin();
       }
 
+      // Helper: Check if the caller's school user profile links to employeeId
+      function isLinkedEmployee(schoolId, employeeId) {
+        let userPath = /databases/$(database)/documents/schools/$(schoolId)/users/$(request.auth.uid);
+        return exists(userPath)
+          && get(userPath).data.linkedStaffId is string
+          && get(userPath).data.linkedStaffId == employeeId;
+      }
+
+      function isHrManagerRole(schoolId) {
+        return isSchoolAdmin(schoolId)
+          || (hasSchoolClaim(schoolId) && request.auth.token.schoolRole in ['receptionist', 'staff']);
+      }
+
+      function isValidHRDocument(data, docId, schoolId) {
+        return data.keys().hasAll([
+            'id', 'schoolId', 'employeeId', 'employeeCode', 'employeeName',
+            'documentType', 'documentNumber', 'issueDate', 'approvalStatus',
+            'createdByUid', 'createdBy', 'createdAt', 'updatedAt', 'documentData'
+          ])
+          && data.id == docId
+          && data.schoolId == schoolId
+          && data.employeeId is string && data.employeeId.size() >= 1 && data.employeeId.size() <= 128
+          && data.employeeCode is string && data.employeeCode.size() >= 1 && data.employeeCode.size() <= 64
+          && data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 150
+          && data.documentType in [
+            'appointment_letter',
+            'joining_letter',
+            'resignation_letter',
+            'resignation_acceptance',
+            'release_letter',
+            'experience_certificate',
+            'promotion_letter',
+            'transfer_letter',
+            'salary_increment_letter',
+            'warning_letter',
+            'show_cause_notice'
+          ]
+          && data.documentNumber is string && data.documentNumber.size() >= 3 && data.documentNumber.size() <= 80
+          && data.issueDate is string && data.issueDate.size() >= 8 && data.issueDate.size() <= 32
+          && data.approvalStatus in ['Pending', 'Approved', 'Rejected', 'Issued']
+          && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+          && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 150
+          && data.createdAt is string && data.createdAt.size() <= 64
+          && data.updatedAt is string && data.updatedAt.size() <= 64
+          && data.documentData is map;
+      }
+
+      function isValidHRTemplate(data, templateId, schoolId) {
+        return data.keys().hasAll([
+            'id', 'schoolId', 'name', 'styleTheme', 'language', 'fontFamily',
+            'logoPosition', 'signaturePosition', 'sealPosition', 'createdAt', 'updatedAt'
+          ])
+          && data.id == templateId
+          && data.schoolId == schoolId
+          && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+          && data.styleTheme in ['classic_navy_gold', 'modern_institutional', 'minimal_official', 'bordered_certificate']
+          && data.language in ['bn', 'en']
+          && data.fontFamily is string && data.fontFamily.size() <= 120
+          && data.logoPosition in ['left', 'center', 'right']
+          && data.signaturePosition in ['left', 'center', 'right']
+          && data.sealPosition in ['left', 'center', 'right']
+          && data.createdAt is string && data.createdAt.size() <= 64
+          && data.updatedAt is string && data.updatedAt.size() <= 64;
+      }
+
+      function isValidStaffResignation(data, resignationId, schoolId) {
+        return data.keys().hasAll([
+            'id', 'schoolId', 'employeeId', 'employeeCode', 'employeeName',
+            'resignationReason', 'applicationDate', 'proposedLastWorkingDate',
+            'approvalStatus', 'createdByUid', 'createdAt', 'updatedAt'
+          ])
+          && data.id == resignationId
+          && data.schoolId == schoolId
+          && data.employeeId is string && data.employeeId.size() >= 1 && data.employeeId.size() <= 128
+          && data.employeeCode is string && data.employeeCode.size() >= 1 && data.employeeCode.size() <= 64
+          && data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 150
+          && data.resignationReason is string && data.resignationReason.size() >= 1 && data.resignationReason.size() <= 2000
+          && data.applicationDate is string && data.applicationDate.size() <= 32
+          && data.proposedLastWorkingDate is string && data.proposedLastWorkingDate.size() <= 32
+          && data.approvalStatus in ['Pending', 'Approved', 'Rejected']
+          && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+          && data.createdAt is string && data.createdAt.size() <= 64
+          && data.updatedAt is string && data.updatedAt.size() <= 64;
+      }
+
+      // Teacher & Staff HR Documents
+      match /staffDocuments/{docId} {
+        allow get, list: if isValidId(schoolId) && (
+          isMasterAdmin() ||
+          (
+            hasSchoolClaim(schoolId) && isSchoolActive(schoolId) && (
+              isHrManagerRole(schoolId) ||
+              (request.auth.token.schoolRole == 'accountant' && resource.data.documentType in ['appointment_letter', 'salary_increment_letter']) ||
+              resource.data.createdByUid == request.auth.uid ||
+              resource.data.employeeAuthUid == request.auth.uid ||
+              isLinkedEmployee(schoolId, resource.data.employeeId)
+            )
+          )
+        );
+        allow create: if isValidId(schoolId) && isValidId(docId)
+          && isVerifiedUser()
+          && isValidHRDocument(request.resource.data, docId, schoolId)
+          && request.resource.data.createdByUid == request.auth.uid
+          && (
+            isMasterAdmin() ||
+            (isSchoolAdmin(schoolId) && isSchoolActive(schoolId)) ||
+            (isHrManagerRole(schoolId) && isSchoolActive(schoolId)) ||
+            (
+              isSchoolStaff(schoolId) && isSchoolActive(schoolId)
+              && request.resource.data.documentType in ['joining_letter', 'resignation_letter']
+              && request.resource.data.approvalStatus == 'Pending'
+            )
+          );
+        allow update: if isValidId(schoolId) && isValidId(docId)
+          && isVerifiedUser()
+          && isValidHRDocument(request.resource.data, docId, schoolId)
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.schoolId == resource.data.schoolId
+          && request.resource.data.createdByUid == resource.data.createdByUid
+          && request.resource.data.createdAt == resource.data.createdAt
+          && (
+            isMasterAdmin() ||
+            (isSchoolAdmin(schoolId) && isSchoolActive(schoolId)) ||
+            (
+              isHrManagerRole(schoolId) && isSchoolActive(schoolId)
+              && request.resource.data.approvalStatus == resource.data.approvalStatus
+            ) ||
+            (
+              isSchoolStaff(schoolId) && isSchoolActive(schoolId)
+              && (
+                resource.data.createdByUid == request.auth.uid ||
+                resource.data.employeeAuthUid == request.auth.uid ||
+                isLinkedEmployee(schoolId, resource.data.employeeId)
+              )
+              && request.resource.data.approvalStatus == resource.data.approvalStatus
+              && request.resource.data.documentType == resource.data.documentType
+            )
+          );
+        allow delete: if isValidId(schoolId) && isValidId(docId) && (
+          isMasterAdmin() ||
+          (isSchoolAdmin(schoolId) && isSchoolActive(schoolId))
+        );
+      }
+
+      // Customizable HR Document Letterhead Templates
+      match /staffDocumentTemplates/{templateId} {
+        allow get, list: if isValidId(schoolId) && (
+          isMasterAdmin() ||
+          (isSchoolStaff(schoolId) && isSchoolActive(schoolId))
+        );
+        allow create, update: if isValidId(schoolId) && isValidId(templateId)
+          && isVerifiedUser()
+          && isValidHRTemplate(request.resource.data, templateId, schoolId)
+          && (
+            isMasterAdmin() ||
+            (isHrManagerRole(schoolId) && isSchoolActive(schoolId))
+          );
+        allow delete: if isValidId(schoolId) && isValidId(templateId) && (
+          isMasterAdmin() ||
+          (isSchoolAdmin(schoolId) && isSchoolActive(schoolId))
+        );
+      }
+
+      // Staff Resignation Applications & Principal Review
+      match /staffResignations/{resignationId} {
+        allow get, list: if isValidId(schoolId) && (
+          isMasterAdmin() ||
+          (
+            hasSchoolClaim(schoolId) && isSchoolActive(schoolId) && (
+              isHrManagerRole(schoolId) ||
+              resource.data.createdByUid == request.auth.uid ||
+              resource.data.employeeAuthUid == request.auth.uid ||
+              isLinkedEmployee(schoolId, resource.data.employeeId)
+            )
+          )
+        );
+        allow create: if isValidId(schoolId) && isValidId(resignationId)
+          && isVerifiedUser()
+          && isValidStaffResignation(request.resource.data, resignationId, schoolId)
+          && request.resource.data.createdByUid == request.auth.uid
+          && (
+            isMasterAdmin() ||
+            (isSchoolAdmin(schoolId) && isSchoolActive(schoolId)) ||
+            (
+              isSchoolStaff(schoolId) && isSchoolActive(schoolId)
+              && request.resource.data.approvalStatus == 'Pending'
+            )
+          );
+        allow update: if isValidId(schoolId) && isValidId(resignationId)
+          && isVerifiedUser()
+          && isValidStaffResignation(request.resource.data, resignationId, schoolId)
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.schoolId == resource.data.schoolId
+          && request.resource.data.createdByUid == resource.data.createdByUid
+          && request.resource.data.createdAt == resource.data.createdAt
+          && (
+            isMasterAdmin() ||
+            (isSchoolAdmin(schoolId) && isSchoolActive(schoolId)) ||
+            (
+              isHrManagerRole(schoolId) && isSchoolActive(schoolId)
+              && request.resource.data.approvalStatus == resource.data.approvalStatus
+            )
+          );
+        allow delete: if isValidId(schoolId) && isValidId(resignationId) && (
+          isMasterAdmin() ||
+          (isSchoolAdmin(schoolId) && isSchoolActive(schoolId))
+        );
+      }
+
       // Tenant Domain Subcollections (students, staff, attendance, fees, exams, etc.)
       match /{subCollection}/{docId} {
         allow get: if isValidId(schoolId) && isValidId(docId)
           && subCollection != 'users'
           && subCollection != 'slices'
+          && subCollection != 'staffDocuments'
+          && subCollection != 'staffDocumentTemplates'
+          && subCollection != 'staffResignations'
           && (
             isMasterAdmin() ||
             (hasSchoolClaim(schoolId) && isSchoolActive(schoolId))
@@ -179,6 +391,9 @@ service cloud.firestore {
         allow list: if isValidId(schoolId)
           && subCollection != 'users'
           && subCollection != 'slices'
+          && subCollection != 'staffDocuments'
+          && subCollection != 'staffDocumentTemplates'
+          && subCollection != 'staffResignations'
           && (
             isMasterAdmin() ||
             (hasSchoolClaim(schoolId) && isSchoolActive(schoolId))
@@ -186,6 +401,9 @@ service cloud.firestore {
         allow create, update: if isValidId(schoolId) && isValidId(docId)
           && subCollection != 'users'
           && subCollection != 'slices'
+          && subCollection != 'staffDocuments'
+          && subCollection != 'staffDocumentTemplates'
+          && subCollection != 'staffResignations'
           && isVerifiedUser()
           && request.resource.data.schoolId == schoolId
           && (
@@ -195,6 +413,9 @@ service cloud.firestore {
         allow delete: if isValidId(schoolId) && isValidId(docId)
           && subCollection != 'users'
           && subCollection != 'slices'
+          && subCollection != 'staffDocuments'
+          && subCollection != 'staffDocumentTemplates'
+          && subCollection != 'staffResignations'
           && (
             isMasterAdmin() ||
             (isSchoolAdmin(schoolId) && isSchoolActive(schoolId))

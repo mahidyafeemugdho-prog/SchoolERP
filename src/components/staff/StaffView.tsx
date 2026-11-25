@@ -48,7 +48,11 @@ import {
 } from '../common/ModernIDCardFronts';
 import { printStaffJoiningRecord } from '../../utils/admissionPrintHelper';
 
-export const StaffView: React.FC = () => {
+interface StaffViewProps {
+  onNavigate?: (tab: string) => void;
+}
+
+export const StaffView: React.FC<StaffViewProps> = ({ onNavigate }) => {
   const { activeRole, saasSession } = useAuth();
   const { t, language, formatTaka, toBnNumber, formatDate } = useLanguage();
   const { schoolProfile } = useSchool();
@@ -397,6 +401,16 @@ export const StaffView: React.FC = () => {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {onNavigate && (
+            <button
+              type="button"
+              onClick={() => onNavigate('staff_documents')}
+              className="flex items-center space-x-1.5 px-3.5 py-2 text-xs font-bold rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-[#0f294d] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <FileText className="w-4 h-4 text-amber-600" />
+              <span>{language === 'bn' ? 'এইচআর ডকুমেন্টস (HR)' : 'HR Staff Documents'}</span>
+            </button>
+          )}
           {canManage && activeSection === 'directory' && (
             <button
               onClick={handleOpenAdd}

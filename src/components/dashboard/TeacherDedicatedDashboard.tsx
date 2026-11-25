@@ -548,8 +548,8 @@ export const TeacherDedicatedDashboard: React.FC<TeacherDedicatedDashboardProps>
               </h2>
               <p className="text-[11px] text-slate-500">
                 {language === 'bn'
-                  ? 'আপনার তৈরি খসড়া অনুমোদনের জন্য পাঠান — সুপার অ্যাডমিন অনুমোদন করলে শিক্ষার্থী পোর্টালে প্রকাশিত হবে।'
-                  : 'Draft class routines, exam routines, seat plans, and marks are published to students once SuperAdmin approves.'}
+                  ? 'আপনার তৈরি আসন বিন্যাস ও নম্বরের খসড়া অনুমোদনের জন্য পাঠান — সুপার অ্যাডমিন অনুমোদন করলে প্রকাশিত হবে।'
+                  : 'Draft seat plans and marks are published to students once SuperAdmin approves.'}
               </p>
             </div>
           </div>
@@ -599,25 +599,9 @@ export const TeacherDedicatedDashboard: React.FC<TeacherDedicatedDashboardProps>
           </div>
         )}
 
-        {/* 4 Draft Workflow Module Tiles */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs">
+        {/* Teacher Draft Workflow Module Tiles (Seat Plan & Marks Entry) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
           {[
-            {
-              title: language === 'bn' ? 'ক্লাস রুটিন' : 'Class Routine',
-              icon: CalendarDays,
-              drafts: approvalSummary.classRoutineDrafts.length,
-              pending: approvalSummary.classRoutinePending.length,
-              tab: 'routine',
-              color: 'text-sky-700 bg-sky-50',
-            },
-            {
-              title: language === 'bn' ? 'পরীক্ষার রুটিন' : 'Exam Routine',
-              icon: Clock,
-              drafts: approvalSummary.examRoutineDraftGroups.length,
-              pending: approvalSummary.examRoutinePendingGroups.length,
-              tab: 'examinations:exam_routine',
-              color: 'text-amber-700 bg-amber-50',
-            },
             {
               title: language === 'bn' ? 'আসন বিন্যাস (Seat Plan)' : 'Exam Seat Plan',
               icon: Grid,

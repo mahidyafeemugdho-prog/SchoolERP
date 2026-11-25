@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { StorageService } from '../../services/storage';
 import { Notice } from '../../types';
+import { canManageNotices } from '../../utils/permissions';
 import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import {
   Bell,
@@ -43,13 +44,10 @@ export const NoticesView: React.FC = () => {
   const [targetAudience, setTargetAudience] = useState<any>('All');
   const [isImportant, setIsImportant] = useState<boolean>(false);
 
-  const canPost =
-    activeRole === 'super_admin' ||
-    activeRole === 'admin' ||
-    activeRole === 'teacher' ||
-    activeRole === 'master_admin';
+  const canPost = canManageNotices(activeRole);
 
   const handleOpenAdd = () => {
+    if (!canPost) return;
     setEditingNotice(null);
     setTitle('');
     setContent('');
@@ -60,6 +58,7 @@ export const NoticesView: React.FC = () => {
   };
 
   const handleOpenEdit = (notice: Notice) => {
+    if (!canPost) return;
     setEditingNotice(notice);
     setTitle(notice.title);
     setContent(notice.content);
@@ -70,6 +69,7 @@ export const NoticesView: React.FC = () => {
   };
 
   const handleDeleteNotice = (id: string) => {
+    if (!canPost) return;
     const confirmMsg =
       language === 'bn'
         ? 'আপনি কি নিশ্চিত যে এই নোটিশটি মুছে ফেলতে চান?'
@@ -82,6 +82,7 @@ export const NoticesView: React.FC = () => {
 
   const handlePostNotice = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canPost) return;
     if (!title || !content) return;
 
     if (editingNotice) {
@@ -325,7 +326,7 @@ export const NoticesView: React.FC = () => {
       </div>
 
       {/* Add / Edit Notice Modal */}
-      {showAddModal && (
+      {canPost && showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
           <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full p-6 text-xs max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">

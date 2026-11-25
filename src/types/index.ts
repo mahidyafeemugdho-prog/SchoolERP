@@ -198,6 +198,8 @@ export interface StaffRBACPermissions {
   manageRoutine: boolean;
   manageHomework: boolean;
   manageLibrary: boolean;
+  manageHrDocuments?: boolean;
+  viewSalaryDocuments?: boolean;
   onlyQrAttendanceKiosk?: boolean;
 }
 
@@ -1009,3 +1011,203 @@ export interface TransactionSecurityConfig {
   updatedAt?: string;
   updatedBy?: string;
 }
+
+export type HRDocumentType =
+  | 'appointment_letter'
+  | 'joining_letter'
+  | 'resignation_letter'
+  | 'resignation_acceptance'
+  | 'release_letter'
+  | 'experience_certificate'
+  | 'promotion_letter'
+  | 'transfer_letter'
+  | 'salary_increment_letter'
+  | 'warning_letter'
+  | 'show_cause_notice';
+
+export type HRApprovalStatus = 'Pending' | 'Approved' | 'Rejected' | 'Issued';
+
+export type HRTemplateAlignment = 'left' | 'center' | 'right';
+
+export type HRTemplateStyle =
+  | 'classic_navy_gold'
+  | 'modern_institutional'
+  | 'minimal_official'
+  | 'bordered_certificate';
+
+export interface StaffDocumentTemplate {
+  id: string;
+  schoolId: string;
+  name: string;
+  styleTheme: HRTemplateStyle;
+  language: 'bn' | 'en';
+  fontFamily: string;
+  logoPosition: HRTemplateAlignment;
+  showLogo: boolean;
+  showHeader: boolean;
+  headerSubtitle?: string;
+  showFooter: boolean;
+  footerText: string;
+  signaturePosition: HRTemplateAlignment;
+  sealPosition: HRTemplateAlignment;
+  showSeal: boolean;
+  sealLabel?: string;
+  primaryColor: string;
+  accentColor: string;
+  marginTopMm: number;
+  marginRightMm: number;
+  marginBottomMm: number;
+  marginLeftMm: number;
+  isDefault?: boolean;
+  createdByUid?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HRDocumentAuditEntry {
+  id: string;
+  action: 'created' | 'updated' | 'submitted' | 'approved' | 'rejected' | 'printed' | 'downloaded';
+  actorUid: string;
+  actorName: string;
+  actorRole: string;
+  note?: string;
+  timestamp: string;
+}
+
+export interface HRDocumentSalaryBreakdown {
+  basicSalary: number;
+  houseRentAllowance: number;
+  medicalAllowance: number;
+  otherAllowance: number;
+  providentFundDeduction: number;
+  grossSalary: number;
+  netSalary: number;
+}
+
+export interface HRDocumentPayload {
+  // Common employee snapshot
+  employeeNameEn: string;
+  employeeNameBn?: string;
+  employeeCode: string;
+  employeePhotoUrl?: string;
+  includeEmployeePhoto?: boolean;
+  designation: string;
+  department: string;
+  subject?: string;
+  phone?: string;
+  email?: string;
+  permanentAddress?: string;
+  qualification?: string;
+
+  // Appointment fields
+  joiningDate?: string;
+  monthlySalary?: number;
+  salaryBreakdown?: HRDocumentSalaryBreakdown;
+  employmentType?: 'Full-Time Permanent' | 'Contractual' | 'Part-Time' | 'Probationary';
+  probationPeriod?: string;
+  workingHours?: string;
+  jobResponsibilities?: string;
+  noticePeriod?: string;
+  termsAndConditions?: string;
+
+  // Signatory & Authority fields
+  principalOrChairmanName?: string;
+  principalOrChairmanTitle?: string;
+  authorizedSignatureUrl?: string;
+  includeSchoolSeal?: boolean;
+
+  // Joining letter fields
+  appointmentRefNumber?: string;
+  joiningRemarks?: string;
+  employeeSignature?: string;
+  submittedDate?: string;
+
+  // Resignation / Acceptance / Release / Experience fields
+  resignationId?: string;
+  resignationReason?: string;
+  applicationDate?: string;
+  proposedLastWorkingDate?: string;
+  principalRemarks?: string;
+  acceptanceDate?: string;
+  employmentStartDate?: string;
+  lastWorkingDate?: string;
+  employmentDurationEn?: string;
+  employmentDurationBn?: string;
+  workPerformanceRemarks?: string;
+
+  // Promotion / Transfer / Increment / Warning / Show Cause fields
+  previousDesignation?: string;
+  newDesignation?: string;
+  previousDepartment?: string;
+  newDepartment?: string;
+  previousBranch?: string;
+  newBranch?: string;
+  reportingOfficer?: string;
+  effectiveDate?: string;
+  previousSalary?: number;
+  incrementAmount?: number;
+  incrementPercentage?: number;
+  newSalary?: number;
+  incidentDate?: string;
+  warningLevel?: 'First Warning' | 'Second Warning' | 'Final Warning';
+  reasonOrAllegation?: string;
+  correctiveAction?: string;
+  responseDeadlineDays?: number;
+  responseDeadlineDate?: string;
+  customBodyText?: string;
+}
+
+export interface StaffHRDocument {
+  id: string;
+  schoolId: string;
+  employeeId: string; // Staff.id or Staff.employeeId
+  employeeAuthUid?: string;
+  employeeCode: string; // Human-readable Staff ID (e.g. SCH001-EMP-101)
+  employeeName: string;
+  documentType: HRDocumentType;
+  documentNumber: string; // e.g. SSBD/APPT/2026/0001
+  issueDate: string; // YYYY-MM-DD
+  language: 'bn' | 'en';
+  templateId?: string;
+  approvalStatus: HRApprovalStatus;
+  approvalNote?: string;
+  approvedByUid?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+  createdByUid: string;
+  createdBy: string;
+  createdByRole: string;
+  createdAt: string;
+  updatedAt: string;
+  documentData: HRDocumentPayload;
+  auditLogs: HRDocumentAuditEntry[];
+}
+
+export interface StaffResignationRequest {
+  id: string;
+  schoolId: string;
+  employeeId: string;
+  employeeAuthUid?: string;
+  employeeCode: string;
+  employeeName: string;
+  employeeNameBn?: string;
+  designation: string;
+  department: string;
+  resignationReason: string;
+  applicationDate: string;
+  proposedLastWorkingDate: string;
+  noticePeriod: string;
+  employeeSignature: string;
+  principalRemarks?: string;
+  approvalStatus: 'Pending' | 'Approved' | 'Rejected';
+  reviewedByUid?: string;
+  reviewedByName?: string;
+  reviewedAt?: string;
+  linkedDocumentId?: string;
+  linkedDocumentNumber?: string;
+  createdByUid: string;
+  createdAt: string;
+  updatedAt: string;
+  auditLogs: HRDocumentAuditEntry[];
+}
+

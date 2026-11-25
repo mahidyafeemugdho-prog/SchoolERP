@@ -26,6 +26,7 @@ import {
   Headphones,
   LogOut,
   X,
+  FileSignature,
 } from 'lucide-react';
 
 import { isTabAuthorized } from '../../utils/permissions';
@@ -140,6 +141,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
       labelKey: 'teachersAndStaff',
       icon: Users,
       roles: ['super_admin', 'admin'],
+    },
+    {
+      id: 'staff_documents',
+      labelKey: 'staffDocuments',
+      icon: FileSignature,
+      roles: ['super_admin', 'admin', 'teacher', 'accountant', 'librarian', 'receptionist'],
     },
     {
       id: 'attendance',
@@ -319,9 +326,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
 
         {/* Nav Items List */}
         <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto custom-scrollbar">
-          {visibleItems.map((item) => {
+          {visibleItems.map((item, idx) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
+            const isFirstHrItem =
+              (item.id === 'staff' || item.id === 'staff_documents') &&
+              !visibleItems.slice(0, idx).some((prev) => prev.id === 'staff' || prev.id === 'staff_documents');
+            const isHrSubItem = item.id === 'staff' || item.id === 'staff_documents';
             const showFeePendingBadge =
               item.id === 'fees' &&
               pendingOnlineCount > 0 &&
@@ -331,18 +342,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
                 activeRole === 'master_admin');
             const showSupportBadge = item.id === 'support' && unreadSupportCount > 0;
             return (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setActiveTab(item.id);
-                  onClose();
-                }}
-                className={`w-full flex items-center justify-between space-x-2 px-3 py-2.5 rounded-lg text-xs font-medium transition-all ${
-                  isActive
-                    ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20 font-semibold'
-                    : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'
-                }`}
-              >
+              <React.Fragment key={item.id}>
+                {isFirstHrItem && (
+                  <div className="pt-2.5 pb-1 px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    {t('hrManagement')}
+                  </div>
+                )}
+                <button
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    onClose();
+                  }}
+                  className={`w-full flex items-center justify-between space-x-2 ${isHrSubItem ? 'pl-4 pr-3' : 'px-3'} py-2.5 rounded-lg text-xs font-medium transition-all ${
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20 font-semibold'
+                      : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'
+                  }`}
+                >
                 <div className="flex items-center space-x-3 min-w-0">
                   <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                   <span className="truncate">{t(item.labelKey)}</span>
@@ -358,6 +374,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
                   </span>
                 )}
               </button>
+              </React.Fragment>
             );
           })}
 

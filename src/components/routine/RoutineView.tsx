@@ -37,6 +37,7 @@ import {
 import { LauncherIconGrid, LauncherTileItem } from '../common/LauncherIconGrid';
 import { ClassTeacherSignatureDisplay } from '../common/ClassTeacherSignatureDisplay';
 import { PrincipalSignatureDisplay } from '../common/PrincipalSignatureDisplay';
+import { canManageClassRoutine } from '../../utils/permissions';
 
 interface RoutineViewProps {
   initialViewMode?: 'class' | 'teacher' | 'room';
@@ -97,12 +98,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
   const isStudentViewer = activeRole === 'student' || activeRole === 'guardian';
   const actorName = currentUser?.nameBn || currentUser?.name || (isApprover ? 'Super Admin' : 'Teacher');
 
-  const canEdit =
-    (activeRole === 'super_admin' ||
-      activeRole === 'admin' ||
-      activeRole === 'master_admin' ||
-      activeRole === 'teacher') &&
-    currentUser?.permissions?.manageRoutine !== false;
+  const canEdit = canManageClassRoutine(activeRole, currentUser);
 
   const showNotice = (msg: string) => {
     setWorkflowNotice(msg);
@@ -157,6 +153,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
   }, [managedClassNames, selectedClass]);
 
   const handleUpdateTiffinTime = (newTime: string) => {
+    if (!canEdit) return;
     setTiffinTime(newTime);
     try {
       localStorage.setItem('school_routine_tiffin_time', newTime);
@@ -165,6 +162,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
   };
 
   const handleUpdateTiffinAfter = (afterPeriod: number) => {
+    if (!canEdit) return;
     setTiffinAfterPeriod(afterPeriod);
     try {
       localStorage.setItem('school_routine_tiffin_after', String(afterPeriod));
@@ -269,6 +267,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
   };
 
   const handleOpenAddPeriod = () => {
+    if (!canEdit) return;
     setEditingPeriod(null);
     setNewDay('Saturday');
     setNewPeriodNum(1);
@@ -282,6 +281,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
   };
 
   const handleOpenEditPeriod = (p: RoutinePeriod) => {
+    if (!canEdit) return;
     setEditingPeriod(p);
     setNewDay(p.day);
     setNewPeriodNum(p.periodNumber);
@@ -295,6 +295,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
   };
 
   const handleDeletePeriod = (p: RoutinePeriod) => {
+    if (!canEdit) return;
     if (!isApprover && isPublishedForStudents(p.approvalStatus)) {
       showNotice(
         language === 'bn'
@@ -307,7 +308,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
   };
 
   const confirmDeletePeriod = () => {
-    if (!periodToDelete) return;
+    if (!canEdit || !periodToDelete) return;
     StorageService.deleteRoutine(periodToDelete.id);
     const updated = StorageService.getRoutines();
     setRoutines(updated);
@@ -333,6 +334,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
 
   const handleSavePeriod = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEdit) return;
     const conflict = checkConflicts(newDay, newPeriodNum, newTeacherId, newRoom, editingPeriod?.id);
     if (conflict) {
       setConflictWarning(conflict);
@@ -413,7 +415,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
     .map((r) => r.id);
 
   const handleSubmitDraftsToSuperAdmin = () => {
-    if (draftOrRejectedIds.length === 0) return;
+    if (!canEdit || draftOrRejectedIds.length === 0) return;
     const count = StorageService.submitClassRoutineDrafts(draftOrRejectedIds, {
       name: actorName,
       id: currentUser?.id,
@@ -549,7 +551,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <SaturdayOffToggle compact={true} />
+          {canEdit && <SaturdayOffToggle compact={true} />}
           {canEdit && (
             <button
               onClick={handleOpenAddPeriod}
@@ -871,7 +873,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
       </div>
 
       {/* Add Period Modal */}
-      {showAddModal && (
+      {canEdit && showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
           <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-md w-full p-6 text-xs">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -1011,7 +1013,7 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
       )}
 
       {/* In-App Delete Period Confirmation Modal (Eliminates blocked browser confirms) */}
-      {periodToDelete && (
+      {canEdit && periodToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-sm w-full p-5 text-xs animate-in zoom-in-95 duration-150">
             <div className="flex items-center space-x-3 mb-3">
@@ -1126,59 +1128,61 @@ export const RoutineView: React.FC<RoutineViewProps> = ({ initialViewMode, jumpN
               {/* Routine Grid Table */}
               <div className="overflow-x-auto">
                 {/* Customizable Tiffin Position & Time Banner */}
-                <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-amber-50/90 border border-amber-300 rounded-xl text-xs mb-3 text-amber-950 print:hidden shadow-xs">
-                  <div className="flex flex-wrap items-center gap-3">
-                    {/* Tiffin Break Position Selector */}
-                    <div className="flex items-center space-x-1.5">
-                      <Sliders className="w-4 h-4 text-amber-700 shrink-0" />
-                      <span className="font-bold">টিফিন বিরতির অবস্থান:</span>
-                      <select
-                        value={tiffinAfterPeriod}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          handleUpdateTiffinAfter(val);
-                          if (val === 4 && (!tiffinTime || tiffinTime === '10:45-11:15')) {
-                            handleUpdateTiffinTime('11:30-12:00');
-                          } else if (val === 5 && (!tiffinTime || tiffinTime === '10:45-11:15')) {
-                            handleUpdateTiffinTime('12:15-12:45');
-                          } else if (val === 6 && (!tiffinTime || tiffinTime === '10:45-11:15')) {
-                            handleUpdateTiffinTime('01:00-01:30');
-                          }
-                        }}
-                        className="px-2.5 py-1 text-xs font-bold bg-white border border-amber-300 rounded-lg text-amber-950 focus:ring-2 focus:ring-amber-500 shadow-xs"
-                      >
-                        <option value={3}>৩য় পিরিয়ডের পর (After Period 3)</option>
-                        <option value={4}>৪র্থ পিরিয়ডের পর (After Period 4)</option>
-                        <option value={5}>৫ম পিরিয়ডের পর (After Period 5)</option>
-                        <option value={6}>৬ষ্ঠ পিরিয়ডের পর (After Period 6)</option>
-                        <option value={2}>২য় পিরিয়ডের পর (After Period 2)</option>
-                        <option value={0}>টিফিন কলাম ছাড়া (No Tiffin Column)</option>
-                      </select>
+                {canEdit && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-amber-50/90 border border-amber-300 rounded-xl text-xs mb-3 text-amber-950 print:hidden shadow-xs">
+                    <div className="flex flex-wrap items-center gap-3">
+                      {/* Tiffin Break Position Selector */}
+                      <div className="flex items-center space-x-1.5">
+                        <Sliders className="w-4 h-4 text-amber-700 shrink-0" />
+                        <span className="font-bold">টিফিন বিরতির অবস্থান:</span>
+                        <select
+                          value={tiffinAfterPeriod}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            handleUpdateTiffinAfter(val);
+                            if (val === 4 && (!tiffinTime || tiffinTime === '10:45-11:15')) {
+                              handleUpdateTiffinTime('11:30-12:00');
+                            } else if (val === 5 && (!tiffinTime || tiffinTime === '10:45-11:15')) {
+                              handleUpdateTiffinTime('12:15-12:45');
+                            } else if (val === 6 && (!tiffinTime || tiffinTime === '10:45-11:15')) {
+                              handleUpdateTiffinTime('01:00-01:30');
+                            }
+                          }}
+                          className="px-2.5 py-1 text-xs font-bold bg-white border border-amber-300 rounded-lg text-amber-950 focus:ring-2 focus:ring-amber-500 shadow-xs"
+                        >
+                          <option value={3}>৩য় পিরিয়ডের পর (After Period 3)</option>
+                          <option value={4}>৪র্থ পিরিয়ডের পর (After Period 4)</option>
+                          <option value={5}>৫ম পিরিয়ডের পর (After Period 5)</option>
+                          <option value={6}>৬ষ্ঠ পিরিয়ডের পর (After Period 6)</option>
+                          <option value={2}>২য় পিরিয়ডের পর (After Period 2)</option>
+                          <option value={0}>টিফিন কলাম ছাড়া (No Tiffin Column)</option>
+                        </select>
+                      </div>
+
+                      {/* Tiffin Time Input */}
+                      {tiffinAfterPeriod > 0 && (
+                        <div className="flex items-center space-x-1.5">
+                          <Clock className="w-4 h-4 text-amber-700 shrink-0" />
+                          <span className="font-bold">টিফিন সময়:</span>
+                          <input
+                            type="text"
+                            value={tiffinTime}
+                            onChange={(e) => handleUpdateTiffinTime(e.target.value)}
+                            className="px-2.5 py-1 text-xs font-black bg-white border border-amber-300 rounded-lg text-amber-900 w-32 focus:ring-2 focus:ring-amber-500 shadow-xs"
+                            placeholder="e.g. 12:45-1:15"
+                          />
+                          <span className="text-[10px] text-amber-700 hidden sm:inline">(প্রিন্ট শিটে তাৎক্ষণিক কার্যকর হবে)</span>
+                        </div>
+                      )}
                     </div>
 
-                    {/* Tiffin Time Input */}
-                    {tiffinAfterPeriod > 0 && (
-                      <div className="flex items-center space-x-1.5">
-                        <Clock className="w-4 h-4 text-amber-700 shrink-0" />
-                        <span className="font-bold">টিফিন সময়:</span>
-                        <input
-                          type="text"
-                          value={tiffinTime}
-                          onChange={(e) => handleUpdateTiffinTime(e.target.value)}
-                          className="px-2.5 py-1 text-xs font-black bg-white border border-amber-300 rounded-lg text-amber-900 w-32 focus:ring-2 focus:ring-amber-500 shadow-xs"
-                          placeholder="e.g. 12:45-1:15"
-                        />
-                        <span className="text-[10px] text-amber-700 hidden sm:inline">(প্রিন্ট শিটে তাৎক্ষণিক কার্যকর হবে)</span>
-                      </div>
-                    )}
+                    <span className="text-[11px] font-bold text-slate-700 bg-white px-2.5 py-1 rounded-lg border border-amber-200">
+                      {tiffinAfterPeriod > 0
+                        ? `মোট পিরিয়ড: ৮টি (${tiffinAfterPeriod}ম পিরিয়ডের পর টিফিন)`
+                        : 'মোট পিরিয়ড: ৮টি (একটানা)'}
+                    </span>
                   </div>
-
-                  <span className="text-[11px] font-bold text-slate-700 bg-white px-2.5 py-1 rounded-lg border border-amber-200">
-                    {tiffinAfterPeriod > 0
-                      ? `মোট পিরিয়ড: ৮টি (${tiffinAfterPeriod}ম পিরিয়ডের পর টিফিন)`
-                      : 'মোট পিরিয়ড: ৮টি (একটানা)'}
-                  </span>
-                </div>
+                )}
 
                 {(() => {
                   const beforeTiffin = tiffinAfterPeriod > 0
