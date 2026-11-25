@@ -70,7 +70,15 @@ export const AIService = {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const rawText = await res.text();
+      let data: any = {};
+      if (rawText) {
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          data = { message: `Server returned status ${res.status}.` };
+        }
+      }
       if (res.ok && data.success && data.evaluation) {
         return {
           success: true,
@@ -81,7 +89,7 @@ export const AIService = {
       if (data.error === 'AI_NOT_CONFIGURED') {
         return {
           success: false,
-          message: data.message || 'GEMINI_API_KEY কনফিগার করা নেই। অ্যাডমিন সেটিংসে গিয়ে সেটআপ গাইড দেখুন।',
+          message: data.message || 'সার্ভারে GEMINI_API_KEY কনফিগার করা নেই।',
         };
       }
 

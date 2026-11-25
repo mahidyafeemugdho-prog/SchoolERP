@@ -608,8 +608,8 @@ export const SettingsView: React.FC = () => {
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
               {language === 'bn'
-                ? 'হস্তলিখিত হোমওয়ার্ক মূল্যায়ন ও পারফরম্যান্স বিশ্লেষণের জন্য Gemini 3.8 Flash এআই মডেল সংযুক্ত'
-                : 'Server-side Gemini 3.8 Flash multimodal evaluation for handwritten homework & student performance analysis'}
+                ? 'হস্তলিখিত হোমওয়ার্ক মূল্যায়ন ও পারফরম্যান্স বিশ্লেষণের জন্য Gemini 4 Hydrogen এআই মডেল সংযুক্ত'
+                : 'Server-side Gemini 4 Hydrogen multimodal evaluation for handwritten homework & student performance analysis'}
             </p>
           </div>
           <div className="flex items-center space-x-2">
@@ -621,7 +621,7 @@ export const SettingsView: React.FC = () => {
               }`}
             >
               <span className={`w-2 h-2 rounded-full ${aiStatus?.aiEnabled ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-              <span>{aiStatus?.aiEnabled ? 'AI Engine Ready' : 'AI Key Setup Guide'}</span>
+              <span>{aiStatus?.aiEnabled ? 'AI Engine Ready' : 'AI Server Key Missing'}</span>
             </span>
           </div>
         </div>

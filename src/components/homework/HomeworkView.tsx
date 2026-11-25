@@ -592,26 +592,19 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
     }
 
     const evaluation = res.evaluation;
-    const needsReview = Boolean(evaluation.requiresTeacherReview || evaluation.status === 'review_required');
-    const updatedSub: HomeworkSubmission = needsReview
-      ? {
-          ...sub,
-          status: 'review_required',
-          teacherFeedback: evaluation.feedback,
-          aiEvaluation: evaluation,
-        }
-      : {
-          ...sub,
-          status: 'approved',
-          teacherMarks: evaluation.suggestedMarks,
-          teacherFeedback: evaluation.feedback,
-          reviewedBy: 'Gemini AI Evaluator (স্বয়ংক্রিয়)',
-          reviewedAt: new Date().toISOString(),
-          aiEvaluation: {
-            ...evaluation,
-            requiresTeacherReview: false,
-          },
-        };
+    const updatedSub: HomeworkSubmission = {
+      ...sub,
+      status: 'approved',
+      teacherMarks: evaluation.suggestedMarks,
+      teacherFeedback: evaluation.feedback,
+      reviewedBy: 'Gemini AI Evaluator (স্বয়ংক্রিয়)',
+      reviewedAt: new Date().toISOString(),
+      aiEvaluation: {
+        ...evaluation,
+        status: 'evaluated',
+        requiresTeacherReview: false,
+      },
+    };
 
     if (saasSession?.school?.schoolId) {
       try {
@@ -624,13 +617,11 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
     StorageService.saveOrUpdateSubmission(updatedSub, {
       skipCloudPush: Boolean(saasSession?.school?.schoolId && !canReview),
     });
-    if (!needsReview) {
-      setSubmissionSuccessMsg(
-        language === 'bn'
-          ? `হোমওয়ার্ক জমা ও এআই মূল্যায়ন সম্পন্ন! প্রাপ্ত নম্বর: ${toBnNumber(evaluation.suggestedMarks)} / ${toBnNumber(parentHw.fullMarks || 10)}`
-          : `Homework submitted and AI graded! Score: ${evaluation.suggestedMarks} / ${parentHw.fullMarks || 10}`
-      );
-    }
+    setSubmissionSuccessMsg(
+      language === 'bn'
+        ? `হোমওয়ার্ক জমা ও এআই মূল্যায়ন সম্পন্ন! প্রাপ্ত নম্বর: ${toBnNumber(evaluation.suggestedMarks)} / ${toBnNumber(parentHw.fullMarks || 10)}`
+        : `Homework submitted and AI graded! Score: ${evaluation.suggestedMarks} / ${parentHw.fullMarks || 10}`
+    );
     refreshData();
   };
 
@@ -1615,7 +1606,13 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
                             )}
                           </td>
                           <td className="p-3">
-                            {sub.aiEvaluation ? (
+                            {sub.aiEvaluation &&
+                            !(
+                              sub.status !== 'approved' &&
+                              (sub.aiEvaluation.status === 'review_required' ||
+                                sub.aiEvaluation.status === 'failed' ||
+                                sub.aiEvaluation.confidence === 0)
+                            ) ? (
                               <div>
                                 <span className="font-bold text-indigo-700 text-sm">
                                   {sub.aiEvaluation.suggestedMarks} / {sub.aiEvaluation.fullMarks}
@@ -1625,23 +1622,30 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
                                 </div>
                               </div>
                             ) : (
-                              <button
-                                disabled={isEvaluatingThis}
-                                onClick={() => handleTriggerAIEvaluation(sub, parentHw)}
-                                className="px-2.5 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-[11px] font-bold inline-flex items-center gap-1"
-                              >
-                                {isEvaluatingThis ? (
-                                  <>
-                                    <RefreshCw className="w-3 h-3 animate-spin" />
-                                    <span>AI যাচাই হচ্ছে...</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Sparkles className="w-3 h-3 text-indigo-600" />
-                                    <span>AI মূল্যায়ন চালান</span>
-                                  </>
+                              <div className="space-y-1">
+                                {sub.aiEvaluation && sub.aiEvaluation.suggestedMarks > 0 && (
+                                  <div className="text-[11px] font-bold text-indigo-700">
+                                    {sub.aiEvaluation.suggestedMarks} / {sub.aiEvaluation.fullMarks}
+                                  </div>
                                 )}
-                              </button>
+                                <button
+                                  disabled={isEvaluatingThis}
+                                  onClick={() => handleTriggerAIEvaluation(sub, parentHw)}
+                                  className="px-2.5 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-[11px] font-bold inline-flex items-center gap-1"
+                                >
+                                  {isEvaluatingThis ? (
+                                    <>
+                                      <RefreshCw className="w-3 h-3 animate-spin" />
+                                      <span>AI যাচাই হচ্ছে...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Sparkles className="w-3 h-3 text-indigo-600" />
+                                      <span>{sub.aiEvaluation ? 'পুনরায় AI মূল্যায়ন' : 'AI মূল্যায়ন চালান'}</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
                             )}
                           </td>
                           <td className="p-3 max-w-xs">
@@ -1688,7 +1692,13 @@ export const HomeworkView: React.FC<HomeworkViewProps> = ({ initialSubTab, jumpN
                           </td>
                           <td className="p-3 text-right">
                             <div className="flex items-center justify-end gap-1.5">
-                              {sub.status !== 'approved' && sub.aiEvaluation && (
+                              {sub.status !== 'approved' &&
+                                sub.aiEvaluation &&
+                                !(
+                                  (sub.aiEvaluation.status === 'review_required' ||
+                                    sub.aiEvaluation.status === 'failed') &&
+                                  sub.aiEvaluation.confidence === 0
+                                ) && (
                                 <button
                                   onClick={() => {
                                     StorageService.approveSubmission(

@@ -2,7 +2,7 @@ import express, { NextFunction, Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { createSaasRouter } from './saas/router';
 import { AuthenticatedRequest, createSaaSMiddleware } from './saas/middleware';
 import { AuthProviderInterface, DatabaseProviderInterface } from './saas/types';
@@ -281,8 +281,8 @@ export function createApiApp(options: CreateApiAppOptions = {}): express.Express
 
   // Helper to check API Key availability
   const getGeminiClient = () => {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey.trim() === '') {
+    const apiKey = typeof process.env.GEMINI_API_KEY === 'string' ? process.env.GEMINI_API_KEY.trim() : '';
+    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
       return null;
     }
     return new GoogleGenAI({
@@ -295,10 +295,56 @@ export function createApiApp(options: CreateApiAppOptions = {}): express.Express
     });
   };
 
-  // API: Health & AI Status
-  app.get('/api/ai/status', (_req: Request, res: Response) => {
-    const hasKey = !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY';
-    res.json({
+  // API: Health & AI Status (supports ?probe=1 to verify live Gemini connectivity without exposing secrets)
+  app.get('/api/ai/status', async (req: Request, res: Response) => {
+    const trimmedKey = typeof process.env.GEMINI_API_KEY === 'string' ? process.env.GEMINI_API_KEY.trim() : '';
+    const hasKey = Boolean(trimmedKey) && trimmedKey !== 'MY_GEMINI_API_KEY';
+
+    if (req.query.probe === '1' && hasKey) {
+      const ai = getGeminiClient();
+      if (ai) {
+        const probeModels = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
+        const errors: Array<{ model: string; error: string }> = [];
+        for (const modelName of probeModels) {
+          try {
+            const probeResp = await Promise.race([
+              ai.models.generateContent({
+                model: modelName,
+                contents: { parts: [{ text: 'Reply with OK' }] },
+                config: {
+                  thinkingConfig: {
+                    thinkingLevel: modelName === 'gemini-3.1-flash-lite' ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW,
+                  },
+                },
+              }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('AI_TIMEOUT')), 7000)),
+            ]) as any;
+            return res.json({
+              status: 'ok',
+              aiEnabled: true,
+              liveCheck: 'ok',
+              activeModel: modelName,
+              sampleReply: String(probeResp?.text || '').trim().slice(0, 30),
+              previousFailures: errors,
+            });
+          } catch (err: any) {
+            errors.push({
+              model: modelName,
+              error: String(err?.message || err || 'Unknown error').slice(0, 220),
+            });
+          }
+        }
+        return res.status(502).json({
+          status: 'error',
+          aiEnabled: true,
+          liveCheck: 'error',
+          model: 'gemini-4-hydrogen',
+          errors,
+        });
+      }
+    }
+
+    return res.json({
       status: 'ok',
       aiEnabled: hasKey,
       model: 'gemini-4-hydrogen',
@@ -344,27 +390,10 @@ export function createApiApp(options: CreateApiAppOptions = {}): express.Express
 
       const ai = getGeminiClient();
       if (!ai) {
-        const unconfiguredEvaluation = {
-          status: 'review_required' as const,
-          suggestedMarks: 0,
-          fullMarks: numericFullMarks,
-          confidence: 0,
-          correctAnswers: 0,
-          partialAnswers: 0,
-          incorrectAnswers: 0,
-          missingAnswers: 0,
-          mathematicalAccuracy: 'এআই API Key কনফিগার করা নেই; স্বয়ংক্রিয় যাচাই সম্ভব হয়নি।',
-          spellingQuality: 'শিক্ষকের সরাসরি মূল্যায়ন প্রয়োজন।',
-          feedback:
-            'সার্ভারে এআই API Key কনফিগার না থাকায় স্বয়ংক্রিয় মূল্যায়ন করা যায়নি। আপনার খাতা জমা হয়েছে; শিক্ষকের রিভিউয়ের পর নম্বর প্রকাশ করা হবে।',
-          requiresTeacherReview: true,
-          reviewReason: 'GEMINI_API_KEY is not configured on the server.',
-          alternativeAnswerAccepted: false,
-          evaluatedAt: new Date().toISOString(),
-        };
-        return res.json({
-          success: true,
-          evaluation: unconfiguredEvaluation,
+        return res.status(503).json({
+          success: false,
+          error: 'AI_NOT_CONFIGURED',
+          message: 'সার্ভারে GEMINI_API_KEY কনফিগার করা নেই। অ্যাডমিন/Netlify এনভায়রনমেন্টে Key সেট করুন।',
         });
       }
 
@@ -404,8 +433,10 @@ CRITICAL EVALUATION & GRADING RULES (FOLLOW STRICTLY):
    - suggestedMarks MUST be between 0 and ${numericFullMarks}.
 3. SUBSTANCE OVER EXACT WORDING:
    - For descriptive/conceptual questions, accept valid alternative explanations, synonyms, or mathematically equivalent valid steps in Bangla or English.
-4. UNCLEAR HANDWRITING:
-   - If handwritten images are genuinely illegible or too blurry to read, set "requiresTeacherReview": true, "status": "review_required", confidence <= 0.6, and explain the exact issue in "reviewReason". Otherwise set "status": "evaluated" and "requiresTeacherReview": false.
+4. DIRECT GRADING & MARKS AWARDING (NO DEFERRAL TO TEACHER REVIEW):
+   - ALWAYS evaluate the student's work and assign an exact numeric "suggestedMarks" between 0 and ${numericFullMarks}.
+   - NEVER defer grading to teacher review—always set "status": "evaluated" and "requiresTeacherReview": false.
+   - Even if handwriting is slightly faint, messy, or incomplete, read as much as is visible, grade fairly according to correct vs missing/wrong parts, and note any unclear portions in "feedback".
 5. SPECIFIC ITEMIZED FEEDBACK IN BENGALI:
    - In "feedback", clearly write in Bengali:
      (a) মোট কয়টি সঠিক ও কয়টি ভুল/বাকি হয়েছে,
@@ -513,14 +544,24 @@ CRITICAL EVALUATION & GRADING RULES (FOLLOW STRICTLY):
         ],
       };
 
-      const callModelWithTimeout = async (modelName: string, timeoutMs: number) => {
+      const isServerlessRuntime = Boolean(
+        process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL
+      );
+
+      const callModelWithTimeout = async (modelName: string, timeoutMs: number, useThinkingConfig = true) => {
+        const thinkingLevel =
+          modelName === 'gemini-3.1-flash-lite' ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW;
+        const config: Record<string, any> = {
+          responseMimeType: 'application/json',
+          responseSchema: evaluationSchema,
+        };
+        if (useThinkingConfig) {
+          config.thinkingConfig = { thinkingLevel };
+        }
         const apiCall = ai.models.generateContent({
           model: modelName,
-          contents,
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: evaluationSchema,
-          },
+          contents: { parts: contents },
+          config,
         });
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(() => reject(new Error('AI_TIMEOUT')), timeoutMs)
@@ -529,23 +570,41 @@ CRITICAL EVALUATION & GRADING RULES (FOLLOW STRICTLY):
       };
 
       const callAIWithTimeout = async () => {
-        const candidateModels = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
+        const candidateAttempts: Array<{ model: string; timeoutMs: number }> = isServerlessRuntime
+          ? [
+              { model: 'gemini-4-hydrogen', timeoutMs: 6200 },
+              { model: 'gemini-3.1-flash-lite', timeoutMs: 3000 },
+            ]
+          : [
+              { model: 'gemini-4-hydrogen', timeoutMs: 15000 },
+              { model: 'gemini-3.1-flash-lite', timeoutMs: 12000 },
+            ];
         let lastErr: any;
-        for (const modelName of candidateModels) {
+        for (const attempt of candidateAttempts) {
           try {
-            return await callModelWithTimeout(modelName, 18000);
+            return await callModelWithTimeout(attempt.model, attempt.timeoutMs, true);
           } catch (err: any) {
             lastErr = err;
             const msg = String(err?.message || err || '');
-            const isTransient =
-              msg.includes('503') ||
-              msg.includes('429') ||
-              msg.includes('UNAVAILABLE') ||
-              msg.includes('AI_TIMEOUT');
-            if (!isTransient) {
+            // If thinkingConfig rejected by endpoint/SDK mismatch, retry same model without thinkingConfig
+            if (msg.includes('thinking') && msg.includes('400')) {
+              try {
+                return await callModelWithTimeout(attempt.model, attempt.timeoutMs, false);
+              } catch (retryErr: any) {
+                lastErr = retryErr;
+              }
+            }
+            const isAuthError =
+              msg.includes('API_KEY_INVALID') ||
+              msg.includes('PERMISSION_DENIED') ||
+              msg.includes('401') ||
+              msg.includes('403');
+            if (isAuthError) {
               throw err;
             }
-            console.warn(`[AI Evaluate] Model ${modelName} unavailable (${msg.slice(0, 120)}), trying next model...`);
+            console.warn(
+              `[AI Evaluate] Model ${attempt.model} failed (${msg.slice(0, 160)}), trying next model...`
+            );
           }
         }
         throw lastErr;
@@ -563,24 +622,38 @@ CRITICAL EVALUATION & GRADING RULES (FOLLOW STRICTLY):
           parsedResult = JSON.parse(cleaned);
         }
       } catch (llmErr: any) {
-        console.warn('Gemini homework evaluation failed or timed out:', llmErr?.message || llmErr);
-        parsedResult = {
-          status: 'review_required',
-          suggestedMarks: 0,
-          fullMarks: numericFullMarks,
-          confidence: 0,
-          correctAnswers: 0,
-          partialAnswers: 0,
-          incorrectAnswers: 0,
-          missingAnswers: 0,
-          mathematicalAccuracy: 'এআই মূল্যায়ন সার্ভার থেকে সময়মতো উত্তর পাওয়া যায়নি।',
-          spellingQuality: 'শিক্ষকের সরাসরি যাচাই প্রয়োজন।',
-          feedback:
-            'এই মুহূর্তে স্বয়ংক্রিয় এআই মূল্যায়ন সম্পন্ন করা যায়নি। আপনার উত্তর জমা হয়েছে এবং শিক্ষকের যাচাইয়ের জন্য অপেক্ষমাণ রয়েছে।',
-          requiresTeacherReview: true,
-          reviewReason: llmErr?.message || 'AI evaluation failed or timed out on server.',
-          alternativeAnswerAccepted: false,
-        };
+        const rawMsg = String(llmErr?.message || llmErr || 'Unknown Gemini error');
+        console.warn('Gemini homework evaluation failed:', rawMsg);
+        const upper = rawMsg.toUpperCase();
+        let errorCode = 'AI_UPSTREAM_ERROR';
+        let userMessage = `এআই মূল্যায়ন সম্পন্ন হয়নি (${rawMsg.slice(0, 120)})।`;
+        let httpStatus = 502;
+        if (upper.includes('API_KEY_INVALID') || upper.includes('400') && upper.includes('API KEY')) {
+          errorCode = 'API_KEY_INVALID';
+          httpStatus = 400;
+          userMessage = 'সার্ভারের Gemini API Key সঠিক নয়। Netlify Environment variables যাচাই করুন।';
+        } else if (upper.includes('PERMISSION_DENIED') || upper.includes('403')) {
+          errorCode = 'PERMISSION_DENIED';
+          httpStatus = 403;
+          userMessage = 'Gemini API Key-তে অনুমতি (Permission) নেই। Google AI Studio-তে নতুন Key তৈরি করে সেট করুন।';
+        } else if (upper.includes('RESOURCE_EXHAUSTED') || upper.includes('429')) {
+          errorCode = 'RESOURCE_EXHAUSTED';
+          httpStatus = 429;
+          userMessage = 'Gemini API ব্যবহারের কোটা সাময়িকভাবে শেষ হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।';
+        } else if (upper.includes('AI_TIMEOUT')) {
+          errorCode = 'AI_TIMEOUT';
+          httpStatus = 504;
+          userMessage = 'Gemini সার্ভার থেকে সময়মতো উত্তর পাওয়া যায়নি। ছবির সাইজ কমিয়ে আবার চেষ্টা করুন।';
+        } else if (upper.includes('NOT_FOUND') || upper.includes('404')) {
+          errorCode = 'MODEL_NOT_FOUND';
+          httpStatus = 502;
+          userMessage = 'নির্বাচিত Gemini মডেল পাওয়া যায়নি। অনুগ্রহ করে আবার চেষ্টা করুন।';
+        }
+        return res.status(httpStatus).json({
+          success: false,
+          error: errorCode,
+          message: userMessage,
+        });
       }
 
       parsedResult.fullMarks = numericFullMarks;
@@ -589,6 +662,8 @@ CRITICAL EVALUATION & GRADING RULES (FOLLOW STRICTLY):
         ? Math.min(numericFullMarks, Math.max(0, Math.round(rawSuggested * 2) / 2))
         : 0;
       parsedResult.suggestedMarks = boundedSuggested;
+      parsedResult.status = 'evaluated';
+      parsedResult.requiresTeacherReview = false;
       parsedResult.evaluatedAt = new Date().toISOString();
 
       return res.json({

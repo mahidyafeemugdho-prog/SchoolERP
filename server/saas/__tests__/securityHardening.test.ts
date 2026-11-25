@@ -199,4 +199,52 @@ describe('API & Tenant Security Hardening', () => {
     expect(mismatchRes.status).toBe(403);
     expect(mismatchRes.body.code).toBe('GRADE_TAMPERING_FORBIDDEN');
   });
+
+  it('persists Gemini AI marks directly as approved without teacher review and returns 503 AI_NOT_CONFIGURED when key is unset', async () => {
+    const prevKey = process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    try {
+      const noKeyRes = await request(app)
+        .post('/api/ai/evaluate-homework')
+        .set('Authorization', `Bearer ${studentToken}`)
+        .send({ homeworkTitle: 'Likho', textAnswer: '1 2 3 4 5 6 7 8 9 10', fullMarks: 10 });
+      expect(noKeyRes.status).toBe(503);
+      expect(noKeyRes.body.success).toBe(false);
+      expect(noKeyRes.body.error).toBe('AI_NOT_CONFIGURED');
+    } finally {
+      if (prevKey !== undefined) {
+        process.env.GEMINI_API_KEY = prevKey;
+      }
+    }
+
+    const aiApprovedRes = await request(app)
+      .post('/api/saas/tenant/homework-submissions')
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({
+        homeworkId: 'hw_1',
+        studentId: 'std_1',
+        studentName: 'Student One',
+        className: 'Class 10',
+        textAnswer: '1, 2, 3, 4, 5, 6, 7, 8',
+        status: 'approved',
+        teacherMarks: 8,
+        teacherFeedback: '৮টি সঠিক হয়েছে।',
+        aiEvaluation: {
+          status: 'evaluated',
+          suggestedMarks: 8,
+          fullMarks: 10,
+          confidence: 0.95,
+          correctAnswers: 8,
+          partialAnswers: 0,
+          incorrectAnswers: 0,
+          missingAnswers: 2,
+          feedback: '৮টি সঠিক হয়েছে।',
+          requiresTeacherReview: false,
+        },
+      });
+    expect(aiApprovedRes.status).toBe(201);
+    expect(aiApprovedRes.body.submission.status).toBe('approved');
+    expect(aiApprovedRes.body.submission.teacherMarks).toBe(8);
+    expect(aiApprovedRes.body.submission.aiEvaluation.requiresTeacherReview).toBe(false);
+  });
 });

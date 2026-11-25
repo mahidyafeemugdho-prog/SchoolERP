@@ -612,38 +612,27 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
       if (res.success && res.evaluation) {
         const evalData = res.evaluation;
         const fullMarks = targetHw.fullMarks || 10;
-        const needsReview = Boolean(evalData.requiresTeacherReview || evalData.status === 'review_required');
 
-        const updatedSub: HomeworkSubmission = needsReview
-          ? {
-              ...persistedSub,
-              status: 'review_required',
-              teacherFeedback: evalData.feedback,
-              aiEvaluation: evalData,
-            }
-          : {
-              ...persistedSub,
-              status: 'approved',
-              teacherMarks: evalData.suggestedMarks,
-              teacherFeedback: evalData.feedback,
-              reviewedBy: 'Gemini AI Evaluator (স্বয়ংক্রিয়)',
-              reviewedAt: new Date().toISOString(),
-              aiEvaluation: {
-                ...evalData,
-                requiresTeacherReview: false,
-              },
-            };
+        const updatedSub: HomeworkSubmission = {
+          ...persistedSub,
+          status: 'approved',
+          teacherMarks: evalData.suggestedMarks,
+          teacherFeedback: evalData.feedback,
+          reviewedBy: 'Gemini AI Evaluator (স্বয়ংক্রিয়)',
+          reviewedAt: new Date().toISOString(),
+          aiEvaluation: {
+            ...evalData,
+            status: 'evaluated',
+            requiresTeacherReview: false,
+          },
+        };
 
         StorageService.upsertHomeworkSubmissionLocal(updatedSub);
         await persistHomeworkSubmission(updatedSub);
         setSyncTick((n) => n + 1);
 
         setSubmissionMessage(
-          needsReview
-            ? language === 'bn'
-              ? `হোমওয়ার্ক জমা হয়েছে! ${evalData.feedback || 'শিক্ষকের যাচাইয়ের জন্য পাঠানো হয়েছে।'}`
-              : `Homework submitted and queued for teacher review.`
-            : language === 'bn'
+          language === 'bn'
             ? `হোমওয়ার্ক সফলভাবে জমা ও মূল্যায়ন সম্পন্ন হয়েছে! প্রাপ্ত নম্বর: ${toBnNumber(evalData.suggestedMarks)} / ${toBnNumber(fullMarks)}`
             : `Homework submitted and graded! Score: ${evalData.suggestedMarks} / ${fullMarks}`
         );
@@ -651,20 +640,66 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
         const reviewSub: HomeworkSubmission = {
           ...persistedSub,
           status: 'review_required',
-          teacherFeedback: res.message || 'এআই মূল্যায়ন সম্পন্ন হয়নি; শিক্ষকের যাচাইয়ের জন্য অপেক্ষমাণ।',
+          teacherFeedback: res.message || 'এআই মূল্যায়ন সম্পন্ন হয়নি। পুনরায় চেষ্টা করুন।',
         };
         StorageService.upsertHomeworkSubmissionLocal(reviewSub);
         await persistHomeworkSubmission(reviewSub);
         setSyncTick((n) => n + 1);
 
         setSubmissionMessage(
-          language === 'bn'
-            ? 'হোমওয়ার্ক সফলভাবে জমা হয়েছে! এআই মূল্যায়ন এই মুহূর্তে পাওয়া যায়নি, শিক্ষকের রিভিউয়ের পর নম্বর যুক্ত হবে।'
-            : 'Homework submitted successfully! Pending teacher review.'
+          res.message ||
+            (language === 'bn'
+              ? 'হোমওয়ার্ক জমা হয়েছে, তবে এআই সার্ভার থেকে তাৎক্ষণিক নম্বর পাওয়া যায়নি। নিচে "পুনরায় AI মূল্যায়ন" বাটনে চেষ্টা করুন।'
+              : 'Homework submitted, but AI grading failed. Please retry AI evaluation.')
         );
       }
     } finally {
       setIsEvaluatingAi(false);
+    }
+  };
+
+  const [retryingAiHwId, setRetryingAiHwId] = useState<string | null>(null);
+  const handleRetryAiEvaluation = async (hw: Homework, sub: HomeworkSubmission) => {
+    if (retryingAiHwId || isEvaluatingAi) return;
+    setRetryingAiHwId(hw.id);
+    try {
+      const res = await AIService.evaluateHomework({
+        homework: hw,
+        student,
+        textAnswer: sub.textAnswer,
+        images: sub.imageUrls,
+      });
+
+      if (res.success && res.evaluation) {
+        const evalData = res.evaluation;
+        const updatedSub: HomeworkSubmission = {
+          ...sub,
+          status: 'approved',
+          teacherMarks: evalData.suggestedMarks,
+          teacherFeedback: evalData.feedback,
+          reviewedBy: 'Gemini AI Evaluator (স্বয়ংক্রিয়)',
+          reviewedAt: new Date().toISOString(),
+          aiEvaluation: {
+            ...evalData,
+            status: 'evaluated',
+            requiresTeacherReview: false,
+          },
+        };
+        StorageService.upsertHomeworkSubmissionLocal(updatedSub);
+        await persistHomeworkSubmission(updatedSub);
+        setSyncTick((n) => n + 1);
+      } else if (res.message) {
+        const updatedSub: HomeworkSubmission = {
+          ...sub,
+          status: 'review_required',
+          teacherFeedback: res.message,
+        };
+        StorageService.upsertHomeworkSubmissionLocal(updatedSub);
+        await persistHomeworkSubmission(updatedSub);
+        setSyncTick((n) => n + 1);
+      }
+    } finally {
+      setRetryingAiHwId(null);
     }
   };
 
@@ -2441,13 +2476,31 @@ export const StudentDedicatedDashboard: React.FC<StudentDedicatedDashboardProps>
                                 <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
                                 <span>মূল্যায়ন ও প্রাপ্ত নম্বর:</span>
                               </span>
-                              <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-indigo-600 text-white">
-                                {sub.teacherMarks !== undefined || (sub.aiEvaluation && !sub.aiEvaluation.requiresTeacherReview)
-                                  ? `প্রাপ্ত নম্বর: ${toBnNumber(sub.teacherMarks !== undefined ? sub.teacherMarks : sub.aiEvaluation?.suggestedMarks ?? 0)} / ${toBnNumber(hw.fullMarks || 10)}`
-                                  : sub.status === 'review_required'
-                                  ? 'শিক্ষকের রিভিউ অপেক্ষমাণ'
-                                  : 'এআই মূল্যায়ন চলছে...'}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-indigo-600 text-white">
+                                  {sub.teacherMarks !== undefined || (sub.aiEvaluation && !sub.aiEvaluation.requiresTeacherReview)
+                                    ? `প্রাপ্ত নম্বর: ${toBnNumber(sub.teacherMarks !== undefined ? sub.teacherMarks : sub.aiEvaluation?.suggestedMarks ?? 0)} / ${toBnNumber(hw.fullMarks || 10)}`
+                                    : sub.status === 'review_required'
+                                    ? 'এআই মূল্যায়ন বাকি'
+                                    : 'এআই মূল্যায়ন চলছে...'}
+                                </span>
+                                {(sub.teacherMarks === undefined ||
+                                  sub.status === 'review_required' ||
+                                  (sub.aiEvaluation?.confidence === 0 && !String(sub.reviewedBy || '').trim())) &&
+                                  (!sub.reviewedBy || String(sub.reviewedBy).startsWith('Gemini AI Evaluator')) && (
+                                    <button
+                                      type="button"
+                                      disabled={retryingAiHwId === hw.id}
+                                      onClick={() => handleRetryAiEvaluation(hw, sub)}
+                                      className="px-2.5 py-1 bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-300 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 shadow-2xs transition-colors"
+                                    >
+                                      <Sparkles className="w-3 h-3" />
+                                      <span>
+                                        {retryingAiHwId === hw.id ? 'এআই নম্বর দিচ্ছে...' : 'পুনরায় AI মূল্যায়ন'}
+                                      </span>
+                                    </button>
+                                  )}
+                              </div>
                             </div>
 
                             {sub.aiEvaluation?.feedback && (
